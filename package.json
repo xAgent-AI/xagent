@@ -1,0 +1,63 @@
+{
+  "name": "xagent-cli",
+  "version": "1.0.0",
+  "description": "xAgent CLI - AI-powered command-line assistant",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "xagent": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "test": "vitest",
+    "lint": "eslint src --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\""
+  },
+  "keywords": [
+    "ai",
+    "cli",
+    "assistant",
+    "copilot",
+    "code"
+  ],
+  "author": "xAgent CLI Team",
+  "license": "MIT",
+  "dependencies": {
+    "ansi-escapes": "^6.2.0",
+    "archiver": "^7.0.0",
+    "axios": "^1.6.0",
+    "chalk": "^5.3.0",
+    "clipboardy": "^4.0.0",
+    "commander": "^12.0.0",
+    "diff": "^5.1.0",
+    "eventemitter3": "^5.0.1",
+    "glob": "^10.3.0",
+    "inquirer": "^9.2.0",
+    "marked": "^11.0.0",
+    "micromatch": "^4.0.5",
+    "mime-types": "^2.1.35",
+    "node-pty": "^1.0.0",
+    "open": "^10.0.0",
+    "ora": "^8.0.0",
+    "string-width": "^7.0.0",
+    "strip-ansi": "^7.1.0",
+    "terminal-link": "^3.0.0",
+    "wrap-ansi": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/archiver": "^7.0.0",
+    "@types/inquirer": "^9.0.0",
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^20.10.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.1.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

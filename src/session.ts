@@ -14,6 +14,7 @@ import { getCheckpointManager, CheckpointManager } from './checkpoint.js';
 import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { theme, icons, colors, styleHelpers } from './theme.js';
+import { getCancellationManager, CancellationManager } from './cancellation.js';
 
 export class InteractiveSession {
   private rl: readline.Interface;
@@ -28,6 +29,7 @@ export class InteractiveSession {
   private mcpManager: MCPManager;
   private checkpointManager: CheckpointManager;
   private currentAgent: any = null;
+  private cancellationManager: CancellationManager;
 
   constructor() {
     this.rl = readline.createInterface({
@@ -42,6 +44,7 @@ export class InteractiveSession {
     this.checkpointManager = getCheckpointManager(process.cwd());
     this.slashCommandHandler = new SlashCommandHandler();
     this.executionMode = ExecutionMode.DEFAULT;
+    this.cancellationManager = getCancellationManager();
   }
 
   async start(): Promise<void> {
@@ -411,7 +414,7 @@ export class InteractiveSession {
     }
 
     const spinner = ora({
-      text: colors.textMuted(`${icons.brain} Thinking...`),
+      text: colors.textMuted(`${icons.brain} Thinking... (Press ESC to cancel)`),
       spinner: 'dots',
       color: 'cyan'
     }).start();
@@ -435,11 +438,17 @@ export class InteractiveSession {
         }))
       ];
 
-      const response = await this.aiClient.chatCompletion(messages, {
+      const operationId = `ai-response-${Date.now()}`;
+      const responsePromise = this.aiClient.chatCompletion(messages, {
         tools: availableTools,
         toolChoice: availableTools.length > 0 ? 'auto' : 'none',
         thinkingTokens
       });
+
+      const response = await this.cancellationManager.withCancellation(
+        responsePromise,
+        operationId
+      );
 
       spinner.stop();
 
@@ -479,6 +488,15 @@ export class InteractiveSession {
         );
       }
     } catch (error: any) {
+      spinner.stop();
+
+      if (error.message === 'Operation cancelled by user') {
+        console.log('');
+        console.log(colors.warning(`${icons.warning} Operation cancelled by user`));
+        console.log('');
+        return;
+      }
+
       spinner.fail(colors.error(`Error: ${error.message}`));
       console.log(colors.error(error.message));
     }
@@ -513,7 +531,13 @@ export class InteractiveSession {
       console.log(colors.textDim(JSON.stringify(parsedParams, null, 2)));
 
       try {
-        const result = await toolRegistry.execute(name, parsedParams, this.executionMode);
+        const operationId = `tool-${name}-${Date.now()}`;
+        const toolPromise = toolRegistry.execute(name, parsedParams, this.executionMode);
+
+        const result = await this.cancellationManager.withCancellation(
+          toolPromise,
+          operationId
+        );
 
         console.log('');
         console.log(colors.success(`${icons.check} Tool Result:`));
@@ -534,6 +558,13 @@ export class InteractiveSession {
           timestamp: Date.now()
         });
       } catch (error: any) {
+        if (error.message === 'Operation cancelled by user') {
+          console.log('');
+          console.log(colors.warning(`${icons.warning} Tool execution cancelled by user`));
+          console.log('');
+          return;
+        }
+
         console.log('');
         console.log(colors.error(`${icons.cross} Tool Error: ${error.message}`));
 
@@ -551,6 +582,7 @@ export class InteractiveSession {
   shutdown(): void {
     this.rl.close();
     this.mcpManager.disconnectAllServers();
+    this.cancellationManager.cleanup();
 
     const separator = icons.separator.repeat(40);
     console.log('');

@@ -71,7 +71,7 @@ export class SlashCommandHandler {
         await this.handleRestore(args);
         break;
       case 'tools':
-        await this.handleTools();
+        await this.handleToolsVerbose(args);
         break;
       case 'stats':
         await this.handleStats();
@@ -457,6 +457,34 @@ export class SlashCommandHandler {
       logger.info(`  ${tool.name}`);
       logger.info(`    ${tool.description}`);
     });
+
+    console.log('');
+    const currentSetting = this.configManager.get('showToolDetails') ? '详细' : '简洁';
+    logger.info(`当前工具显示模式: ${currentSetting}`);
+    logger.info('使用 /tools verbose 切换到详细模式');
+    logger.info('使用 /tools simple 切换到简洁模式');
+  }
+
+  private async handleToolsVerbose(args: string[]): Promise<void> {
+    if (args.length === 0) {
+      const currentSetting = this.configManager.get('showToolDetails') ? '详细' : '简洁';
+      logger.info(`当前工具显示模式: ${currentSetting}`);
+      return;
+    }
+
+    const mode = args[0].toLowerCase();
+
+    if (mode === 'verbose' || mode === 'detail' || mode === 'true' || mode === 'on') {
+      this.configManager.set('showToolDetails', true);
+      await this.configManager.save('global');
+      logger.success('工具显示模式已切换到详细模式', '将显示完整的工具调用信息');
+    } else if (mode === 'simple' || mode === 'concise' || mode === 'false' || mode === 'off') {
+      this.configManager.set('showToolDetails', false);
+      await this.configManager.save('global');
+      logger.success('工具显示模式已切换到简洁模式', '只显示工具执行状态');
+    } else {
+      logger.warn('无效的模式', '使用 verbose 或 simple');
+    }
   }
 
   private async handleStats(): Promise<void> {

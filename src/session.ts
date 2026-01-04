@@ -509,31 +509,31 @@ export class InteractiveSession {
 
   private async handleToolCalls(toolCalls: any[]): Promise<void> {
     const toolRegistry = getToolRegistry();
+    const showToolDetails = this.configManager.get('showToolDetails') || false;
 
     for (const toolCall of toolCalls) {
-      console.log('');
-      console.log(colors.warning(`${icons.tool} Raw Tool Call:`));
-      console.log(colors.textDim(JSON.stringify(toolCall, null, 2)));
-
       const { name, arguments: params } = toolCall.function;
-
-      console.log('');
-      console.log(colors.warning(`${icons.tool} Extracted params:`));
-      console.log(colors.textDim(`Type: ${typeof params}`));
-      console.log(colors.textDim(`Value: ${params}`));
 
       // Parse arguments if it's a JSON string (OpenAI API format)
       let parsedParams: any;
       try {
         parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
       } catch (e) {
-        console.log(colors.error(`${icons.cross} Failed to parse tool arguments: ${e}`));
         parsedParams = params;
       }
 
-      console.log('');
-      console.log(colors.warning(`${icons.tool} Tool Call: ${name}`));
-      console.log(colors.textDim(JSON.stringify(parsedParams, null, 2)));
+      // 根据配置显示不同详细程度的信息
+      if (showToolDetails) {
+        // 详细模式：显示工具调用详情
+        console.log('');
+        console.log(colors.warning(`${icons.tool} Tool Call: ${name}`));
+        console.log(colors.textDim(JSON.stringify(parsedParams, null, 2)));
+      } else {
+        // 简洁模式：只显示工具正在执行
+        const toolDescription = this.getToolDescription(name, parsedParams);
+        console.log('');
+        console.log(colors.textMuted(`${icons.loading} ${toolDescription}`));
+      }
 
       try {
         const operationId = `tool-${name}-${Date.now()}`;
@@ -544,9 +544,15 @@ export class InteractiveSession {
           operationId
         );
 
-        console.log('');
-        console.log(colors.success(`${icons.check} Tool Result:`));
-        console.log(colors.textDim(JSON.stringify(result, null, 2)));
+        if (showToolDetails) {
+          // 详细模式：显示完整结果
+          console.log('');
+          console.log(colors.success(`${icons.check} Tool Result:`));
+          console.log(colors.textDim(JSON.stringify(result, null, 2)));
+        } else {
+          // 简洁模式：只显示成功状态
+          console.log(colors.success(` ${icons.check} 完成`));
+        }
 
         const toolCallRecord: ToolCall = {
           tool: name,
@@ -582,6 +588,56 @@ export class InteractiveSession {
     }
 
     await this.generateResponse(this.currentAgent);
+  }
+
+  /**
+   * 获取工具的友好描述
+   */
+  private getToolDescription(toolName: string, params: any): string {
+    const descriptions: Record<string, (params: any) => string> = {
+      'Read': (p) => `读取文件: ${this.truncatePath(p.filePath)}`,
+      'Write': (p) => `写入文件: ${this.truncatePath(p.filePath)}`,
+      'Grep': (p) => `搜索文本: "${p.pattern}"`,
+      'Bash': (p) => `执行命令: ${this.truncateCommand(p.command)}`,
+      'ListDirectory': (p) => `列出目录: ${this.truncatePath(p.path || '.')}`,
+      'SearchCodebase': (p) => `搜索文件: ${p.pattern}`,
+      'DeleteFile': (p) => `删除文件: ${this.truncatePath(p.filePath)}`,
+      'CreateDirectory': (p) => `创建目录: ${this.truncatePath(p.dirPath)}`,
+      'replace': (p) => `替换文本: ${this.truncatePath(p.file_path)}`,
+      'web_search': (p) => `网络搜索: "${p.query}"`,
+      'todo_write': () => `更新待办事项`,
+      'todo_read': () => `读取待办事项`,
+      'task': (p) => `启动子任务: ${p.description}`,
+      'ReadBashOutput': (p) => `读取任务输出: ${p.task_id}`,
+      'web_fetch': () => `获取网页内容`,
+      'ask_user_question': () => `询问用户`,
+      'save_memory': () => `保存记忆`,
+      'exit_plan_mode': () => `完成计划`,
+      'xml_escape': (p) => `XML转义: ${this.truncatePath(p.file_path)}`,
+      'image_read': (p) => `读取图片: ${this.truncatePath(p.image_input)}`,
+      'Skill': (p) => `执行技能: ${p.skill}`
+    };
+
+    const getDescription = descriptions[toolName];
+    return getDescription ? getDescription(params) : `执行工具: ${toolName}`;
+  }
+
+  /**
+   * 截断路径显示
+   */
+  private truncatePath(path: string, maxLength: number = 30): string {
+    if (!path) return '';
+    if (path.length <= maxLength) return path;
+    return '...' + path.slice(-(maxLength - 3));
+  }
+
+  /**
+   * 截断命令显示
+   */
+  private truncateCommand(command: string, maxLength: number = 40): string {
+    if (!command) return '';
+    if (command.length <= maxLength) return command;
+    return command.slice(0, maxLength - 3) + '...';
   }
 
   shutdown(): void {

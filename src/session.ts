@@ -43,7 +43,7 @@ export class InteractiveSession {
   }
 
   async start(): Promise<void> {
-    console.log(chalk.cyan('\n🤖 iFlow CLI v1.0.0\n'));
+    console.log(chalk.cyan('\n🤖 XAGENT CLI v1.0.0\n'));
     console.log(chalk.gray('AI-powered command-line assistant\n'));
 
     await this.initialize();
@@ -54,17 +54,24 @@ export class InteractiveSession {
   }
 
   private async initialize(): Promise<void> {
-    const spinner = ora('Initializing...').start();
-
     try {
+      console.log(chalk.gray('Initializing...'));
+
       await this.configManager.load();
 
       const authConfig = this.configManager.getAuthConfig();
-      
+
       if (!authConfig.apiKey) {
-        spinner.stop();
         await this.setupAuthentication();
-        spinner.start();
+        // inquirer 可能会关闭 stdin，所以需要重新创建 readline 接口
+        this.rl.close();
+        this.rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
+        });
+        this.rl.on('close', () => {
+          console.error('DEBUG: readline interface closed');
+        });
       }
 
       this.aiClient = new AIClient(authConfig);
@@ -72,12 +79,12 @@ export class InteractiveSession {
 
       await this.agentManager.loadAgents();
       await this.memoryManager.loadMemory();
-      
+
       const mcpServers = this.configManager.getMcpServers();
       Object.entries(mcpServers).forEach(([name, config]) => {
         this.mcpManager.registerServer(name, config);
       });
-      
+
       await this.mcpManager.connectAllServers();
 
       const checkpointingConfig = this.configManager.getCheckpointingConfig();
@@ -92,9 +99,9 @@ export class InteractiveSession {
 
       this.currentAgent = this.agentManager.getAgent('general-purpose');
 
-      spinner.succeed('Initialization complete');
+      console.log(chalk.green('✔ Initialization complete'));
     } catch (error: any) {
-      spinner.fail(`Initialization failed: ${error.message}`);
+      console.log(chalk.red(`✖ Initialization failed: ${error.message}`));
       throw error;
     }
   }
@@ -127,10 +134,10 @@ export class InteractiveSession {
     const language = this.configManager.getLanguage();
     
     if (language === 'zh') {
-      console.log(chalk.gray('欢迎使用 iFlow CLI!'));
+      console.log(chalk.gray('欢迎使用 XAGENT CLI!'));
       console.log(chalk.gray('输入 /help 查看可用命令\n'));
     } else {
-      console.log(chalk.gray('Welcome to iFlow CLI!'));
+      console.log(chalk.gray('Welcome to XAGENT CLI!'));
       console.log(chalk.gray('Type /help to see available commands\n'));
     }
 
@@ -157,15 +164,28 @@ export class InteractiveSession {
   }
 
   private promptLoop(): void {
-    this.rl.question(chalk.green('> '), async (input) => {
-      try {
-        await this.handleInput(input);
-      } catch (error: any) {
-        console.error(chalk.red(`Error: ${error.message}`));
-      }
-
-      this.promptLoop();
+    // 重新创建 readline 接口，因为之前的接口可能已经被关闭
+    if (this.rl) {
+      this.rl.close();
+    }
+    this.rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
     });
+
+    try {
+      this.rl.question(chalk.green('> '), async (input) => {
+        try {
+          await this.handleInput(input);
+        } catch (error: any) {
+          console.error(chalk.red(`Error: ${error.message}`));
+        }
+
+        this.promptLoop();
+      });
+    } catch (error: any) {
+      console.error('Error in promptLoop:', error);
+    }
   }
 
   private async handleInput(input: string): Promise<void> {
@@ -346,20 +366,36 @@ export class InteractiveSession {
     const toolRegistry = getToolRegistry();
 
     for (const toolCall of toolCalls) {
+      console.log(chalk.yellow('\n🔧 Raw Tool Call:'));
+      console.log(chalk.gray(JSON.stringify(toolCall, null, 2)));
+
       const { name, arguments: params } = toolCall.function;
       
+      console.log(chalk.yellow('\n🔧 Extracted params:'));
+      console.log(chalk.gray(`Type: ${typeof params}`));
+      console.log(chalk.gray(`Value: ${params}`));
+      
+      // Parse arguments if it's a JSON string (OpenAI API format)
+      let parsedParams: any;
+      try {
+        parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
+      } catch (e) {
+        console.log(chalk.red(`❌ Failed to parse tool arguments: ${e}`));
+        parsedParams = params;
+      }
+      
       console.log(chalk.yellow(`\n🔧 Tool Call: ${name}`));
-      console.log(chalk.gray(JSON.stringify(params, null, 2)));
+      console.log(chalk.gray(JSON.stringify(parsedParams, null, 2)));
 
       try {
-        const result = await toolRegistry.execute(name, params, this.executionMode);
+        const result = await toolRegistry.execute(name, parsedParams, this.executionMode);
         
         console.log(chalk.green('✅ Tool Result:'));
         console.log(chalk.gray(JSON.stringify(result, null, 2)));
 
         const toolCallRecord: ToolCall = {
           tool: name,
-          params,
+          params: parsedParams,
           result,
           timestamp: Date.now()
         };

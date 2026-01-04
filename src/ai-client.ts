@@ -127,12 +127,22 @@ export class AIClient {
         responseType: 'stream'
       });
 
+      let buffer = '';
+      let chunkCount = 0;
+
       for await (const chunk of response.data) {
-        const lines = chunk.toString().split('\n').filter((line: string) => line.trim() !== '');
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+
+        // Keep the last line in buffer if it's incomplete
+        buffer = lines.pop() || '';
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
+          const trimmedLine = line.trim();
+          if (!trimmedLine) continue;
+
+          if (trimmedLine.startsWith('data: ')) {
+            const data = trimmedLine.slice(6);
             if (data === '[DONE]') {
               return;
             }
@@ -140,11 +150,39 @@ export class AIClient {
             try {
               const parsed = JSON.parse(data);
               const delta = parsed.choices?.[0]?.delta;
+              // Support both content and reasoning_content fields (for GLM-4.7 compatibility)
               if (delta?.content) {
+                chunkCount++;
                 yield delta.content;
+              } else if (delta?.reasoning_content) {
+                chunkCount++;
+                yield delta.reasoning_content;
               }
             } catch (e) {
-              console.warn('Failed to parse stream chunk:', e);
+              // Silently ignore parsing errors for incomplete chunks
+              // They will be accumulated in the buffer and parsed later
+            }
+          }
+        }
+      }
+
+      // Process any remaining data in buffer
+      if (buffer.trim()) {
+        const trimmedLine = buffer.trim();
+        if (trimmedLine.startsWith('data: ')) {
+          const data = trimmedLine.slice(6);
+          if (data !== '[DONE]') {
+            try {
+              const parsed = JSON.parse(data);
+              const delta = parsed.choices?.[0]?.delta;
+              // Support both content and reasoning_content fields (for GLM-4.7 compatibility)
+              if (delta?.content) {
+                yield delta.content;
+              } else if (delta?.reasoning_content) {
+                yield delta.reasoning_content;
+              }
+            } catch (e) {
+              // Ignore final parsing errors
             }
           }
         }
@@ -157,7 +195,7 @@ export class AIClient {
       } else if (error.request) {
         throw new Error('Network error: No response received from server');
       } else {
-        throw new Error(`Request error: ${error.message}`);
+        throw new Error(`Request request: ${error.message}`);
       }
     }
   }

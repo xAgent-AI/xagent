@@ -4,8 +4,6 @@ import os from 'os';
 import { AgentConfig, ExecutionMode } from './types.js';
 import { getToolRegistry } from './tools.js';
 
-export { AgentConfig };
-
 export class AgentManager {
   private agents: Map<string, AgentConfig> = new Map();
   private globalAgentsPath: string;

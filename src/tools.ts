@@ -62,7 +62,7 @@ export class WriteTool implements Tool {
 export class GrepTool implements Tool {
   name = 'Grep';
   description = 'Search for text patterns in files';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   async execute(params: {
     pattern: string;
@@ -246,7 +246,7 @@ export class BashTool implements Tool {
 export class ListDirectoryTool implements Tool {
   name = 'ListDirectory';
   description = 'List files and directories in a path';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   async execute(params: { path?: string; recursive?: boolean }): Promise<string[]> {
     const { path: dirPath = '.', recursive = false } = params;
@@ -276,7 +276,7 @@ export class ListDirectoryTool implements Tool {
 export class SearchCodebaseTool implements Tool {
   name = 'SearchCodebase';
   description = 'Search for files matching a pattern';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   async execute(params: { pattern: string; path?: string }): Promise<string[]> {
     const { pattern, path: searchPath = '.' } = params;
@@ -386,7 +386,7 @@ export class ReplaceTool implements Tool {
 export class WebSearchTool implements Tool {
   name = 'web_search';
   description = 'Search web and return results';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   async execute(params: { query: string }): Promise<{ results: any[]; message: string }> {
     const { query } = params;
@@ -397,7 +397,7 @@ export class WebSearchTool implements Tool {
       const config = getConfigManager();
       
       const searchApiKey = config.get('searchApiKey');
-      const baseUrl = config.get('baseUrl') || 'https://apis.iflow.cn/v1';
+      const baseUrl = config.get('baseUrl') || 'https://apis.xagent.cn/v1';
       
       if (!searchApiKey) {
         throw new Error('Search API key not configured. Please set searchApiKey in settings.');
@@ -428,7 +428,7 @@ export class WebSearchTool implements Tool {
 export class TodoWriteTool implements Tool {
   name = 'todo_write';
   description = 'Create and manage structured task lists';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   private todoList: Array<{ id: string; task: string; status: 'pending' | 'in_progress' | 'completed' | 'failed'; priority: 'high' | 'medium' | 'low' }> = [];
 
@@ -465,7 +465,7 @@ export class TodoWriteTool implements Tool {
 export class TodoReadTool implements Tool {
   name = 'todo_read';
   description = 'Read current session todo list';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   private todoWriteTool: TodoWriteTool;
 
@@ -498,7 +498,7 @@ export class TodoReadTool implements Tool {
 export class TaskTool implements Tool {
   name = 'task';
   description = 'Launch specialized subagent for complex multi-step tasks';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   async execute(params: {
     description: string;
@@ -570,7 +570,7 @@ export class TaskTool implements Tool {
 export class ReadBashOutputTool implements Tool {
   name = 'ReadBashOutput';
   description = 'Retrieve output from running or completed background tasks';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   async execute(params: {
     task_id: string;
@@ -608,7 +608,7 @@ export class ReadBashOutputTool implements Tool {
 export class WebFetchTool implements Tool {
   name = 'web_fetch';
   description = 'Fetch and process URL content, including local and private network addresses';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   async execute(params: { prompt: string }): Promise<{ content: string; url: string; status: number }> {
     const { prompt } = params;
@@ -648,7 +648,7 @@ export class WebFetchTool implements Tool {
 export class AskUserQuestionTool implements Tool {
   name = 'ask_user_question';
   description = 'Ask user questions during execution';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   async execute(params: {
     questions: Array<{
@@ -703,7 +703,7 @@ export class AskUserQuestionTool implements Tool {
 export class SaveMemoryTool implements Tool {
   name = 'save_memory';
   description = 'Save specific information to long-term memory';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   async execute(params: { fact: string }): Promise<{ success: boolean; message: string }> {
     const { fact } = params;
@@ -727,7 +727,7 @@ export class SaveMemoryTool implements Tool {
 export class ExitPlanModeTool implements Tool {
   name = 'exit_plan_mode';
   description = 'Complete plan presentation in plan mode and prepare for coding';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   async execute(params: { plan: string }): Promise<{ success: boolean; message: string; plan: string }> {
     const { plan } = params;
@@ -815,7 +815,7 @@ export class XmlEscapeTool implements Tool {
 export class ImageReadTool implements Tool {
   name = 'image_read';
   description = 'Read image files and generate detailed analysis using VL model';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   async execute(params: {
     image_input: string;
@@ -892,7 +892,7 @@ export class ImageReadTool implements Tool {
 export class SkillTool implements Tool {
   name = 'Skill';
   description = 'Execute skills in main conversation';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.DEFAULT];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
 
   async execute(params: { skill: string }): Promise<{ success: boolean; message: string; result?: any }> {
     const { skill } = params;
@@ -983,18 +983,439 @@ export class ToolRegistry {
   }
 
   getToolDefinitions(): any[] {
-    return Array.from(this.tools.values()).map(tool => ({
-      type: 'function',
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: {
-          type: 'object',
-          properties: {},
-          required: []
-        }
+    return Array.from(this.tools.values()).map(tool => {
+      let parameters: any = {
+        type: 'object',
+        properties: {},
+        required: []
+      };
+
+      // 为每个工具定义具体的参数
+      switch (tool.name) {
+        case 'Read':
+          parameters = {
+            type: 'object',
+            properties: {
+              filePath: {
+                type: 'string',
+                description: 'The absolute path to the file to read'
+              },
+              offset: {
+                type: 'number',
+                description: 'Optional: Line number to start reading from (0-based)'
+              },
+              limit: {
+                type: 'number',
+                description: 'Optional: Maximum number of lines to read'
+              }
+            },
+            required: ['filePath']
+          };
+          break;
+
+        case 'Write':
+          parameters = {
+            type: 'object',
+            properties: {
+              filePath: {
+                type: 'string',
+                description: 'The absolute path to the file to write'
+              },
+              content: {
+                type: 'string',
+                description: 'The content to write to the file'
+              }
+            },
+            required: ['filePath', 'content']
+          };
+          break;
+
+        case 'Grep':
+          parameters = {
+            type: 'object',
+            properties: {
+              pattern: {
+                type: 'string',
+                description: 'The regex pattern to search for'
+              },
+              path: {
+                type: 'string',
+                description: 'Optional: The path to search in (default: current directory)'
+              },
+              include: {
+                type: 'string',
+                description: 'Optional: Glob pattern to filter files'
+              },
+              case_sensitive: {
+                type: 'boolean',
+                description: 'Optional: Case-sensitive search (default: false)'
+              },
+              context: {
+                type: 'number',
+                description: 'Optional: Number of context lines to show'
+              }
+            },
+            required: ['pattern']
+          };
+          break;
+
+        case 'Bash':
+          parameters = {
+            type: 'object',
+            properties: {
+              command: {
+                type: 'string',
+                description: 'The shell command to execute'
+              },
+              cwd: {
+                type: 'string',
+                description: 'Optional: Working directory'
+              },
+              description: {
+                type: 'string',
+                description: 'Optional: Brief description of the command'
+              },
+              timeout: {
+                type: 'number',
+                description: 'Optional: Timeout in seconds (default: 120)'
+              },
+              run_in_bg: {
+                type: 'boolean',
+                description: 'Optional: Run in background (default: false)'
+              }
+            },
+            required: ['command']
+          };
+          break;
+
+        case 'ListDirectory':
+          parameters = {
+            type: 'object',
+            properties: {
+              path: {
+                type: 'string',
+                description: 'Optional: The directory path to list (default: current directory)'
+              },
+              recursive: {
+                type: 'boolean',
+                description: 'Optional: List recursively (default: false)'
+              }
+            },
+            required: []
+          };
+          break;
+
+        case 'SearchCodebase':
+          parameters = {
+            type: 'object',
+            properties: {
+              pattern: {
+                type: 'string',
+                description: 'The glob pattern to match files'
+              },
+              path: {
+                type: 'string',
+                description: 'Optional: The path to search in (default: current directory)'
+              }
+            },
+            required: ['pattern']
+          };
+          break;
+
+        case 'DeleteFile':
+          parameters = {
+            type: 'object',
+            properties: {
+              filePath: {
+                type: 'string',
+                description: 'The path to the file to delete'
+              }
+            },
+            required: ['filePath']
+          };
+          break;
+
+        case 'CreateDirectory':
+          parameters = {
+            type: 'object',
+            properties: {
+              dirPath: {
+                type: 'string',
+                description: 'The directory path to create'
+              },
+              recursive: {
+                type: 'boolean',
+                description: 'Optional: Create parent directories (default: true)'
+              }
+            },
+            required: ['dirPath']
+          };
+          break;
+
+        case 'replace':
+          parameters = {
+            type: 'object',
+            properties: {
+              file_path: {
+                type: 'string',
+                description: 'The absolute path to the file'
+              },
+              instruction: {
+                type: 'string',
+                description: 'Description of what needs to be changed'
+              },
+              old_string: {
+                type: 'string',
+                description: 'The exact text to replace'
+              },
+              new_string: {
+                type: 'string',
+                description: 'The exact text to replace with'
+              }
+            },
+            required: ['file_path', 'instruction', 'old_string', 'new_string']
+          };
+          break;
+
+        case 'web_search':
+          parameters = {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'The search query'
+              }
+            },
+            required: ['query']
+          };
+          break;
+
+        case 'todo_write':
+          parameters = {
+            type: 'object',
+            properties: {
+              todos: {
+                type: 'array',
+                description: 'Array of todo items',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    task: { type: 'string' },
+                    status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'failed'] },
+                    priority: { type: 'string', enum: ['high', 'medium', 'low'] }
+                  },
+                  required: ['id', 'task', 'status']
+                }
+              }
+            },
+            required: ['todos']
+          };
+          break;
+
+        case 'todo_read':
+          parameters = {
+            type: 'object',
+            properties: {},
+            required: []
+          };
+          break;
+
+        case 'task':
+          parameters = {
+            type: 'object',
+            properties: {
+              description: {
+                type: 'string',
+                description: 'Brief description of the task (3-5 words)'
+              },
+              prompt: {
+                type: 'string',
+                description: 'The task for the agent to perform'
+              },
+              subagent_type: {
+                type: 'string',
+                enum: ['general-purpose', 'plan-agent', 'explore-agent', 'frontend-tester'],
+                description: 'The type of specialized agent'
+              },
+              useContext: {
+                type: 'boolean',
+                description: 'Optional: Include main agent context'
+              },
+              outputFormat: {
+                type: 'string',
+                description: 'Optional: Output format template'
+              },
+              constraints: {
+                type: 'string',
+                description: 'Optional: Constraints or limitations'
+              }
+            },
+            required: ['description', 'prompt', 'subagent_type']
+          };
+          break;
+
+        case 'ReadBashOutput':
+          parameters = {
+            type: 'object',
+            properties: {
+              task_id: {
+                type: 'string',
+                description: 'The ID of the task'
+              },
+              poll_interval: {
+                type: 'number',
+                description: 'Optional: Polling interval in seconds (default: 10)'
+              }
+            },
+            required: ['task_id']
+          };
+          break;
+
+        case 'web_fetch':
+          parameters = {
+            type: 'object',
+            properties: {
+              prompt: {
+                type: 'string',
+                description: 'Prompt containing URL(s) and processing instructions'
+              }
+            },
+            required: ['prompt']
+          };
+          break;
+
+        case 'ask_user_question':
+          parameters = {
+            type: 'object',
+            properties: {
+              questions: {
+                type: 'array',
+                description: 'Array of questions to ask',
+                items: {
+                  type: 'object',
+                  properties: {
+                    question: { type: 'string' },
+                    header: { type: 'string', description: 'Short label (max 12 chars)' },
+                    options: {
+                      type: 'array',
+                      items: { type: 'string' },
+                      description: 'Available choices (2-4 options)'
+                    },
+                    multiSelect: { type: 'boolean' }
+                  },
+                  required: ['question', 'header', 'options', 'multiSelect']
+                }
+              }
+            },
+            required: ['questions']
+          };
+          break;
+
+        case 'save_memory':
+          parameters = {
+            type: 'object',
+            properties: {
+              fact: {
+                type: 'string',
+                description: 'The specific fact to remember'
+              }
+            },
+            required: ['fact']
+          };
+          break;
+
+        case 'exit_plan_mode':
+          parameters = {
+            type: 'object',
+            properties: {
+              plan: {
+                type: 'string',
+                description: 'The plan to present'
+              }
+            },
+            required: ['plan']
+          };
+          break;
+
+        case 'xml_escape':
+          parameters = {
+            type: 'object',
+            properties: {
+              file_path: {
+                type: 'string',
+                description: 'The absolute path to the XML/HTML file'
+              },
+              escape_all: {
+                type: 'boolean',
+                description: 'Optional: Escape all special characters (default: false)'
+              }
+            },
+            required: ['file_path']
+          };
+          break;
+
+        case 'image_read':
+          parameters = {
+            type: 'object',
+            properties: {
+              image_input: {
+                type: 'string',
+                description: 'Image file path or base64 data'
+              },
+              prompt: {
+                type: 'string',
+                description: 'Comprehensive VLM instruction'
+              },
+              task_brief: {
+                type: 'string',
+                description: 'Brief task description (max 15 words)'
+              },
+              input_type: {
+                type: 'string',
+                enum: ['file_path', 'base64'],
+                description: 'Input type (default: file_path)'
+              },
+              mime_type: {
+                type: 'string',
+                description: 'Optional: MIME type for base64 input'
+              }
+            },
+            required: ['image_input', 'prompt']
+          };
+          break;
+
+        case 'Skill':
+          parameters = {
+            type: 'object',
+            properties: {
+              skill: {
+                type: 'string',
+                description: 'The skill name to execute'
+              }
+            },
+            required: ['skill']
+          };
+          break;
+
+        default:
+          // For any unknown tools, keep the empty schema
+          parameters = {
+            type: 'object',
+            properties: {},
+            required: []
+          };
       }
-    }));
+
+      return {
+        type: 'function',
+        function: {
+          name: tool.name,
+          description: tool.description,
+          parameters
+        }
+      };
+    });
   }
 
   async execute(toolName: string, params: any, executionMode: ExecutionMode): Promise<any> {

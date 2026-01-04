@@ -7,6 +7,9 @@ import { getConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { getAgentManager } from './agents.js';
 import { getMCPManager } from './mcp.js';
+import { getLogger } from './logger.js';
+
+const logger = getLogger();
 
 const program = new Command();
 
@@ -27,7 +30,7 @@ program
   .command('auth')
   .description('Configure authentication for xAgent CLI')
   .action(async () => {
-    console.log(chalk.cyan('\n🔐 Authentication Management\n'));
+    logger.section('Authentication Management');
 
     const authType = await selectAuthType();
     const configManager = getConfigManager();
@@ -45,10 +48,9 @@ program
     if (success) {
       const authConfig = authService.getAuthConfig();
       await configManager.setAuthConfig(authConfig);
-      console.log(chalk.green('\n✅ Authentication configured successfully!'));
-      console.log(chalk.gray('You can now run "xagent start" to begin.\n'));
+      logger.success('Authentication configured successfully!', 'You can now run "xagent start" to begin');
     } else {
-      console.log(chalk.red('\n❌ Authentication failed. Please try again.\n'));
+      logger.error('Authentication failed. Please try again.', 'Run "xagent auth" to retry');
       process.exit(1);
     }
   });
@@ -68,26 +70,25 @@ program
       const agents = agentManager.getAllAgents();
 
       if (agents.length === 0) {
-        console.log(chalk.yellow('No agents configured'));
+        logger.warn('No agents configured', 'Use /agents install in interactive mode to add agents');
       } else {
-        console.log(chalk.cyan('\n🤖 Available Agents:\n'));
+        logger.section('Available Agents');
         agents.forEach(agent => {
-          console.log(`  ${chalk.green(agent.agentType)}`);
-          console.log(`    ${chalk.gray(agent.whenToUse)}\n`);
+          logger.info(`  ${agent.agentType}`);
+          logger.info(`    ${agent.whenToUse}`);
         });
       }
     } else if (options.add) {
-      console.log(chalk.yellow('Agent creation wizard not implemented yet'));
-      console.log(chalk.gray('Use /agents install in interactive mode\n'));
+      logger.warn('Agent creation wizard not implemented yet', 'Use /agents install in interactive mode');
     } else if (options.remove) {
       try {
         await agentManager.removeAgent(options.remove, options.scope);
-        console.log(chalk.green(`✅ Agent ${options.remove} removed successfully\n`));
+        logger.success(`Agent ${options.remove} removed successfully`);
       } catch (error: any) {
-        console.log(chalk.red(`❌ Failed to remove agent: ${error.message}\n`));
+        logger.error(`Failed to remove agent: ${error.message}`, 'Check if the agent exists and try again');
       }
     } else {
-      console.log(chalk.yellow('Please specify an action: --list, --add, or --remove'));
+      logger.warn('Please specify an action: --list, --add, or --remove');
     }
   });
 
@@ -106,47 +107,46 @@ program
       const servers = mcpManager.getAllServers();
 
       if (servers.length === 0) {
-        console.log(chalk.yellow('No MCP servers configured'));
+        logger.warn('No MCP servers configured', 'Use /mcp add in interactive mode to add servers');
       } else {
-        console.log(chalk.cyan('\n🔌 MCP Servers:\n'));
+        logger.section('MCP Servers');
         servers.forEach(server => {
-          const connected = server.isServerConnected() ? chalk.green('✓') : chalk.red('✗');
-          console.log(`  ${connected} ${chalk.white(server.getToolNames().join(', '))}\n`);
+          const connected = server.isServerConnected() ? '✓' : '✗';
+          const status = server.isServerConnected() ? chalk.green(connected) : chalk.red(connected);
+          logger.info(`  ${status} ${server.getToolNames().join(', ')}`);
         });
       }
     } else if (options.add) {
-      console.log(chalk.yellow('MCP server addition not implemented yet'));
-      console.log(chalk.gray('Use /mcp add in interactive mode\n'));
+      logger.warn('MCP server addition not implemented yet', 'Use /mcp add in interactive mode');
     } else if (options.remove) {
       try {
         mcpManager.disconnectServer(options.remove);
         const mcpServers = configManager.getMcpServers();
         delete mcpServers[options.remove];
         await configManager.save(options.scope);
-        console.log(chalk.green(`✅ MCP server ${options.remove} removed successfully\n`));
+        logger.success(`MCP server ${options.remove} removed successfully`);
       } catch (error: any) {
-        console.log(chalk.red(`❌ Failed to remove MCP server: ${error.message}\n`));
+        logger.error(`Failed to remove MCP server: ${error.message}`, 'Check if the server exists and try again');
       }
     } else {
-      console.log(chalk.yellow('Please specify an action: --list, --add, or --remove'));
+      logger.warn('Please specify an action: --list, --add, or --remove');
     }
   });
 
 program
   .command('init')
-  .description('Initialize IFLOW.md for the current project')
+  .description('Initialize XAGENT.md for the current project')
   .action(async () => {
     const { getMemoryManager } = await import('./memory.js');
     const memoryManager = getMemoryManager(process.cwd());
 
-    console.log(chalk.cyan('\n📝 Initializing Project Context\n'));
+    logger.section('Initializing Project Context');
 
     try {
       await memoryManager.initializeProject(process.cwd());
-      console.log(chalk.green('\n✅ Project initialized successfully!'));
-      console.log(chalk.gray('You can now run "iflow start" to begin.\n'));
+      logger.success('Project initialized successfully!', 'You can now run "xagent start" to begin');
     } catch (error: any) {
-      console.log(chalk.red(`\n❌ Initialization failed: ${error.message}\n`));
+      logger.error(`Initialization failed: ${error.message}`, 'Check if you have write permissions for this directory');
       process.exit(1);
     }
   });
@@ -166,30 +166,32 @@ program
       const workflows = workflowManager.listWorkflows();
 
       if (workflows.length === 0) {
-        console.log(chalk.yellow('No workflows installed'));
+        logger.warn('No workflows installed', 'Use --add to install workflows from the marketplace');
       } else {
-        console.log(chalk.cyan('\n📦 Installed Workflows:\n'));
+        logger.section('Installed Workflows');
         workflows.forEach(workflow => {
-          console.log(`  ${chalk.green(workflow.name)} (${workflow.id})`);
-          console.log(`    ${chalk.gray(workflow.description)}\n`);
+          logger.info(`  ${workflow.name} (${workflow.id})`);
+          logger.info(`    ${workflow.description}`);
         });
       }
     } else if (options.add) {
       try {
         await workflowManager.addWorkflow(options.add, options.scope);
+        logger.success(`Workflow ${options.add} added successfully!`);
       } catch (error: any) {
-        console.log(chalk.red(`\n❌ ${error.message}\n`));
+        logger.error(error.message, 'Check the workflow ID and try again');
         process.exit(1);
       }
     } else if (options.remove) {
       try {
         await workflowManager.removeWorkflow(options.remove, options.scope);
+        logger.success(`Workflow ${options.remove} removed successfully!`);
       } catch (error: any) {
-        console.log(chalk.red(`\n❌ ${error.message}\n`));
+        logger.error(error.message, 'Check if the workflow exists and try again');
         process.exit(1);
       }
     } else {
-      console.log(chalk.yellow('Please specify an action: --list, --add, or --remove'));
+      logger.warn('Please specify an action: --list, --add, or --remove');
     }
   });
 
@@ -197,12 +199,12 @@ program
   .command('version')
   .description('Display version and check for updates')
   .action(async () => {
-    console.log(chalk.cyan('\nℹ️  iFlow CLI\n'));
+    console.log(chalk.cyan('\nℹ️  xAgent CLI\n'));
     console.log(chalk.gray('Version: 1.0.0'));
     console.log(chalk.gray('Node.js: ' + process.version));
     console.log(chalk.gray('Platform: ' + process.platform + ' ' + process.arch));
-    console.log(chalk.gray('\nDocumentation: https://platform.iflow.cn/cli/'));
-    console.log(chalk.gray('GitHub: https://github.com/iflow-ai/iflow-cli\n'));
+    console.log(chalk.gray('\nDocumentation: https://platform.xagent.cn/cli/'));
+    console.log(chalk.gray('GitHub: https://github.com/xagent-ai/xagent-cli\n'));
   });
 
 program.parse(process.argv);

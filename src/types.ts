@@ -83,6 +83,7 @@ export interface Settings {
   language: 'zh' | 'en';
   autoUpdate: boolean;
   telemetryEnabled: boolean;
+  showToolDetails: boolean;
 }
 
 export interface ChatMessage {

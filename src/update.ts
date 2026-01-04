@@ -123,13 +123,13 @@ export class UpdateManager {
     const execAsync = promisify(exec);
 
     try {
-      console.log('Updating iFlow CLI...');
+      console.log('Updating xAgent CLI...');
 
       await execAsync('npm install -g @xagent-ai/xagent-cli@latest', {
         timeout: 120000
       });
 
-      console.log('✅ Update successful! Please restart iFlow CLI.');
+      console.log('✅ Update successful! Please restart xAgent CLI.');
       return true;
     } catch (error: any) {
       console.error('❌ Update failed:', error.message);
@@ -245,8 +245,8 @@ export class UpdateManager {
     console.log(`✅ Auto-update ${enabled ? 'enabled' : 'disabled'}`);
   }
 
-  isAutoUpdateEnabled(): boolean {
-    const { getConfigManager } = require('./config.js');
+  async isAutoUpdateEnabled(): Promise<boolean> {
+    const { getConfigManager } = await import('./config.js');
     const configManager = getConfigManager();
     return configManager.get('autoUpdate');
   }
@@ -264,7 +264,7 @@ export function getUpdateManager(): UpdateManager {
 export async function checkUpdatesOnStartup(): Promise<void> {
   const updateManager = getUpdateManager();
   
-  if (updateManager.isAutoUpdateEnabled()) {
+  if (await updateManager.isAutoUpdateEnabled()) {
     await updateManager.checkUpdateOnStartup();
   }
 }

@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import crypto from 'crypto';
 import { Checkpoint, ChatMessage, ToolCall } from './types.js';
 
 const execAsync = promisify(exec);
@@ -24,7 +25,6 @@ export class CheckpointManager {
   }
 
   private generateProjectHash(projectRoot: string): string {
-    const crypto = require('crypto');
     return crypto.createHash('md5').update(projectRoot).digest('hex').substring(0, 16);
   }
 
@@ -49,7 +49,7 @@ export class CheckpointManager {
       console.log('Initializing shadow Git repository for checkpoints...');
       await execAsync('git init', { cwd: this.snapshotsDir });
       await execAsync('git config user.email "xagent@checkpoint.local"', { cwd: this.snapshotsDir });
-      await execAsync('git config user.name "iFlow Checkpoint"', { cwd: this.snapshotsDir });
+      await execAsync('git config user.name "xAgent Checkpoint"', { cwd: this.snapshotsDir });
     }
   }
 

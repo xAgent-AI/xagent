@@ -16,10 +16,10 @@ export class MemoryManager {
   private memoryFiles: MemoryFile[] = [];
   private contextFileNames: string | string[];
 
-  constructor(projectRoot?: string, contextFileName: string | string[] = 'IFLOW.md') {
-    this.globalMemoryPath = path.join(os.homedir(), '.xagent', 'IFLOW.md');
+  constructor(projectRoot?: string, contextFileName: string | string[] = 'XAGENT.md') {
+    this.globalMemoryPath = path.join(os.homedir(), '.xagent', 'XAGENT.md');
     this.projectMemoryPath = projectRoot 
-      ? path.join(projectRoot, 'IFLOW.md')
+      ? path.join(projectRoot, 'XAGENT.md')
       : '';
     this.contextFileNames = contextFileName;
   }
@@ -73,13 +73,13 @@ export class MemoryManager {
     const projectRoot = path.dirname(this.projectMemoryPath);
     
     try {
-      const files = await glob('**/IFLOW.md', {
+      const files = await glob('**/XAGENT.md', {
         cwd: projectRoot,
         ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
       });
 
       for (const file of files) {
-        if (file !== 'IFLOW.md') {
+        if (file !== 'XAGENT.md') {
           const filePath = path.join(projectRoot, file);
           const memory = await this.loadMemoryFile(filePath, 'subdirectory');
           if (memory) {
@@ -177,15 +177,15 @@ export class MemoryManager {
   }
 
   async initializeProject(projectRoot: string): Promise<void> {
-    this.projectMemoryPath = path.join(projectRoot, 'IFLOW.md');
+    this.projectMemoryPath = path.join(projectRoot, 'XAGENT.md');
     
     const existingMemory = await this.loadMemoryFile(this.projectMemoryPath, 'project');
     if (existingMemory) {
-      console.log('IFLOW.md already exists. Skipping initialization.');
+      console.log('XAGENT.md already exists. Skipping initialization.');
       return;
     }
 
-    console.log('Creating IFLOW.md...');
+    console.log('Creating XAGENT.md...');
     await this.saveMemory('# Project Context\n\nProject-specific context will be added here.', 'project');
     
     console.log('Analyzing project structure...');
@@ -194,7 +194,7 @@ export class MemoryManager {
     console.log('Generating project-specific context...');
     await this.saveMemory(analysis, 'project');
     
-    console.log('✅ IFLOW.md has been successfully populated with project-specific information.');
+    console.log('✅ XAGENT.md has been successfully populated with project-specific information.');
   }
 
   private async analyzeProject(projectRoot: string): Promise<string> {

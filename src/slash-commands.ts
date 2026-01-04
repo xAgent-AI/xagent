@@ -1,14 +1,17 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
-import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint } from './types.js';
+import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { getToolRegistry } from './tools.js';
-import { getAgentManager, AgentConfig } from './agents.js';
+import { getAgentManager } from './agents.js';
 import { getMemoryManager, MemoryFile } from './memory.js';
 import { getMCPManager, MCPServer } from './mcp.js';
 import { getCheckpointManager } from './checkpoint.js';
 import { getConfigManager, ConfigManager } from './config.js';
+import { getLogger } from './logger.js';
+
+const logger = getLogger();
 
 export class SlashCommandHandler {
   private configManager: ConfigManager;
@@ -80,21 +83,20 @@ export class SlashCommandHandler {
         await this.handleAbout();
         break;
       default:
-        console.log(chalk.yellow(`Unknown command: /${command}`));
-        console.log(chalk.gray('Type /help for available commands'));
+        logger.warn(`Unknown command: /${command}`, 'Type /help for available commands');
     }
 
     return true;
   }
 
   private async showHelp(): Promise<void> {
-    console.log(chalk.cyan('\n📚 Available Commands:\n'));
+    logger.section('Available Commands');
 
     const commands = [
       { cmd: '/help', desc: 'Show this help message' },
-      { cmd: '/init', desc: 'Initialize project context (IFLOW.md)' },
+      { cmd: '/init', desc: 'Initialize project context (XAGENT.md)' },
       { cmd: '/clear', desc: 'Clear conversation history' },
-      { cmd: '/exit', desc: 'Exit iFlow CLI' },
+      { cmd: '/exit', desc: 'Exit xAgent CLI' },
       { cmd: '/auth', desc: 'Change authentication method' },
       { cmd: '/mode', desc: 'Switch execution mode (yolo/accept_edits/plan/default)' },
       { cmd: '/agents', desc: 'Manage SubAgents (list/online/install/remove)' },
@@ -108,11 +110,7 @@ export class SlashCommandHandler {
       { cmd: '/about', desc: 'Show version and information' }
     ];
 
-    commands.forEach(({ cmd, desc }) => {
-      console.log(`  ${chalk.green(cmd.padEnd(20))} ${chalk.gray(desc)}`);
-    });
-
-    console.log();
+    logger.list(commands.map(c => `${c.cmd.padEnd(20)} ${c.desc}`), { indent: 2 });
   }
 
   private async handleInit(): Promise<void> {
@@ -127,16 +125,16 @@ export class SlashCommandHandler {
   }
 
   private async handleClear(): Promise<void> {
-    console.log(chalk.yellow('Conversation history cleared'));
+    logger.success('Conversation history cleared', 'Start a new conversation');
   }
 
   private async handleExit(): Promise<void> {
-    console.log(chalk.cyan('\n👋 Goodbye!'));
+    logger.info('Goodbye!', 'Thank you for using xAgent CLI');
     process.exit(0);
   }
 
   private async handleAuth(): Promise<void> {
-    console.log(chalk.cyan('\n🔐 Authentication Management\n'));
+    logger.section('Authentication Management');
 
     const { action } = await inquirer.prompt([
       {
@@ -157,7 +155,7 @@ export class SlashCommandHandler {
 
     if (action === 'show') {
       const authConfig = this.configManager.getAuthConfig();
-      console.log(chalk.gray('\nCurrent Authentication Configuration:'));
+      logger.subsection('Current Authentication Configuration');
       console.log(JSON.stringify(authConfig, null, 2));
     } else if (action === 'change') {
       const { selectAuthType } = await inquirer.prompt([
@@ -170,7 +168,7 @@ export class SlashCommandHandler {
       ]);
 
       if (selectAuthType) {
-        console.log(chalk.yellow('Please restart iFlow CLI and run /auth again'));
+        logger.warn('Please restart xAgent CLI and run /auth again', 'Authentication changes require restart');
       }
     }
   }
@@ -180,7 +178,7 @@ export class SlashCommandHandler {
     const currentMode = this.configManager.getExecutionMode();
 
     if (args.length > 0) {
-      const newMode = args[0].toUpperCase();
+      const newMode = args[0].toLowerCase();
       if (modes.includes(newMode as ExecutionMode)) {
         this.configManager.setExecutionMode(newMode as ExecutionMode);
         console.log(chalk.green(`✅ Execution mode changed to: ${newMode}`));
@@ -193,10 +191,10 @@ export class SlashCommandHandler {
       console.log(`  Current: ${chalk.green(currentMode)}\n`);
 
       const descriptions = [
-        { mode: 'YOLO', desc: 'Full permissions - can execute any operation' },
-        { mode: 'ACCEPT_EDITS', desc: 'File edit permissions only' },
-        { mode: 'PLAN', desc: 'Plan first, execute later' },
-        { mode: 'DEFAULT', desc: 'No permissions - read-only' }
+        { mode: 'yolo', desc: 'Full permissions - can execute any operation' },
+        { mode: 'accept_edits', desc: 'File edit permissions only' },
+        { mode: 'plan', desc: 'Plan first, execute later' },
+        { mode: 'default', desc: 'No permissions - read-only' }
       ];
 
       descriptions.forEach(({ mode, desc }) => {
@@ -217,16 +215,16 @@ export class SlashCommandHandler {
         await this.listAgents();
         break;
       case 'online':
-        console.log(chalk.yellow('Online marketplace not implemented yet'));
+        logger.warn('Online marketplace not implemented yet', 'Check back later for updates');
         break;
       case 'install':
-        console.log(chalk.yellow('Agent installation wizard not implemented yet'));
+        logger.warn('Agent installation wizard not implemented yet', 'Use /agents install in interactive mode');
         break;
       case 'remove':
-        console.log(chalk.yellow('Agent removal not implemented yet'));
+        logger.warn('Agent removal not implemented yet', 'Use /agents remove in interactive mode');
         break;
       default:
-        console.log(chalk.yellow(`Unknown agents action: ${action}`));
+        logger.warn(`Unknown agents action: ${action}`, 'Use /agents list to see available actions');
     }
   }
 
@@ -234,17 +232,17 @@ export class SlashCommandHandler {
     const agents = this.agentManager.getAllAgents();
 
     if (agents.length === 0) {
-      console.log(chalk.yellow('No agents configured'));
+      logger.warn('No agents configured', 'Use /agents install to add agents');
       return;
     }
 
-    console.log(chalk.cyan('\n🤖 Available Agents:\n'));
+    logger.section('Available Agents');
 
     agents.forEach((agent: AgentConfig) => {
       const color = agent.color || '#FFFFFF';
-      console.log(`  ${chalk.hex(color)(agent.name || agent.agentType)}`);
-      console.log(`    Type: ${chalk.gray(agent.agentType)}`);
-      console.log(`    ${chalk.gray(agent.whenToUse)}\n`);
+      logger.info(`  ${chalk.hex(color)(agent.name || agent.agentType)}`);
+      logger.info(`    Type: ${agent.agentType}`);
+      logger.info(`    ${agent.whenToUse}`);
     });
   }
 
@@ -256,16 +254,16 @@ export class SlashCommandHandler {
         await this.listMcpServers();
         break;
       case 'add':
-        console.log(chalk.yellow('MCP server addition not implemented yet'));
+        logger.warn('MCP server addition not implemented yet', 'Use /mcp add in interactive mode');
         break;
       case 'remove':
-        console.log(chalk.yellow('MCP server removal not implemented yet'));
+        logger.warn('MCP server removal not implemented yet', 'Use /mcp remove in interactive mode');
         break;
       case 'refresh':
-        console.log(chalk.yellow('MCP server refresh not implemented yet'));
+        logger.warn('MCP server refresh not implemented yet', 'Check back later for updates');
         break;
       default:
-        console.log(chalk.yellow(`Unknown MCP action: ${action}`));
+        logger.warn(`Unknown MCP action: ${action}`, 'Use /mcp list to see available actions');
     }
   }
 
@@ -273,18 +271,17 @@ export class SlashCommandHandler {
     const servers = this.mcpManager.getAllServers();
 
     if (servers.length === 0) {
-      console.log(chalk.yellow('No MCP servers configured'));
+      logger.warn('No MCP servers configured', 'Use /mcp add to add servers');
       return;
     }
 
-    console.log(chalk.cyan('\n🔌 MCP Servers:\n'));
+    logger.section('MCP Servers');
 
     servers.forEach((server: MCPServer) => {
-      const connected = server.isServerConnected() ? chalk.green('✓') : chalk.red('✗');
-      console.log(`  ${connected} ${chalk.white(server.getToolNames().join(', '))}`);
+      const connected = server.isServerConnected() ? '✓' : '✗';
+      const status = server.isServerConnected() ? chalk.green(connected) : chalk.red(connected);
+      logger.info(`  ${status} ${server.getToolNames().join(', ')}`);
     });
-
-    console.log();
   }
 
   private async handleMemory(args: string[]): Promise<void> {
@@ -295,13 +292,13 @@ export class SlashCommandHandler {
         await this.showMemory();
         break;
       case 'add':
-        await this.addMemory();
+        logger.warn('Memory addition not implemented yet', 'Use /memory add in interactive mode');
         break;
       case 'refresh':
-        await this.refreshMemory();
+        logger.warn('Memory refresh not implemented yet', 'Check back later for updates');
         break;
       default:
-        console.log(chalk.yellow(`Unknown memory action: ${action}`));
+        logger.warn(`Unknown memory action: ${action}`, 'Use /memory show to see available actions');
     }
   }
 
@@ -309,20 +306,18 @@ export class SlashCommandHandler {
     const memoryFiles = this.memoryManager.getMemoryFiles();
 
     if (memoryFiles.length === 0) {
-      console.log(chalk.yellow('No memory files loaded'));
+      logger.warn('No memory files loaded', 'Use /init to initialize project context');
       return;
     }
 
-    console.log(chalk.cyan('\n📝 Memory Files:\n'));
+    logger.section('Memory Files');
 
     memoryFiles.forEach((file: MemoryFile) => {
       const level = file.level === 'global' ? chalk.blue('[global]') :
                      file.level === 'project' ? chalk.green('[project]') :
                      chalk.yellow('[subdirectory]');
-      console.log(`  ${level} ${file.path}`);
+      logger.info(`  ${level} ${file.path}`);
     });
-
-    console.log();
   }
 
   private async addMemory(): Promise<void> {
@@ -353,15 +348,14 @@ export class SlashCommandHandler {
 
   private async handleRestore(args: string[]): Promise<void> {
     if (!this.checkpointManager.isEnabled()) {
-      console.log(chalk.yellow('Checkpointing is not enabled'));
-      console.log(chalk.gray('Enable it with /mode or in settings'));
+      logger.warn('Checkpointing is not enabled', 'Enable it with /mode or in settings');
       return;
     }
 
     const checkpoints = this.checkpointManager.listCheckpoints();
 
     if (checkpoints.length === 0) {
-      console.log(chalk.yellow('No checkpoints available'));
+      logger.warn('No checkpoints available', 'Create checkpoints during your session');
       return;
     }
 
@@ -369,8 +363,9 @@ export class SlashCommandHandler {
       const checkpointId = args[0];
       try {
         await this.checkpointManager.restoreCheckpoint(checkpointId);
+        logger.success(`Checkpoint ${checkpointId} restored successfully!`);
       } catch (error: any) {
-        console.log(chalk.red(`❌ ${error.message}`));
+        logger.error(error.message, 'Check if checkpoint ID is valid');
       }
     } else {
       const choices = checkpoints.map((cp: Checkpoint) => ({
@@ -389,8 +384,9 @@ export class SlashCommandHandler {
 
       try {
         await this.checkpointManager.restoreCheckpoint(checkpointId);
+        logger.success(`Checkpoint ${checkpointId} restored successfully!`);
       } catch (error: any) {
-        console.log(chalk.red(`❌ ${error.message}`));
+        logger.error(error.message, 'Check if checkpoint ID is valid');
       }
     }
   }
@@ -399,26 +395,25 @@ export class SlashCommandHandler {
     const toolRegistry = getToolRegistry();
     const tools = toolRegistry.getAll();
 
-    console.log(chalk.cyan('\n🔧 Available Tools:\n'));
+    logger.section('Available Tools');
 
     tools.forEach(tool => {
-      console.log(`  ${chalk.green(tool.name)}`);
-      console.log(`    ${chalk.gray(tool.description)}\n`);
+      logger.info(`  ${tool.name}`);
+      logger.info(`    ${tool.description}`);
     });
   }
 
   private async handleStats(): Promise<void> {
-    console.log(chalk.cyan('\n📊 Session Statistics:\n'));
-    console.log(`  Execution Mode: ${chalk.green(this.configManager.getExecutionMode())}`);
-    console.log(`  Language: ${chalk.green(this.configManager.getLanguage())}`);
-    console.log(`  Checkpointing: ${this.checkpointManager.isEnabled() ? chalk.green('Enabled') : chalk.red('Disabled')}`);
-    console.log(`  MCP Servers: ${chalk.green(this.mcpManager.getAllServers().length)}`);
-    console.log(`  Agents: ${chalk.green(this.agentManager.getAllAgents().length)}`);
-    console.log();
+    logger.section('Session Statistics');
+    logger.info(`  Execution Mode: ${this.configManager.getExecutionMode()}`);
+    logger.info(`  Language: ${this.configManager.getLanguage()}`);
+    logger.info(`  Checkpointing: ${this.checkpointManager.isEnabled() ? 'Enabled' : 'Disabled'}`);
+    logger.info(`  MCP Servers: ${this.mcpManager.getAllServers().length}`);
+    logger.info(`  Agents: ${this.agentManager.getAllAgents().length}`);
   }
 
   private async handleTheme(): Promise<void> {
-    console.log(chalk.yellow('Theme switching not implemented yet'));
+    logger.warn('Theme switching not implemented yet', 'Check back later for updates');
   }
 
   private async handleLanguage(): Promise<void> {
@@ -435,15 +430,16 @@ export class SlashCommandHandler {
     ]);
 
     this.configManager.setLanguage(language);
-    console.log(chalk.green(`✅ Language changed to: ${language === 'zh' ? '中文' : 'English'}`));
+    logger.success(`Language changed to: ${language === 'zh' ? '中文' : 'English'}`, 'Restart CLI to apply changes');
   }
 
   private async handleAbout(): Promise<void> {
-    console.log(chalk.cyan('\nℹ️  iFlow CLI\n'));
-    console.log(chalk.gray('Version: 1.0.0'));
-    console.log(chalk.gray('A powerful AI-powered command-line assistant'));
-    console.log(chalk.gray('\nDocumentation: https://platform.xagent.cn/'));
-    console.log(chalk.gray('GitHub: https://github.com/xagent-ai/xagent-cli\n'));
+    logger.section('xAgent CLI');
+    logger.info('Version: 1.0.0');
+    logger.info('A powerful AI-powered command-line assistant');
+    logger.blank();
+    logger.link('Documentation', 'https://platform.xagent.cn/');
+    logger.link('GitHub', 'https://github.com/xagent-ai/xagent-cli');
   }
 }
 

@@ -1,7 +1,10 @@
-import fs from 'fs/promises';
+import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { Settings, AuthType, ExecutionMode, MCPServerConfig, CheckpointConfig, ThinkingConfig } from './types.js';
+import { getLogger } from './logger.js';
+
+const logger = getLogger();
 
 const DEFAULT_SETTINGS: Settings = {
   theme: 'Default',
@@ -25,7 +28,8 @@ const DEFAULT_SETTINGS: Settings = {
   mcpServers: {},
   language: 'zh',
   autoUpdate: true,
-  telemetryEnabled: true
+  telemetryEnabled: true,
+  showToolDetails: false
 };
 
 export class ConfigManager {
@@ -43,17 +47,17 @@ export class ConfigManager {
 
   async load(): Promise<Settings> {
     try {
-      const globalConfig = await this.readConfigFile(this.globalConfigPath);
+      const globalConfig = this.readConfigFile(this.globalConfigPath);
       this.settings = { ...DEFAULT_SETTINGS, ...globalConfig };
 
       if (this.projectConfigPath) {
-        const projectConfig = await this.readConfigFile(this.projectConfigPath);
+        const projectConfig = this.readConfigFile(this.projectConfigPath);
         this.settings = { ...this.settings, ...projectConfig };
       }
 
       return this.settings;
     } catch (error) {
-      console.error('Failed to load config:', error);
+      logger.error('Failed to load config', 'Check if config files exist and are valid');
       return { ...DEFAULT_SETTINGS };
     }
   }
@@ -65,13 +69,13 @@ export class ConfigManager {
     }
 
     const configDir = path.dirname(configPath);
-    await fs.mkdir(configDir, { recursive: true });
+    fs.mkdirSync(configDir, { recursive: true });
 
-    const configToSave = scope === 'global' 
+    const configToSave = scope === 'global'
       ? this.settings
       : { mcpServers: this.settings.mcpServers };
 
-    await fs.writeFile(
+    fs.writeFileSync(
       configPath,
       JSON.stringify(configToSave, null, 2),
       'utf-8'
@@ -149,13 +153,13 @@ export class ConfigManager {
     this.settings.language = language;
   }
 
-  private async readConfigFile(filePath: string): Promise<Partial<Settings>> {
+  private readConfigFile(filePath: string): Partial<Settings> {
     try {
-      const content = await fs.readFile(filePath, 'utf-8');
+      const content = fs.readFileSync(filePath, 'utf-8');
       return JSON.parse(content);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error(`Error reading config file ${filePath}:`, error);
+        logger.error(`Error reading config file ${filePath}`, 'Check file permissions and format');
       }
       return {};
     }

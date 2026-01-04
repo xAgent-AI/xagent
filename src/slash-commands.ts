@@ -10,6 +10,7 @@ import { getMCPManager, MCPServer } from './mcp.js';
 import { getCheckpointManager } from './checkpoint.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { getLogger } from './logger.js';
+import { icons, colors } from './theme.js';
 
 const logger = getLogger();
 
@@ -93,28 +94,183 @@ export class SlashCommandHandler {
   }
 
   private async showHelp(): Promise<void> {
-    logger.section('Available Commands');
+    const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80));
 
-    const commands = [
-      { cmd: '/help', desc: 'Show this help message' },
-      { cmd: '/init', desc: 'Initialize project context (XAGENT.md)' },
-      { cmd: '/clear', desc: 'Clear conversation history' },
-      { cmd: '/exit', desc: 'Exit xAgent CLI' },
-      { cmd: '/auth', desc: 'Change authentication method' },
-      { cmd: '/mode', desc: 'Switch approval mode (yolo/accept_edits/plan/default/smart)' },
-      { cmd: '/think', desc: 'Toggle thinking mode and display (on/off/display)' },
-      { cmd: '/agents', desc: 'Manage SubAgents (list/online/install/remove)' },
-      { cmd: '/mcp', desc: 'Manage MCP servers (list/add/remove/refresh)' },
-      { cmd: '/memory', desc: 'Manage memory (show/add/refresh)' },
-      { cmd: '/restore', desc: 'Restore from checkpoint' },
-      { cmd: '/tools', desc: 'List available tools' },
-      { cmd: '/stats', desc: 'Show session statistics' },
-      { cmd: '/theme', desc: 'Change UI theme' },
-      { cmd: '/language', desc: 'Change language (zh/en)' },
-      { cmd: '/about', desc: 'Show version and information' }
-    ];
+    console.log('');
+    console.log(colors.primaryBright('╔════════════════════════════════════════════════════════════╗'));
+    console.log(colors.primaryBright('║') + ' '.repeat(56) + colors.primaryBright('║'));
+    console.log(' '.repeat(14) + colors.gradient('📚 XAGENT CLI 帮助') + ' '.repeat(31) + colors.primaryBright('║'));
+    console.log(colors.primaryBright('║') + ' '.repeat(56) + colors.primaryBright('║'));
+    console.log(colors.primaryBright('╚════════════════════════════════════════════════════════════╝'));
+    console.log('');
 
-    logger.list(commands.map(c => `${c.cmd.padEnd(20)} ${c.desc}`), { indent: 2 });
+    // 基础命令
+    this.showHelpCategory('基础命令', [
+      {
+        cmd: '/help [命令名]',
+        desc: '显示帮助信息',
+        detail: '查看所有可用命令或特定命令的详细说明',
+        example: '/help\n/help mode'
+      },
+      {
+        cmd: '/clear',
+        desc: '清空对话历史',
+        detail: '清除当前会话的所有对话记录，开始新的对话',
+        example: '/clear'
+      },
+      {
+        cmd: '/exit',
+        desc: '退出程序',
+        detail: '安全退出 XAGENT CLI',
+        example: '/exit'
+      }
+    ]);
+
+    // 项目管理
+    this.showHelpCategory('项目管理', [
+      {
+        cmd: '/init',
+        desc: '初始化项目上下文',
+        detail: '在当前目录创建 XAGENT.md 文件，用于存储项目上下文信息',
+        example: '/init'
+      },
+      {
+        cmd: '/memory [show|add|refresh]',
+        desc: '管理项目记忆',
+        detail: '查看、添加或刷新项目记忆信息',
+        example: '/memory show\n/memory add "项目使用 TypeScript"'
+      }
+    ]);
+
+    // 认证与配置
+    this.showHelpCategory('认证与配置', [
+      {
+        cmd: '/auth',
+        desc: '配置认证信息',
+        detail: '更改或查看当前的认证配置',
+        example: '/auth'
+      },
+      {
+        cmd: '/mode [模式]',
+        desc: '切换审核模式',
+        detail: '切换工具执行的安全审核模式',
+        example: '/mode\n/mode smart\n/mode yolo',
+        modes: [
+          'yolo - 无限制执行所有操作',
+          'accept_edits - 自动接受编辑操作',
+          'plan - 先规划后执行',
+          'default - 安全执行，需要确认',
+          'smart - 智能审核（推荐）'
+        ]
+      },
+      {
+        cmd: '/think [on|off|display]',
+        desc: '控制思考模式',
+        detail: '启用/禁用 AI 的思考过程显示',
+        example: '/think on\n/think off\n/think display compact'
+      },
+      {
+        cmd: '/language [zh|en]',
+        desc: '切换语言',
+        detail: '在中文和英文界面之间切换',
+        example: '/language zh\n/language en'
+      },
+      {
+        cmd: '/theme',
+        desc: '切换主题',
+        detail: '更改 UI 主题样式',
+        example: '/theme'
+      }
+    ]);
+
+    // 功能扩展
+    this.showHelpCategory('功能扩展', [
+      {
+        cmd: '/agents [list|online|install|remove]',
+        desc: '管理子代理',
+        detail: '查看、安装或移除专门的 AI 子代理',
+        example: '/agents list\n/agents online\n/agents install explore-agent'
+      },
+      {
+        cmd: '/mcp [list|add|remove|refresh]',
+        desc: '管理 MCP 服务器',
+        detail: '管理 Model Context Protocol 服务器',
+        example: '/mcp list\n/mcp add server-name'
+      },
+      {
+        cmd: '/tools [verbose|simple]',
+        desc: '管理工具显示',
+        detail: '查看可用工具或切换工具调用显示模式',
+        example: '/tools\n/tools verbose\n/tools simple'
+      }
+    ]);
+
+    // 高级功能
+    this.showHelpCategory('高级功能', [
+      {
+        cmd: '/restore',
+        desc: '从检查点恢复',
+        detail: '从历史检查点恢复对话状态',
+        example: '/restore'
+      },
+      {
+        cmd: '/stats',
+        desc: '显示会话统计',
+        detail: '查看当前会话的统计信息',
+        example: '/stats'
+      },
+      {
+        cmd: '/about',
+        desc: '显示版本信息',
+        detail: '查看 XAGENT CLI 的版本和相关信息',
+        example: '/about'
+      }
+    ]);
+
+    // 快捷键
+    console.log('');
+    console.log(colors.border(separator));
+    console.log(colors.primaryBright('快捷键'));
+    console.log(colors.border(separator));
+    console.log('');
+    console.log(colors.textMuted('  ESC       - 取消当前操作'));
+    console.log(colors.textMuted('  Ctrl+C    - 退出程序'));
+    console.log('');
+  }
+
+  private showHelpCategory(title: string, commands: Array<{
+    cmd: string;
+    desc: string;
+    detail: string;
+    example: string;
+    modes?: string[];
+  }>): void {
+    const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80));
+
+    console.log('');
+    console.log(colors.border(separator));
+    console.log(colors.primaryBright(title));
+    console.log(colors.border(separator));
+    console.log('');
+
+    commands.forEach(cmd => {
+      console.log(colors.primaryBright(`  ${cmd.cmd}`));
+      console.log(colors.textDim(`    ${cmd.desc}`));
+      console.log(colors.textMuted(`    ${cmd.detail}`));
+
+      if (cmd.modes) {
+        console.log(colors.textDim(`    可用模式:`));
+        cmd.modes.forEach(mode => {
+          console.log(colors.textDim(`      • ${mode}`));
+        });
+      }
+
+      console.log(colors.accent(`    示例:`));
+      cmd.example.split('\n').forEach(ex => {
+        console.log(colors.codeText(`      ${ex}`));
+      });
+      console.log('');
+    });
   }
 
   private async handleInit(): Promise<void> {

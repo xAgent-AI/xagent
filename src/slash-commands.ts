@@ -55,6 +55,9 @@ export class SlashCommandHandler {
       case 'mode':
         await this.handleMode(args);
         break;
+      case 'think':
+        await this.handleThink(args);
+        break;
       case 'agents':
         await this.handleAgents(args);
         break;
@@ -99,6 +102,7 @@ export class SlashCommandHandler {
       { cmd: '/exit', desc: 'Exit xAgent CLI' },
       { cmd: '/auth', desc: 'Change authentication method' },
       { cmd: '/mode', desc: 'Switch execution mode (yolo/accept_edits/plan/default)' },
+      { cmd: '/think', desc: 'Toggle thinking mode (on/off)' },
       { cmd: '/agents', desc: 'Manage SubAgents (list/online/install/remove)' },
       { cmd: '/mcp', desc: 'Manage MCP servers (list/add/remove/refresh)' },
       { cmd: '/memory', desc: 'Manage memory (show/add/refresh)' },
@@ -203,6 +207,39 @@ export class SlashCommandHandler {
         console.log(`    ${chalk.gray(desc)}`);
       });
 
+      console.log();
+    }
+  }
+
+  private async handleThink(args: string[]): Promise<void> {
+    const thinkingConfig = this.configManager.getThinkingConfig();
+
+    if (args.length > 0) {
+      const action = args[0].toLowerCase();
+
+      if (action === 'on' || action === 'true' || action === '1') {
+        thinkingConfig.enabled = true;
+        this.configManager.setThinkingConfig(thinkingConfig);
+        await this.configManager.save('global');
+        console.log(chalk.green('✅ Thinking mode enabled'));
+      } else if (action === 'off' || action === 'false' || action === '0') {
+        thinkingConfig.enabled = false;
+        this.configManager.setThinkingConfig(thinkingConfig);
+        await this.configManager.save('global');
+        console.log(chalk.green('✅ Thinking mode disabled'));
+      } else {
+        console.log(chalk.red(`❌ Invalid action: ${action}`));
+        console.log(chalk.gray('Usage: /think [on|off]'));
+      }
+    } else {
+      console.log(chalk.cyan('\n🧠 Thinking Mode:\n'));
+      console.log(`  Status: ${thinkingConfig.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`);
+      console.log(`  Mode: ${chalk.yellow(thinkingConfig.mode)}`);
+      console.log(`  Display: ${chalk.yellow(thinkingConfig.displayMode)}\n`);
+
+      console.log(chalk.gray('Usage: /think [on|off]'));
+      console.log(chalk.gray('  /think on   - Enable thinking mode'));
+      console.log(chalk.gray('  /think off  - Disable thinking mode'));
       console.log();
     }
   }

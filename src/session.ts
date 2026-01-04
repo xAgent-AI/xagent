@@ -255,8 +255,15 @@ export class InteractiveSession {
       }
     }
 
-    const thinkingMode = detectThinkingKeywords(userContent);
-    const thinkingTokens = getThinkingTokens(thinkingMode);
+    // Calculate thinking tokens based on config and user input
+    const thinkingConfig = this.configManager.getThinkingConfig();
+    let thinkingTokens = 0;
+
+    if (thinkingConfig.enabled) {
+      // If thinking mode is enabled, detect keywords and calculate tokens
+      const thinkingMode = detectThinkingKeywords(userContent);
+      thinkingTokens = getThinkingTokens(thinkingMode);
+    }
 
     const userMessage: ChatMessage = {
       role: 'user',

@@ -12,6 +12,7 @@ import { getMemoryManager, MemoryManager } from './memory.js';
 import { getMCPManager, MCPManager } from './mcp.js';
 import { getCheckpointManager, CheckpointManager } from './checkpoint.js';
 import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
+import { SystemPromptGenerator } from './system-prompt-generator.js';
 
 export class InteractiveSession {
   private rl: readline.Interface;
@@ -312,10 +313,12 @@ export class InteractiveSession {
         ? toolRegistry.getToolDefinitions()
         : [];
 
-      const systemPrompt = agent?.systemPrompt || 'You are a helpful AI assistant.';
+      const baseSystemPrompt = agent?.systemPrompt || 'You are a helpful AI assistant.';
+      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+      const enhancedSystemPrompt = systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
       
       const messages: Message[] = [
-        { role: 'system', content: `${systemPrompt}\n\n${memory}` },
+        { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}` },
         ...this.conversation.map(msg => ({
           role: msg.role,
           content: msg.content

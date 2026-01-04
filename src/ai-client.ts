@@ -4,6 +4,7 @@ import { AuthConfig } from './types.js';
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+  reasoning_content?: string;
   tool_calls?: any[];
   tool_call_id?: string;
 }

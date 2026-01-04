@@ -276,6 +276,45 @@ export class InteractiveSession {
     await this.generateResponse(agent, thinkingTokens);
   }
 
+  private displayThinkingContent(reasoningContent: string): void {
+    const thinkingConfig = this.configManager.getThinkingConfig();
+    const displayMode = thinkingConfig.displayMode || 'compact';
+
+    console.log(chalk.gray('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+
+    switch (displayMode) {
+      case 'full':
+        // 完整显示，使用小字体和灰色
+        console.log(chalk.dim.gray('🧠 Thinking Process:'));
+        console.log(chalk.dim.gray(reasoningContent));
+        break;
+
+      case 'compact':
+        // 简洁显示，截断部分内容
+        const maxLength = 500;
+        const truncatedContent = reasoningContent.length > maxLength
+          ? reasoningContent.substring(0, maxLength) + '... (truncated)'
+          : reasoningContent;
+
+        console.log(chalk.dim.gray('🧠 Thinking Process:'));
+        console.log(chalk.dim.gray(truncatedContent));
+        console.log(chalk.dim.gray(`[${reasoningContent.length} chars total]`));
+        break;
+
+      case 'indicator':
+        // 只显示指示器
+        console.log(chalk.dim.gray('🧠 Thinking process completed'));
+        console.log(chalk.dim.gray(`[${reasoningContent.length} chars of reasoning]`));
+        break;
+
+      default:
+        console.log(chalk.dim.gray('🧠 Thinking:'));
+        console.log(chalk.dim.gray(reasoningContent));
+    }
+
+    console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+  }
+
   private async executeShellCommand(command: string): Promise<void> {
     console.log(chalk.gray(`Executing: ${command}`));
 
@@ -341,9 +380,15 @@ export class InteractiveSession {
       spinner.stop();
 
       const assistantMessage = response.choices[0].message;
-      const content = typeof assistantMessage.content === 'string' 
-        ? assistantMessage.content 
+      const content = typeof assistantMessage.content === 'string'
+        ? assistantMessage.content
         : '';
+      const reasoningContent = assistantMessage.reasoning_content || '';
+
+      // Display reasoning content if available and thinking mode is enabled
+      if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
+        this.displayThinkingContent(reasoningContent);
+      }
 
       console.log(chalk.cyan('\n🤖 Assistant:'));
       console.log(content);

@@ -102,7 +102,7 @@ export class SlashCommandHandler {
       { cmd: '/exit', desc: 'Exit xAgent CLI' },
       { cmd: '/auth', desc: 'Change authentication method' },
       { cmd: '/mode', desc: 'Switch execution mode (yolo/accept_edits/plan/default)' },
-      { cmd: '/think', desc: 'Toggle thinking mode (on/off)' },
+      { cmd: '/think', desc: 'Toggle thinking mode and display (on/off/display)' },
       { cmd: '/agents', desc: 'Manage SubAgents (list/online/install/remove)' },
       { cmd: '/mcp', desc: 'Manage MCP servers (list/add/remove/refresh)' },
       { cmd: '/memory', desc: 'Manage memory (show/add/refresh)' },
@@ -227,9 +227,23 @@ export class SlashCommandHandler {
         this.configManager.setThinkingConfig(thinkingConfig);
         await this.configManager.save('global');
         console.log(chalk.green('✅ Thinking mode disabled'));
+      } else if (action === 'display' && args[1]) {
+        const displayMode = args[1].toLowerCase();
+        const validModes = ['full', 'compact', 'indicator'];
+
+        if (validModes.includes(displayMode)) {
+          thinkingConfig.displayMode = displayMode as 'full' | 'compact' | 'indicator';
+          thinkingConfig.enabled = true; // Auto-enable when setting display mode
+          this.configManager.setThinkingConfig(thinkingConfig);
+          await this.configManager.save('global');
+          console.log(chalk.green(`✅ Thinking display mode set to: ${displayMode}`));
+        } else {
+          console.log(chalk.red(`❌ Invalid display mode: ${displayMode}`));
+          console.log(chalk.gray(`Valid modes: ${validModes.join(', ')}`));
+        }
       } else {
         console.log(chalk.red(`❌ Invalid action: ${action}`));
-        console.log(chalk.gray('Usage: /think [on|off]'));
+        console.log(chalk.gray('Usage: /think [on|off|display <mode>]'));
       }
     } else {
       console.log(chalk.cyan('\n🧠 Thinking Mode:\n'));
@@ -237,9 +251,12 @@ export class SlashCommandHandler {
       console.log(`  Mode: ${chalk.yellow(thinkingConfig.mode)}`);
       console.log(`  Display: ${chalk.yellow(thinkingConfig.displayMode)}\n`);
 
-      console.log(chalk.gray('Usage: /think [on|off]'));
-      console.log(chalk.gray('  /think on   - Enable thinking mode'));
-      console.log(chalk.gray('  /think off  - Disable thinking mode'));
+      console.log(chalk.gray('Usage:'));
+      console.log(chalk.gray('  /think on           - Enable thinking mode'));
+      console.log(chalk.gray('  /think off          - Disable thinking mode'));
+      console.log(chalk.gray('  /think display full - Show full thinking process'));
+      console.log(chalk.gray('  /think display compact - Show compact thinking (500 chars)'));
+      console.log(chalk.gray('  /think display indicator - Show only indicator'));
       console.log();
     }
   }

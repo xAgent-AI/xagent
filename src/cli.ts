@@ -23,7 +23,28 @@ program
 program
   .command('start')
   .description('Start the xAgent CLI interactive session')
-  .action(async () => {
+  .option('--approval-mode <mode>', 'Set approval mode (yolo, accept_edits, plan, default, smart)')
+  .action(async (options) => {
+    if (options.approvalMode) {
+      const { getConfigManager } = await import('./config.js');
+      const { ExecutionMode } = await import('./types.js');
+      const configManager = getConfigManager();
+
+      const validModes = Object.values(ExecutionMode) as string[];
+      if (!validModes.includes(options.approvalMode)) {
+        console.log('');
+        console.log(colors.error(`Invalid approval mode: ${options.approvalMode}`));
+        console.log(colors.textMuted(`Valid modes: ${validModes.join(', ')}`));
+        console.log('');
+        process.exit(1);
+      }
+
+      configManager.setApprovalMode(options.approvalMode as any);
+      await configManager.save('global');
+      console.log('');
+      console.log(colors.success(`✅ Approval mode set to: ${options.approvalMode}`));
+      console.log('');
+    }
     await startInteractiveSession();
   });
 

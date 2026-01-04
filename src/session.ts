@@ -94,7 +94,7 @@ export class InteractiveSession {
       }
 
       this.aiClient = new AIClient(authConfig);
-      this.executionMode = this.configManager.getExecutionMode();
+      this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
 
       await this.agentManager.loadAgents();
       await this.memoryManager.loadMemory();
@@ -198,6 +198,11 @@ export class InteractiveSession {
         color: colors.success,
         icon: icons.bolt,
         description: 'Safe execution with confirmations'
+      },
+      [ExecutionMode.SMART]: {
+        color: colors.primaryBright,
+        icon: icons.sparkles,
+        description: 'Smart approval with intelligent security checks'
       }
     };
 
@@ -246,7 +251,7 @@ export class InteractiveSession {
     if (trimmedInput.startsWith('/')) {
       const handled = await this.slashCommandHandler.handleCommand(trimmedInput);
       if (handled) {
-        this.executionMode = this.configManager.getExecutionMode();
+        this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
       }
       return;
     }

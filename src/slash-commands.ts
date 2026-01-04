@@ -101,7 +101,7 @@ export class SlashCommandHandler {
       { cmd: '/clear', desc: 'Clear conversation history' },
       { cmd: '/exit', desc: 'Exit xAgent CLI' },
       { cmd: '/auth', desc: 'Change authentication method' },
-      { cmd: '/mode', desc: 'Switch execution mode (yolo/accept_edits/plan/default)' },
+      { cmd: '/mode', desc: 'Switch approval mode (yolo/accept_edits/plan/default/smart)' },
       { cmd: '/think', desc: 'Toggle thinking mode and display (on/off/display)' },
       { cmd: '/agents', desc: 'Manage SubAgents (list/online/install/remove)' },
       { cmd: '/mcp', desc: 'Manage MCP servers (list/add/remove/refresh)' },
@@ -179,26 +179,28 @@ export class SlashCommandHandler {
 
   private async handleMode(args: string[]): Promise<void> {
     const modes = Object.values(ExecutionMode);
-    const currentMode = this.configManager.getExecutionMode();
+    const currentMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
 
     if (args.length > 0) {
       const newMode = args[0].toLowerCase();
       if (modes.includes(newMode as ExecutionMode)) {
-        this.configManager.setExecutionMode(newMode as ExecutionMode);
-        console.log(chalk.green(`✅ Execution mode changed to: ${newMode}`));
+        this.configManager.setApprovalMode(newMode as ExecutionMode);
+        await this.configManager.save('global');
+        console.log(chalk.green(`✅ Approval mode changed to: ${newMode}`));
       } else {
         console.log(chalk.red(`❌ Invalid mode: ${newMode}`));
         console.log(chalk.gray(`Available modes: ${modes.join(', ')}`));
       }
     } else {
-      console.log(chalk.cyan('\n🎯 Execution Modes:\n'));
+      console.log(chalk.cyan('\n🎯 Approval Modes:\n'));
       console.log(`  Current: ${chalk.green(currentMode)}\n`);
 
       const descriptions = [
-        { mode: 'yolo', desc: 'Full permissions - can execute any operation' },
-        { mode: 'accept_edits', desc: 'File edit permissions only' },
-        { mode: 'plan', desc: 'Plan first, execute later' },
-        { mode: 'default', desc: 'No permissions - read-only' }
+        { mode: 'yolo', desc: 'Execute commands without confirmation' },
+        { mode: 'accept_edits', desc: 'Accept all edits automatically' },
+        { mode: 'plan', desc: 'Plan before executing' },
+        { mode: 'default', desc: 'Safe execution with confirmations' },
+        { mode: 'smart', desc: 'Smart approval with intelligent security checks' }
       ];
 
       descriptions.forEach(({ mode, desc }) => {

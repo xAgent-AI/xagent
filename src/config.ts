@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS: Settings = {
   modelName: 'Qwen3-Coder',
   searchApiKey: '',
   executionMode: ExecutionMode.DEFAULT,
+  approvalMode: ExecutionMode.DEFAULT,
   checkpointing: {
     enabled: false,
     autoCreate: true,
@@ -111,6 +112,14 @@ export class ConfigManager {
 
   setExecutionMode(mode: ExecutionMode): void {
     this.settings.executionMode = mode;
+  }
+
+  getApprovalMode(): ExecutionMode {
+    return this.settings.approvalMode || ExecutionMode.DEFAULT;
+  }
+
+  setApprovalMode(mode: ExecutionMode): void {
+    this.settings.approvalMode = mode;
   }
 
   getMcpServers(): Record<string, MCPServerConfig> {

@@ -2,7 +2,8 @@ export enum ExecutionMode {
   YOLO = 'yolo',
   ACCEPT_EDITS = 'accept_edits',
   PLAN = 'plan',
-  DEFAULT = 'default'
+  DEFAULT = 'default',
+  SMART = 'smart'
 }
 
 export enum AuthType {
@@ -76,6 +77,7 @@ export interface Settings {
   modelName?: string;
   searchApiKey?: string;
   executionMode: ExecutionMode;
+  approvalMode?: ExecutionMode;
   checkpointing: CheckpointConfig;
   thinking: ThinkingConfig;
   contextFileName: string | string[];

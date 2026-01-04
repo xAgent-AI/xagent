@@ -7,13 +7,14 @@ import axios from 'axios';
 import inquirer from 'inquirer';
 import { Tool, ExecutionMode, AuthType } from './types.js';
 import type { Message, ToolDefinition } from './ai-client.js';
+import { colors } from './theme.js';
 
 const execAsync = promisify(exec);
 
 export class ReadTool implements Tool {
   name = 'Read';
   description = 'Read the contents of a file';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { filePath: string; offset?: number; limit?: number }): Promise<string> {
     const { filePath, offset = 0, limit } = params;
@@ -37,7 +38,7 @@ export class ReadTool implements Tool {
 export class WriteTool implements Tool {
   name = 'Write';
   description = 'Write content to a file';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: { filePath: string; content: string }): Promise<{ success: boolean; message: string }> {
     const { filePath, content } = params;
@@ -62,7 +63,7 @@ export class WriteTool implements Tool {
 export class GrepTool implements Tool {
   name = 'Grep';
   description = 'Search for text patterns in files';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
     pattern: string;
@@ -170,7 +171,7 @@ export class GrepTool implements Tool {
 export class BashTool implements Tool {
   name = 'Bash';
   description = 'Execute shell commands';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: {
     command: string;
@@ -246,7 +247,7 @@ export class BashTool implements Tool {
 export class ListDirectoryTool implements Tool {
   name = 'ListDirectory';
   description = 'List files and directories in a path';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { path?: string; recursive?: boolean }): Promise<string[]> {
     const { path: dirPath = '.', recursive = false } = params;
@@ -276,7 +277,7 @@ export class ListDirectoryTool implements Tool {
 export class SearchCodebaseTool implements Tool {
   name = 'SearchCodebase';
   description = 'Search for files matching a pattern';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { pattern: string; path?: string }): Promise<string[]> {
     const { pattern, path: searchPath = '.' } = params;
@@ -297,7 +298,7 @@ export class SearchCodebaseTool implements Tool {
 export class DeleteFileTool implements Tool {
   name = 'DeleteFile';
   description = 'Delete a file';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: { filePath: string }): Promise<{ success: boolean; message: string }> {
     const { filePath } = params;
@@ -319,7 +320,7 @@ export class DeleteFileTool implements Tool {
 export class CreateDirectoryTool implements Tool {
   name = 'CreateDirectory';
   description = 'Create a directory';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: { dirPath: string; recursive?: boolean }): Promise<{ success: boolean; message: string }> {
     const { dirPath, recursive = true } = params;
@@ -341,7 +342,7 @@ export class CreateDirectoryTool implements Tool {
 export class ReplaceTool implements Tool {
   name = 'replace';
   description = 'Replace text in a file';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: {
     file_path: string;
@@ -386,7 +387,7 @@ export class ReplaceTool implements Tool {
 export class WebSearchTool implements Tool {
   name = 'web_search';
   description = 'Search web and return results';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { query: string }): Promise<{ results: any[]; message: string }> {
     const { query } = params;
@@ -428,7 +429,7 @@ export class WebSearchTool implements Tool {
 export class TodoWriteTool implements Tool {
   name = 'todo_write';
   description = 'Create and manage structured task lists';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   private todoList: Array<{ id: string; task: string; status: 'pending' | 'in_progress' | 'completed' | 'failed'; priority: 'high' | 'medium' | 'low' }> = [];
 
@@ -465,7 +466,7 @@ export class TodoWriteTool implements Tool {
 export class TodoReadTool implements Tool {
   name = 'todo_read';
   description = 'Read current session todo list';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   private todoWriteTool: TodoWriteTool;
 
@@ -498,7 +499,7 @@ export class TodoReadTool implements Tool {
 export class TaskTool implements Tool {
   name = 'task';
   description = 'Launch specialized subagent for complex multi-step tasks';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
     description: string;
@@ -570,7 +571,7 @@ export class TaskTool implements Tool {
 export class ReadBashOutputTool implements Tool {
   name = 'ReadBashOutput';
   description = 'Retrieve output from running or completed background tasks';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
     task_id: string;
@@ -608,7 +609,7 @@ export class ReadBashOutputTool implements Tool {
 export class WebFetchTool implements Tool {
   name = 'web_fetch';
   description = 'Fetch and process URL content, including local and private network addresses';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { prompt: string }): Promise<{ content: string; url: string; status: number }> {
     const { prompt } = params;
@@ -648,7 +649,7 @@ export class WebFetchTool implements Tool {
 export class AskUserQuestionTool implements Tool {
   name = 'ask_user_question';
   description = 'Ask user questions during execution';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
     questions: Array<{
@@ -703,7 +704,7 @@ export class AskUserQuestionTool implements Tool {
 export class SaveMemoryTool implements Tool {
   name = 'save_memory';
   description = 'Save specific information to long-term memory';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { fact: string }): Promise<{ success: boolean; message: string }> {
     const { fact } = params;
@@ -727,7 +728,7 @@ export class SaveMemoryTool implements Tool {
 export class ExitPlanModeTool implements Tool {
   name = 'exit_plan_mode';
   description = 'Complete plan presentation in plan mode and prepare for coding';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { plan: string }): Promise<{ success: boolean; message: string; plan: string }> {
     const { plan } = params;
@@ -747,7 +748,7 @@ export class ExitPlanModeTool implements Tool {
 export class XmlEscapeTool implements Tool {
   name = 'xml_escape';
   description = 'Automatically escape special characters in XML/HTML files';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: {
     file_path: string;
@@ -815,7 +816,7 @@ export class XmlEscapeTool implements Tool {
 export class ImageReadTool implements Tool {
   name = 'image_read';
   description = 'Read image files and generate detailed analysis using VL model';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
     image_input: string;
@@ -892,7 +893,7 @@ export class ImageReadTool implements Tool {
 export class SkillTool implements Tool {
   name = 'Skill';
   description = 'Execute skills in main conversation';
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { skill: string }): Promise<{ success: boolean; message: string; result?: any }> {
     const { skill } = params;
@@ -1420,7 +1421,7 @@ export class ToolRegistry {
 
   async execute(toolName: string, params: any, executionMode: ExecutionMode): Promise<any> {
     const tool = this.get(toolName);
-    
+
     if (!tool) {
       throw new Error(`Tool not found: ${toolName}`);
     }
@@ -1431,6 +1432,57 @@ export class ToolRegistry {
       );
     }
 
+    // 智能审核模式
+    if (executionMode === ExecutionMode.SMART) {
+      const { getSmartApprovalEngine } = await import('./smart-approval.js');
+      const { getConfigManager } = await import('./config.js');
+      const configManager = getConfigManager();
+      const debugMode = process.env.DEBUG === 'smart-approval';
+
+      const approvalEngine = getSmartApprovalEngine(debugMode);
+
+      // 评估工具调用
+      const result = await approvalEngine.evaluate({
+        toolName,
+        params,
+        timestamp: Date.now()
+      });
+
+      // 根据审核结果决定是否执行
+      if (result.decision === 'approved') {
+        // 白名单或 AI 审核通过，直接执行
+        console.log('');
+        console.log(colors.success(`✅ [智能模式] 工具 '${toolName}' 通过审核，直接执行`));
+        console.log(colors.textDim(`  检测方式: ${result.detectionMethod === 'whitelist' ? '白名单' : 'AI审核'}`));
+        console.log(colors.textDim(`  延迟: ${result.latency}ms`));
+        console.log('');
+        return await tool.execute(params);
+      } else if (result.decision === 'requires_confirmation') {
+        // 需要用户确认
+        const confirmed = await approvalEngine.requestConfirmation(result);
+
+        if (confirmed) {
+          console.log('');
+          console.log(colors.success(`✅ [智能模式] 用户确认执行工具 '${toolName}'`));
+          console.log('');
+          return await tool.execute(params);
+        } else {
+          console.log('');
+          console.log(colors.warning(`⚠️  [智能模式] 用户取消执行工具 '${toolName}'`));
+          console.log('');
+          throw new Error(`Tool execution cancelled by user: ${toolName}`);
+        }
+      } else {
+        // 拒绝执行
+        console.log('');
+        console.log(colors.error(`❌ [智能模式] 工具 '${toolName}' 被拒绝执行`));
+        console.log(colors.textDim(`  原因: ${result.description}`));
+        console.log('');
+        throw new Error(`Tool execution rejected: ${toolName}`);
+      }
+    }
+
+    // 其他模式直接执行
     return await tool.execute(params);
   }
 }

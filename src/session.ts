@@ -13,6 +13,7 @@ import { getMCPManager, MCPManager } from './mcp.js';
 import { getCheckpointManager, CheckpointManager } from './checkpoint.js';
 import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
+import { theme, icons, colors, styleHelpers } from './theme.js';
 
 export class InteractiveSession {
   private rl: readline.Interface;
@@ -44,8 +45,16 @@ export class InteractiveSession {
   }
 
   async start(): Promise<void> {
-    console.log(chalk.cyan('\n🤖 XAGENT CLI v1.0.0\n'));
-    console.log(chalk.gray('AI-powered command-line assistant\n'));
+    const separator = icons.separator.repeat(60);
+    console.log('');
+    console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
+    console.log(colors.gradient('║') + ' '.repeat(56) + colors.gradient('║'));
+    console.log(' '.repeat(12) + colors.gradient('🤖 XAGENT CLI') + ' '.repeat(37) + colors.gradient('║'));
+    console.log(' '.repeat(14) + colors.textMuted('v1.0.0') + ' '.repeat(40) + colors.gradient('║'));
+    console.log(colors.gradient('║') + ' '.repeat(56) + colors.gradient('║'));
+    console.log(colors.gradient('╚════════════════════════════════════════════════════════════╝'));
+    console.log(colors.textMuted('  AI-powered command-line assistant'));
+    console.log('');
 
     await this.initialize();
 
@@ -56,13 +65,18 @@ export class InteractiveSession {
 
   private async initialize(): Promise<void> {
     try {
-      console.log(chalk.gray('Initializing...'));
+      const spinner = ora({
+        text: colors.textMuted('Initializing XAGENT CLI...'),
+        spinner: 'dots',
+        color: 'cyan'
+      }).start();
 
       await this.configManager.load();
 
       const authConfig = this.configManager.getAuthConfig();
 
       if (!authConfig.apiKey) {
+        spinner.stop();
         await this.setupAuthentication();
         // inquirer 可能会关闭 stdin，所以需要重新创建 readline 接口
         this.rl.close();
@@ -73,6 +87,7 @@ export class InteractiveSession {
         this.rl.on('close', () => {
           console.error('DEBUG: readline interface closed');
         });
+        spinner.start();
       }
 
       this.aiClient = new AIClient(authConfig);
@@ -100,15 +115,20 @@ export class InteractiveSession {
 
       this.currentAgent = this.agentManager.getAgent('general-purpose');
 
-      console.log(chalk.green('✔ Initialization complete'));
+      spinner.succeed(colors.success('Initialization complete'));
     } catch (error: any) {
-      console.log(chalk.red(`✖ Initialization failed: ${error.message}`));
+      const spinner = ora({ text: '', spinner: 'dots', color: 'red' }).start();
+      spinner.fail(colors.error(`Initialization failed: ${error.message}`));
       throw error;
     }
   }
 
   private async setupAuthentication(): Promise<void> {
-    console.log(chalk.cyan('\n🔐 Setup Authentication\n'));
+    const separator = icons.separator.repeat(40);
+    console.log('');
+    console.log(colors.primaryBright(`${icons.lock} Setup Authentication`));
+    console.log(colors.border(separator));
+    console.log('');
 
     const authType = await selectAuthType();
     this.configManager.set('selectedAuthType', authType);
@@ -123,7 +143,9 @@ export class InteractiveSession {
     const success = await authService.authenticate();
 
     if (!success) {
-      console.log(chalk.red('Authentication failed. Exiting...'));
+      console.log('');
+      console.log(colors.error('Authentication failed. Exiting...'));
+      console.log('');
       process.exit(1);
     }
 
@@ -133,35 +155,56 @@ export class InteractiveSession {
 
   private showWelcomeMessage(): void {
     const language = this.configManager.getLanguage();
-    
+    const separator = icons.separator.repeat(40);
+
+    console.log('');
+    console.log(colors.border(separator));
+
     if (language === 'zh') {
-      console.log(chalk.gray('欢迎使用 XAGENT CLI!'));
-      console.log(chalk.gray('输入 /help 查看可用命令\n'));
+      console.log(colors.primaryBright(`${icons.sparkles} 欢迎使用 XAGENT CLI!`));
+      console.log(colors.textMuted('输入 /help 查看可用命令'));
     } else {
-      console.log(chalk.gray('Welcome to XAGENT CLI!'));
-      console.log(chalk.gray('Type /help to see available commands\n'));
+      console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
+      console.log(colors.textMuted('Type /help to see available commands'));
     }
+
+    console.log(colors.border(separator));
+    console.log('');
 
     this.showExecutionMode();
   }
 
   private showExecutionMode(): void {
-    const modeColors = {
-      [ExecutionMode.YOLO]: chalk.red,
-      [ExecutionMode.ACCEPT_EDITS]: chalk.yellow,
-      [ExecutionMode.PLAN]: chalk.blue,
-      [ExecutionMode.DEFAULT]: chalk.green
+    const modeConfig = {
+      [ExecutionMode.YOLO]: {
+        color: colors.error,
+        icon: icons.fire,
+        description: 'Execute commands without confirmation'
+      },
+      [ExecutionMode.ACCEPT_EDITS]: {
+        color: colors.warning,
+        icon: icons.check,
+        description: 'Accept all edits automatically'
+      },
+      [ExecutionMode.PLAN]: {
+        color: colors.info,
+        icon: icons.brain,
+        description: 'Plan before executing'
+      },
+      [ExecutionMode.DEFAULT]: {
+        color: colors.success,
+        icon: icons.bolt,
+        description: 'Safe execution with confirmations'
+      }
     };
 
-    const modeName = {
-      [ExecutionMode.YOLO]: 'YOLO',
-      [ExecutionMode.ACCEPT_EDITS]: 'ACCEPT_EDITS',
-      [ExecutionMode.PLAN]: 'PLAN',
-      [ExecutionMode.DEFAULT]: 'DEFAULT'
-    };
+    const config = modeConfig[this.executionMode];
+    const modeName = this.executionMode;
 
-    const color = modeColors[this.executionMode];
-    console.log(chalk.gray(`Current Mode: ${color(modeName[this.executionMode])}\n`));
+    console.log(colors.textMuted(`${icons.info} Current Mode:`));
+    console.log(`  ${config.color(config.icon)} ${styleHelpers.text.bold(config.color(modeName))}`);
+    console.log(`  ${colors.textDim(`  ${config.description}`)}`);
+    console.log('');
   }
 
   private promptLoop(): void {
@@ -175,11 +218,12 @@ export class InteractiveSession {
     });
 
     try {
-      this.rl.question(chalk.green('> '), async (input) => {
+      const prompt = `${colors.primaryBright('❯')} `;
+      this.rl.question(prompt, async (input) => {
         try {
           await this.handleInput(input);
         } catch (error: any) {
-          console.error(chalk.red(`Error: ${error.message}`));
+          console.log(colors.error(`Error: ${error.message}`));
         }
 
         this.promptLoop();
@@ -217,14 +261,19 @@ export class InteractiveSession {
     const task = taskParts.join(' ');
 
     const agent = this.agentManager.getAgent(agentType);
-    
+
     if (!agent) {
-      console.log(chalk.yellow(`Agent not found: ${agentType}`));
-      console.log(chalk.gray('Use /agents list to see available agents'));
+      console.log('');
+      console.log(colors.warning(`Agent not found: ${agentType}`));
+      console.log(colors.textMuted('Use /agents list to see available agents'));
+      console.log('');
       return;
     }
 
-    console.log(chalk.cyan(`🤖 Using agent: ${agent.name || agent.agentType}`));
+    console.log('');
+    console.log(colors.primaryBright(`${icons.robot} Using agent: ${agent.name || agent.agentType}`));
+    console.log(colors.border(icons.separator.repeat(40)));
+    console.log('');
 
     this.currentAgent = agent;
     await this.processUserMessage(task, agent);
@@ -280,13 +329,17 @@ export class InteractiveSession {
     const thinkingConfig = this.configManager.getThinkingConfig();
     const displayMode = thinkingConfig.displayMode || 'compact';
 
-    console.log(chalk.gray('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+    const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80));
+
+    console.log('');
+    console.log(colors.border(separator));
 
     switch (displayMode) {
       case 'full':
         // 完整显示，使用小字体和灰色
-        console.log(chalk.dim.gray('🧠 Thinking Process:'));
-        console.log(chalk.dim.gray(reasoningContent));
+        console.log(colors.textDim(`${icons.brain} Thinking Process:`));
+        console.log('');
+        console.log(colors.textDim(reasoningContent));
         break;
 
       case 'compact':
@@ -296,39 +349,46 @@ export class InteractiveSession {
           ? reasoningContent.substring(0, maxLength) + '... (truncated)'
           : reasoningContent;
 
-        console.log(chalk.dim.gray('🧠 Thinking Process:'));
-        console.log(chalk.dim.gray(truncatedContent));
-        console.log(chalk.dim.gray(`[${reasoningContent.length} chars total]`));
+        console.log(colors.textDim(`${icons.brain} Thinking Process:`));
+        console.log('');
+        console.log(colors.textDim(truncatedContent));
+        console.log(colors.textDim(`[${reasoningContent.length} chars total]`));
         break;
 
       case 'indicator':
         // 只显示指示器
-        console.log(chalk.dim.gray('🧠 Thinking process completed'));
-        console.log(chalk.dim.gray(`[${reasoningContent.length} chars of reasoning]`));
+        console.log(colors.textDim(`${icons.brain} Thinking process completed`));
+        console.log(colors.textDim(`[${reasoningContent.length} chars of reasoning]`));
         break;
 
       default:
-        console.log(chalk.dim.gray('🧠 Thinking:'));
-        console.log(chalk.dim.gray(reasoningContent));
+        console.log(colors.textDim(`${icons.brain} Thinking:`));
+        console.log('');
+        console.log(colors.textDim(reasoningContent));
     }
 
-    console.log(chalk.gray('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'));
+    console.log(colors.border(separator));
+    console.log('');
   }
 
   private async executeShellCommand(command: string): Promise<void> {
-    console.log(chalk.gray(`Executing: ${command}`));
+    console.log('');
+    console.log(colors.textMuted(`${icons.code} Executing:`));
+    console.log(colors.codeText(`  $ ${command}`));
+    console.log(colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80))));
+    console.log('');
 
     const toolRegistry = getToolRegistry();
-    
+
     try {
       const result = await toolRegistry.execute('Bash', { command }, this.executionMode);
-      
+
       if (result.stdout) {
         console.log(result.stdout);
       }
-      
+
       if (result.stderr) {
-        console.log(chalk.yellow(result.stderr));
+        console.log(colors.warning(result.stderr));
       }
 
       const toolCall: ToolCall = {
@@ -340,29 +400,33 @@ export class InteractiveSession {
 
       this.toolCalls.push(toolCall);
     } catch (error: any) {
-      console.log(chalk.red(`Command execution failed: ${error.message}`));
+      console.log(colors.error(`Command execution failed: ${error.message}`));
     }
   }
 
   private async generateResponse(agent?: any, thinkingTokens: number = 0): Promise<void> {
     if (!this.aiClient) {
-      console.log(chalk.red('AI client not initialized'));
+      console.log(colors.error('AI client not initialized'));
       return;
     }
 
-    const spinner = ora('Thinking...').start();
+    const spinner = ora({
+      text: colors.textMuted(`${icons.brain} Thinking...`),
+      spinner: 'dots',
+      color: 'cyan'
+    }).start();
 
     try {
       const memory = await this.memoryManager.loadMemory();
       const toolRegistry = getToolRegistry();
-      const availableTools = this.executionMode !== ExecutionMode.DEFAULT 
+      const availableTools = this.executionMode !== ExecutionMode.DEFAULT
         ? toolRegistry.getToolDefinitions()
         : [];
 
       const baseSystemPrompt = agent?.systemPrompt || 'You are a helpful AI assistant.';
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
       const enhancedSystemPrompt = systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
-      
+
       const messages: Message[] = [
         { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}` },
         ...this.conversation.map(msg => ({
@@ -390,9 +454,12 @@ export class InteractiveSession {
         this.displayThinkingContent(reasoningContent);
       }
 
-      console.log(chalk.cyan('\n🤖 Assistant:'));
+      console.log('');
+      console.log(colors.primaryBright(`${icons.robot} Assistant:`));
+      console.log(colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80))));
+      console.log('');
       console.log(content);
-      console.log();
+      console.log('');
 
       this.conversation.push({
         role: 'assistant',
@@ -412,8 +479,8 @@ export class InteractiveSession {
         );
       }
     } catch (error: any) {
-      spinner.fail(`Error: ${error.message}`);
-      console.log(chalk.red(error.message));
+      spinner.fail(colors.error(`Error: ${error.message}`));
+      console.log(colors.error(error.message));
     }
   }
 
@@ -421,32 +488,36 @@ export class InteractiveSession {
     const toolRegistry = getToolRegistry();
 
     for (const toolCall of toolCalls) {
-      console.log(chalk.yellow('\n🔧 Raw Tool Call:'));
-      console.log(chalk.gray(JSON.stringify(toolCall, null, 2)));
+      console.log('');
+      console.log(colors.warning(`${icons.tool} Raw Tool Call:`));
+      console.log(colors.textDim(JSON.stringify(toolCall, null, 2)));
 
       const { name, arguments: params } = toolCall.function;
-      
-      console.log(chalk.yellow('\n🔧 Extracted params:'));
-      console.log(chalk.gray(`Type: ${typeof params}`));
-      console.log(chalk.gray(`Value: ${params}`));
-      
+
+      console.log('');
+      console.log(colors.warning(`${icons.tool} Extracted params:`));
+      console.log(colors.textDim(`Type: ${typeof params}`));
+      console.log(colors.textDim(`Value: ${params}`));
+
       // Parse arguments if it's a JSON string (OpenAI API format)
       let parsedParams: any;
       try {
         parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
       } catch (e) {
-        console.log(chalk.red(`❌ Failed to parse tool arguments: ${e}`));
+        console.log(colors.error(`${icons.cross} Failed to parse tool arguments: ${e}`));
         parsedParams = params;
       }
-      
-      console.log(chalk.yellow(`\n🔧 Tool Call: ${name}`));
-      console.log(chalk.gray(JSON.stringify(parsedParams, null, 2)));
+
+      console.log('');
+      console.log(colors.warning(`${icons.tool} Tool Call: ${name}`));
+      console.log(colors.textDim(JSON.stringify(parsedParams, null, 2)));
 
       try {
         const result = await toolRegistry.execute(name, parsedParams, this.executionMode);
-        
-        console.log(chalk.green('✅ Tool Result:'));
-        console.log(chalk.gray(JSON.stringify(result, null, 2)));
+
+        console.log('');
+        console.log(colors.success(`${icons.check} Tool Result:`));
+        console.log(colors.textDim(JSON.stringify(result, null, 2)));
 
         const toolCallRecord: ToolCall = {
           tool: name,
@@ -463,7 +534,8 @@ export class InteractiveSession {
           timestamp: Date.now()
         });
       } catch (error: any) {
-        console.log(chalk.red(`❌ Tool Error: ${error.message}`));
+        console.log('');
+        console.log(colors.error(`${icons.cross} Tool Error: ${error.message}`));
 
         this.conversation.push({
           role: 'tool',
@@ -479,7 +551,13 @@ export class InteractiveSession {
   shutdown(): void {
     this.rl.close();
     this.mcpManager.disconnectAllServers();
-    console.log(chalk.cyan('\n👋 Goodbye!\n'));
+
+    const separator = icons.separator.repeat(40);
+    console.log('');
+    console.log(colors.border(separator));
+    console.log(colors.primaryBright(`${icons.sparkles} Goodbye!`));
+    console.log(colors.border(separator));
+    console.log('');
   }
 }
 

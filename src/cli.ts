@@ -8,6 +8,7 @@ import { AuthService, selectAuthType } from './auth.js';
 import { getAgentManager } from './agents.js';
 import { getMCPManager } from './mcp.js';
 import { getLogger } from './logger.js';
+import { theme, icons, colors } from './theme.js';
 
 const logger = getLogger();
 
@@ -30,7 +31,11 @@ program
   .command('auth')
   .description('Configure authentication for xAgent CLI')
   .action(async () => {
-    logger.section('Authentication Management');
+    const separator = icons.separator.repeat(40);
+    console.log('');
+    console.log(colors.primaryBright(`${icons.lock} Authentication Management`));
+    console.log(colors.border(separator));
+    console.log('');
 
     const authType = await selectAuthType();
     const configManager = getConfigManager();
@@ -48,9 +53,16 @@ program
     if (success) {
       const authConfig = authService.getAuthConfig();
       await configManager.setAuthConfig(authConfig);
-      logger.success('Authentication configured successfully!', 'You can now run "xagent start" to begin');
+
+      console.log('');
+      console.log(colors.success('Authentication configured successfully!'));
+      console.log(colors.textMuted('You can now run "xagent start" to begin'));
+      console.log('');
     } else {
-      logger.error('Authentication failed. Please try again.', 'Run "xagent auth" to retry');
+      console.log('');
+      console.log(colors.error('Authentication failed. Please try again.'));
+      console.log(colors.textMuted('Run "xagent auth" to retry'));
+      console.log('');
       process.exit(1);
     }
   });
@@ -70,25 +82,44 @@ program
       const agents = agentManager.getAllAgents();
 
       if (agents.length === 0) {
-        logger.warn('No agents configured', 'Use /agents install in interactive mode to add agents');
+        console.log('');
+        console.log(colors.warning('No agents configured'));
+        console.log(colors.textMuted('Use /agents install in interactive mode to add agents'));
+        console.log('');
       } else {
-        logger.section('Available Agents');
-        agents.forEach(agent => {
-          logger.info(`  ${agent.agentType}`);
-          logger.info(`    ${agent.whenToUse}`);
+        const separator = icons.separator.repeat(40);
+        console.log('');
+        console.log(colors.primaryBright(`${icons.robot} Available Agents`));
+        console.log(colors.border(separator));
+        console.log('');
+
+        agents.forEach((agent, index) => {
+          console.log(`  ${colors.primaryBright(`${index + 1}. ${agent.agentType}`)}`);
+          console.log(`    ${colors.textDim(`  ${agent.whenToUse}`)}`);
+          console.log('');
         });
       }
     } else if (options.add) {
-      logger.warn('Agent creation wizard not implemented yet', 'Use /agents install in interactive mode');
+      console.log('');
+      console.log(colors.warning('Agent creation wizard not implemented yet'));
+      console.log(colors.textMuted('Use /agents install in interactive mode'));
+      console.log('');
     } else if (options.remove) {
       try {
         await agentManager.removeAgent(options.remove, options.scope);
-        logger.success(`Agent ${options.remove} removed successfully`);
+        console.log('');
+        console.log(colors.success(`Agent ${options.remove} removed successfully`));
+        console.log('');
       } catch (error: any) {
-        logger.error(`Failed to remove agent: ${error.message}`, 'Check if the agent exists and try again');
+        console.log('');
+        console.log(colors.error(`Failed to remove agent: ${error.message}`));
+        console.log(colors.textMuted('Check if the agent exists and try again'));
+        console.log('');
       }
     } else {
-      logger.warn('Please specify an action: --list, --add, or --remove');
+      console.log('');
+      console.log(colors.warning('Please specify an action: --list, --add, or --remove'));
+      console.log('');
     }
   });
 
@@ -107,29 +138,51 @@ program
       const servers = mcpManager.getAllServers();
 
       if (servers.length === 0) {
-        logger.warn('No MCP servers configured', 'Use /mcp add in interactive mode to add servers');
+        console.log('');
+        console.log(colors.warning('No MCP servers configured'));
+        console.log(colors.textMuted('Use /mcp add in interactive mode to add servers'));
+        console.log('');
       } else {
-        logger.section('MCP Servers');
-        servers.forEach(server => {
-          const connected = server.isServerConnected() ? '✓' : '✗';
-          const status = server.isServerConnected() ? chalk.green(connected) : chalk.red(connected);
-          logger.info(`  ${status} ${server.getToolNames().join(', ')}`);
+        const separator = icons.separator.repeat(40);
+        console.log('');
+        console.log(colors.primaryBright(`${icons.tool} MCP Servers`));
+        console.log(colors.border(separator));
+        console.log('');
+
+        servers.forEach((server, index) => {
+          const connected = server.isServerConnected() ? icons.success : icons.error;
+          const status = server.isServerConnected() ? colors.success(connected) : colors.error(connected);
+          const toolNames = server.getToolNames().join(', ');
+
+          console.log(`  ${status} ${colors.primaryBright(`Server ${index + 1}`)}`);
+          console.log(`    ${colors.textDim(`  Tools: ${toolNames}`)}`);
+          console.log('');
         });
       }
     } else if (options.add) {
-      logger.warn('MCP server addition not implemented yet', 'Use /mcp add in interactive mode');
+      console.log('');
+      console.log(colors.warning('MCP server addition not implemented yet'));
+      console.log(colors.textMuted('Use /mcp add in interactive mode'));
+      console.log('');
     } else if (options.remove) {
       try {
         mcpManager.disconnectServer(options.remove);
         const mcpServers = configManager.getMcpServers();
         delete mcpServers[options.remove];
         await configManager.save(options.scope);
-        logger.success(`MCP server ${options.remove} removed successfully`);
+        console.log('');
+        console.log(colors.success(`MCP server ${options.remove} removed successfully`));
+        console.log('');
       } catch (error: any) {
-        logger.error(`Failed to remove MCP server: ${error.message}`, 'Check if the server exists and try again');
+        console.log('');
+        console.log(colors.error(`Failed to remove MCP server: ${error.message}`));
+        console.log(colors.textMuted('Check if the server exists and try again'));
+        console.log('');
       }
     } else {
-      logger.warn('Please specify an action: --list, --add, or --remove');
+      console.log('');
+      console.log(colors.warning('Please specify an action: --list, --add, or --remove'));
+      console.log('');
     }
   });
 
@@ -140,13 +193,21 @@ program
     const { getMemoryManager } = await import('./memory.js');
     const memoryManager = getMemoryManager(process.cwd());
 
-    logger.section('Initializing Project Context');
+    const separator = icons.separator.repeat(40);
+    console.log('');
+    console.log(colors.primaryBright(`${icons.folder} Initializing Project Context`));
+    console.log(colors.border(separator));
+    console.log('');
 
     try {
       await memoryManager.initializeProject(process.cwd());
-      logger.success('Project initialized successfully!', 'You can now run "xagent start" to begin');
+      console.log(colors.success('Project initialized successfully!'));
+      console.log(colors.textMuted('You can now run "xagent start" to begin'));
+      console.log('');
     } catch (error: any) {
-      logger.error(`Initialization failed: ${error.message}`, 'Check if you have write permissions for this directory');
+      console.log(colors.error(`Initialization failed: ${error.message}`));
+      console.log(colors.textMuted('Check if you have write permissions for this directory'));
+      console.log('');
       process.exit(1);
     }
   });
@@ -166,32 +227,54 @@ program
       const workflows = workflowManager.listWorkflows();
 
       if (workflows.length === 0) {
-        logger.warn('No workflows installed', 'Use --add to install workflows from the marketplace');
+        console.log('');
+        console.log(colors.warning('No workflows installed'));
+        console.log(colors.textMuted('Use --add to install workflows from the marketplace'));
+        console.log('');
       } else {
-        logger.section('Installed Workflows');
-        workflows.forEach(workflow => {
-          logger.info(`  ${workflow.name} (${workflow.id})`);
-          logger.info(`    ${workflow.description}`);
+        const separator = icons.separator.repeat(40);
+        console.log('');
+        console.log(colors.primaryBright(`${icons.rocket} Installed Workflows`));
+        console.log(colors.border(separator));
+        console.log('');
+
+        workflows.forEach((workflow, index) => {
+          console.log(`  ${colors.primaryBright(`${index + 1}. ${workflow.name}`)}`);
+          console.log(`    ${colors.textDim(`  ID: ${workflow.id}`)}`);
+          console.log(`    ${colors.textDim(`  ${workflow.description}`)}`);
+          console.log('');
         });
       }
     } else if (options.add) {
       try {
         await workflowManager.addWorkflow(options.add, options.scope);
-        logger.success(`Workflow ${options.add} added successfully!`);
+        console.log('');
+        console.log(colors.success(`Workflow ${options.add} added successfully!`));
+        console.log('');
       } catch (error: any) {
-        logger.error(error.message, 'Check the workflow ID and try again');
+        console.log('');
+        console.log(colors.error(error.message));
+        console.log(colors.textMuted('Check the workflow ID and try again'));
+        console.log('');
         process.exit(1);
       }
     } else if (options.remove) {
       try {
         await workflowManager.removeWorkflow(options.remove, options.scope);
-        logger.success(`Workflow ${options.remove} removed successfully!`);
+        console.log('');
+        console.log(colors.success(`Workflow ${options.remove} removed successfully!`));
+        console.log('');
       } catch (error: any) {
-        logger.error(error.message, 'Check if the workflow exists and try again');
+        console.log('');
+        console.log(colors.error(error.message));
+        console.log(colors.textMuted('Check if the workflow exists and try again'));
+        console.log('');
         process.exit(1);
       }
     } else {
-      logger.warn('Please specify an action: --list, --add, or --remove');
+      console.log('');
+      console.log(colors.warning('Please specify an action: --list, --add, or --remove'));
+      console.log('');
     }
   });
 
@@ -199,12 +282,26 @@ program
   .command('version')
   .description('Display version and check for updates')
   .action(async () => {
-    console.log(chalk.cyan('\nℹ️  xAgent CLI\n'));
-    console.log(chalk.gray('Version: 1.0.0'));
-    console.log(chalk.gray('Node.js: ' + process.version));
-    console.log(chalk.gray('Platform: ' + process.platform + ' ' + process.arch));
-    console.log(chalk.gray('\nDocumentation: https://platform.xagent.cn/cli/'));
-    console.log(chalk.gray('GitHub: https://github.com/xagent-ai/xagent-cli\n'));
+    const separator = icons.separator.repeat(40);
+
+    console.log('');
+    console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
+    console.log(colors.gradient('║') + ' '.repeat(56) + colors.gradient('║'));
+    console.log(' '.repeat(20) + colors.gradient('xAgent CLI') + ' '.repeat(29) + colors.gradient('║'));
+    console.log(colors.gradient('║') + ' '.repeat(56) + colors.gradient('║'));
+    console.log(colors.gradient('╚════════════════════════════════════════════════════════════╝'));
+    console.log('');
+    console.log(colors.border(separator));
+    console.log('');
+    console.log(`  ${icons.info}  ${colors.textMuted('Version:')} ${colors.primaryBright('1.0.0')}`);
+    console.log(`  ${icons.code} ${colors.textMuted('Node.js:')} ${colors.textMuted(process.version)}`);
+    console.log(`  ${icons.bolt} ${colors.textMuted('Platform:')} ${colors.textMuted(process.platform + ' ' + process.arch)}`);
+    console.log('');
+    console.log(colors.border(separator));
+    console.log('');
+    console.log(`  ${colors.primaryBright('📚 Documentation:')} ${colors.primaryBright('https://platform.xagent.cn/cli/')}`);
+    console.log(`  ${colors.primaryBright('💻 GitHub:')} ${colors.primaryBright('https://github.com/xagent-ai/xagent-cli')}`);
+    console.log('');
   });
 
 program.parse(process.argv);

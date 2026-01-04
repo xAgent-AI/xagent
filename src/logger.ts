@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import wrapAnsi from 'wrap-ansi';
 import stringWidth from 'string-width';
 import stripAnsi from 'strip-ansi';
+import { theme, icons, colors, styleHelpers } from './theme.js';
 
 export enum LogLevel {
   ERROR = 'error',
@@ -19,6 +20,8 @@ export interface LogOptions {
   wrap?: boolean;
   maxWidth?: number;
   suggestion?: string;
+  prefix?: string;
+  suffix?: string;
 }
 
 export interface LoggerConfig {
@@ -27,6 +30,8 @@ export interface LoggerConfig {
   maxWidth: number;
   wrapText: boolean;
   showSuggestions: boolean;
+  useBorders: boolean;
+  borderStyle: 'single' | 'double' | 'rounded';
 }
 
 const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
@@ -38,19 +43,19 @@ const LOG_LEVEL_ORDER: Record<LogLevel, number> = {
 };
 
 const DEFAULT_ICONS: Record<LogLevel, string> = {
-  [LogLevel.ERROR]: '✖',
-  [LogLevel.WARN]: '⚠',
-  [LogLevel.SUCCESS]: '✔',
-  [LogLevel.INFO]: 'ℹ',
-  [LogLevel.DEBUG]: '○'
+  [LogLevel.ERROR]: icons.error,
+  [LogLevel.WARN]: icons.warning,
+  [LogLevel.SUCCESS]: icons.success,
+  [LogLevel.INFO]: icons.info,
+  [LogLevel.DEBUG]: icons.debug
 };
 
 const DEFAULT_COLORS: Record<LogLevel, (text: string) => string> = {
-  [LogLevel.ERROR]: chalk.red,
-  [LogLevel.WARN]: chalk.yellow,
-  [LogLevel.SUCCESS]: chalk.green,
-  [LogLevel.INFO]: chalk.cyan,
-  [LogLevel.DEBUG]: chalk.gray
+  [LogLevel.ERROR]: colors.error,
+  [LogLevel.WARN]: colors.warning,
+  [LogLevel.SUCCESS]: colors.success,
+  [LogLevel.INFO]: colors.info,
+  [LogLevel.DEBUG]: colors.debug
 };
 
 export class Logger {
@@ -63,6 +68,8 @@ export class Logger {
       maxWidth: process.stdout.columns || 80,
       wrapText: true,
       showSuggestions: true,
+      useBorders: false,
+      borderStyle: 'single',
       ...config
     };
 
@@ -91,13 +98,17 @@ export class Logger {
 
     if (showTimestamp) {
       const timestamp = new Date().toLocaleTimeString();
-      formatted += chalk.gray(`[${timestamp}] `);
+      formatted += colors.textDim(`[${timestamp}] `);
     }
 
     formatted += color(`${icon} `);
 
+    if (options.prefix) {
+      formatted += colors.textMuted(`${options.prefix} `);
+    }
+
     if (wrap) {
-      const availableWidth = maxWidth - stringWidth(formatted);
+      const availableWidth = maxWidth - stringWidth(formatted) - (options.suffix ? stringWidth(options.suffix) : 0);
       formatted += wrapAnsi(message, availableWidth, {
         hard: true,
         trim: true
@@ -106,11 +117,15 @@ export class Logger {
       formatted += message;
     }
 
+    if (options.suffix) {
+      formatted += ` ${colors.textMuted(options.suffix)}`;
+    }
+
     return formatted;
   }
 
   private formatSuggestion(suggestion: string): string {
-    const prefix = chalk.gray('💡 建议: ');
+    const prefix = colors.primaryBright(`${icons.sparkles} 建议: `);
     const maxWidth = this.config.maxWidth;
     const availableWidth = maxWidth - stringWidth(prefix);
 
@@ -171,75 +186,113 @@ export class Logger {
   }
 
   section(title: string): void {
-    const separator = '─'.repeat(this.config.maxWidth - 2);
-    console.log(chalk.cyan(`\n${title}`));
-    console.log(chalk.gray(separator));
+    const separator = icons.separator.repeat(this.config.maxWidth - 2);
+    console.log('');
+    console.log(colors.primaryBright(styleHelpers.text.bold(title)));
+    console.log(colors.border(separator));
   }
 
   subsection(title: string): void {
-    console.log(chalk.yellow(`\n${title}`));
+    console.log('');
+    console.log(colors.infoBright(styleHelpers.text.bold(title)));
   }
 
-  list(items: string[], options?: { numbered?: boolean; indent?: number }): void {
+  list(items: string[], options?: { numbered?: boolean; indent?: number; icon?: string }): void {
     const numbered = options?.numbered ?? false;
     const indent = options?.indent ?? 2;
+    const customIcon = options?.icon;
     const prefix = ' '.repeat(indent);
 
     items.forEach((item, index) => {
-      const bullet = numbered ? `${index + 1}.` : '•';
+      let bullet: string;
+      if (numbered) {
+        bullet = `${index + 1}.`;
+      } else if (customIcon) {
+        bullet = customIcon;
+      } else {
+        bullet = icons.bullet;
+      }
+
       const availableWidth = this.config.maxWidth - stringWidth(prefix + bullet + ' ');
       const wrapped = wrapAnsi(item, availableWidth, {
         hard: true,
         trim: true
       });
 
-      console.log(`${prefix}${bullet} ${wrapped}`);
+      console.log(`${prefix}${colors.primaryBright(bullet)} ${wrapped}`);
     });
   }
 
-  table(headers: string[], rows: string[][]): void {
+  table(headers: string[], rows: string[][], options?: { showBorders?: boolean; borderStyle?: 'single' | 'double' | 'rounded' }): void {
+    const showBorders = options?.showBorders ?? this.config.useBorders;
+    const borderStyle = options?.borderStyle ?? this.config.borderStyle;
+
     const columnWidths = headers.map((header, index) => {
       const maxRowWidth = Math.max(...rows.map(row => stringWidth(row[index] || '')));
       return Math.max(stringWidth(header), maxRowWidth);
     });
 
-    const separator = columnWidths.map(width => '─'.repeat(width + 2)).join('┼');
+    const totalWidth = columnWidths.reduce((sum, width) => sum + width + 2, 0) + (columnWidths.length - 1);
 
-    console.log(chalk.gray(separator));
+    const createSeparator = (left: string, middle: string, right: string, horizontal: string) => {
+      return left + columnWidths.map(width => horizontal.repeat(width + 2)).join(middle) + right;
+    };
+
+    const border = styleHelpers.border[borderStyle];
+
+    if (showBorders) {
+      console.log(colors.border(createSeparator(border.topLeft, border.topT, border.topRight, border.horizontal)));
+    } else {
+      console.log(colors.border(createSeparator('', '', '', '─')));
+    }
+
     console.log(
-      '│ ' +
+      (showBorders ? colors.border(border.vertical) : '') + ' ' +
       headers.map((header, index) => {
         const padded = header.padEnd(columnWidths[index]);
-        return chalk.cyan(padded);
-      }).join(' │ ') +
-      ' │'
+        return colors.primaryBright(padded);
+      }).join(' ' + (showBorders ? colors.border(border.vertical) : '') + ' ') +
+      ' ' + (showBorders ? colors.border(border.vertical) : '')
     );
-    console.log(chalk.gray(separator));
 
-    rows.forEach(row => {
+    if (showBorders) {
+      console.log(colors.border(createSeparator(border.leftT, border.cross, border.rightT, border.horizontal)));
+    } else {
+      console.log(colors.border(createSeparator('', '', '', '─')));
+    }
+
+    rows.forEach((row, rowIndex) => {
+      const isEven = rowIndex % 2 === 0;
       console.log(
-        '│ ' +
+        (showBorders ? colors.border(border.vertical) : '') + ' ' +
         row.map((cell, index) => {
           const padded = (cell || '').padEnd(columnWidths[index]);
-          return padded;
-        }).join(' │ ') +
-        ' │'
+          return isEven ? padded : colors.textDim(padded);
+        }).join(' ' + (showBorders ? colors.border(border.vertical) : '') + ' ') +
+        ' ' + (showBorders ? colors.border(border.vertical) : '')
       );
     });
 
-    console.log(chalk.gray(separator));
+    if (showBorders) {
+      console.log(colors.border(createSeparator(border.bottomLeft, border.bottomT, border.bottomRight, border.horizontal)));
+    } else {
+      console.log(colors.border(createSeparator('', '', '', '─')));
+    }
   }
 
   code(code: string, language?: string): void {
     const lang = language || '';
-    console.log(chalk.gray(`\n${lang ? lang + ' code:' : 'Code:'}`));
-    console.log(chalk.gray('─'.repeat(this.config.maxWidth - 2)));
-    console.log(code);
-    console.log(chalk.gray('─'.repeat(this.config.maxWidth - 2)));
+    const separator = icons.separator.repeat(this.config.maxWidth - 2);
+
+    console.log('');
+    console.log(colors.accent(`${icons.code} ${lang ? lang + ' Code' : 'Code'}:`));
+    console.log(colors.border(separator));
+    console.log(colors.codeText(code));
+    console.log(colors.border(separator));
   }
 
   link(text: string, url: string): void {
-    console.log(chalk.cyan(`${text}: ${chalk.underline(url)}`));
+    console.log(colors.primaryBright(`${text}: ${styleHelpers.text.underline(url)}`));
   }
 
   progress(message: string, current: number, total: number): void {
@@ -248,16 +301,83 @@ export class Logger {
     const filled = Math.round((current / total) * barWidth);
     const empty = barWidth - filled;
 
-    const bar = chalk.green('█'.repeat(filled)) + chalk.gray('█'.repeat(empty));
-    console.log(`${message} ${bar} ${percentage}%`);
+    const filledBar = colors.success(icons.square.repeat(filled));
+    const emptyBar = colors.border(icons.square.repeat(empty));
+
+    console.log(`${colors.textMuted(message)} ${filledBar}${emptyBar} ${colors.primaryBright(`${percentage}%`)}`);
   }
 
-  divider(): void {
-    console.log(chalk.gray('─'.repeat(this.config.maxWidth - 2)));
+  divider(type: 'single' | 'double' | 'dashed' | 'dotted' = 'single'): void {
+    let separator: string;
+    switch (type) {
+      case 'double':
+        separator = icons.separatorDouble;
+        break;
+      case 'dashed':
+        separator = icons.separatorDashed;
+        break;
+      case 'dotted':
+        separator = icons.separatorDotted;
+        break;
+      default:
+        separator = icons.separator;
+    }
+
+    console.log(colors.border(separator.repeat(this.config.maxWidth - 2)));
   }
 
   blank(): void {
     console.log();
+  }
+
+  box(content: string, title?: string, options?: { borderStyle?: 'single' | 'double' | 'rounded' }): void {
+    const borderStyle = options?.borderStyle ?? this.config.borderStyle;
+    const border = styleHelpers.border[borderStyle];
+
+    const lines = content.split('\n');
+    const maxWidth = Math.max(...lines.map(line => stringWidth(line)));
+    const boxWidth = maxWidth + 4;
+
+    const horizontalLine = border.horizontal.repeat(boxWidth);
+
+    console.log(colors.border(`${border.topLeft}${horizontalLine}${border.topRight}`));
+
+    if (title) {
+      const titlePadding = boxWidth - stringWidth(title) - 2;
+      const leftPadding = Math.floor(titlePadding / 2);
+      const rightPadding = titlePadding - leftPadding;
+
+      console.log(
+        colors.border(border.vertical) +
+        ' '.repeat(leftPadding) +
+        colors.primaryBright(styleHelpers.text.bold(title)) +
+        ' '.repeat(rightPadding) +
+        colors.border(border.vertical)
+      );
+    }
+
+    lines.forEach(line => {
+      const padding = boxWidth - stringWidth(line) - 2;
+      console.log(
+        colors.border(border.vertical) +
+        ' ' +
+        line +
+        ' '.repeat(padding) +
+        colors.border(border.vertical)
+      );
+    });
+
+    console.log(colors.border(`${border.bottomLeft}${horizontalLine}${border.bottomRight}`));
+  }
+
+  gradient(text: string): void {
+    console.log(colors.gradient(text));
+  }
+
+  highlight(text: string, pattern: string): void {
+    const regex = new RegExp(`(${pattern})`, 'gi');
+    const highlighted = text.replace(regex, colors.highlight('$1'));
+    console.log(highlighted);
   }
 
   setMinLevel(level: LogLevel): void {
@@ -274,6 +394,14 @@ export class Logger {
 
   setShowSuggestions(show: boolean): void {
     this.config.showSuggestions = show;
+  }
+
+  setUseBorders(use: boolean): void {
+    this.config.useBorders = use;
+  }
+
+  setBorderStyle(style: 'single' | 'double' | 'rounded'): void {
+    this.config.borderStyle = style;
   }
 
   getMaxWidth(): number {

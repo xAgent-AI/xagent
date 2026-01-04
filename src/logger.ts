@@ -125,7 +125,7 @@ export class Logger {
   }
 
   private formatSuggestion(suggestion: string): string {
-    const prefix = colors.primaryBright(`${icons.sparkles} 建议: `);
+    const prefix = colors.primaryBright(`${icons.sparkles} Suggestion: `);
     const maxWidth = this.config.maxWidth;
     const availableWidth = maxWidth - stringWidth(prefix);
 

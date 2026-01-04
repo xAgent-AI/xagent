@@ -17,80 +17,80 @@ interface ThirdPartyProvider {
 
 const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
   {
-    name: '智谱AI (GLM-4)',
+    name: 'Zhipu AI (GLM-4)',
     baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
     defaultModel: 'glm-4',
-    description: '智谱AI GLM-4系列模型',
+    description: 'Zhipu AI GLM-4 series models',
     models: ['glm-4', 'glm-4-plus', 'glm-4-0520', 'glm-4-air', 'glm-4-airx', 'glm-4-flash', 'glm-4.7', 'glm-4.7-plus']
   },
   {
     name: 'DeepSeek',
     baseUrl: 'https://api.deepseek.com/v1',
     defaultModel: 'deepseek-chat',
-    description: '深度求索 DeepSeek系列模型',
+    description: 'DeepSeek DeepSeek series models',
     models: ['deepseek-chat', 'deepseek-coder', 'deepseek-reasoner']
   },
   {
-    name: '阿里通义千问',
+    name: 'Alibaba Tongyi Qianwen',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     defaultModel: 'qwen-max',
-    description: '阿里云通义千问系列模型',
+    description: 'Alibaba Cloud Tongyi Qianwen series models',
     models: ['qwen-max', 'qwen-plus', 'qwen-turbo', 'qwen-long', 'qwen-vl-max', 'qwen-vl-plus']
   },
   {
-    name: '百度文心一言',
+    name: 'Baidu Wenxin Yiyan',
     baseUrl: 'https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat',
     defaultModel: 'ernie-bot-4',
-    description: '百度智能云文心一言系列模型',
+    description: 'Baidu Intelligent Cloud Wenxin Yiyan series models',
     models: ['ernie-bot-4', 'ernie-bot-turbo', 'ernie-speed', 'ernie-speed-128k', 'ernie-lite-8k']
   },
   {
-    name: '月之暗面 (Kimi)',
+    name: 'Moonshot AI (Kimi)',
     baseUrl: 'https://api.moonshot.cn/v1',
     defaultModel: 'moonshot-v1-8k',
-    description: '月之暗面 Kimi系列模型',
+    description: 'Moonshot AI Kimi series models',
     models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k']
   },
   {
     name: 'MiniMax',
     baseUrl: 'https://api.minimax.chat/v1',
     defaultModel: 'abab6.5s-chat',
-    description: 'MiniMax系列模型',
+    description: 'MiniMax series models',
     models: ['abab6.5s-chat', 'abab6.5-chat', 'abab5.5-chat', 'm2.1-chat']
   },
   {
-    name: '零一万物 (Yi)',
+    name: '01.AI (Yi)',
     baseUrl: 'https://api.lingyiwanwu.com/v1',
     defaultModel: 'yi-large',
-    description: '零一万物 Yi系列模型',
+    description: '01.AI Yi series models',
     models: ['yi-large', 'yi-large-turbo', 'yi-medium', 'yi-spark', 'yi-vision']
   },
   {
-    name: '百川智能 (Baichuan)',
+    name: 'Baichuan Intelligence (Baichuan)',
     baseUrl: 'https://api.baichuan-ai.com/v1',
     defaultModel: 'Baichuan4',
-    description: '百川智能 Baichuan系列模型',
+    description: 'Baichuan Intelligence Baichuan series models',
     models: ['Baichuan4', 'Baichuan3-Turbo', 'Baichuan3-Turbo-128k', 'Baichuan-Text-Embedding']
   },
   {
-    name: '腾讯混元',
+    name: 'Tencent Hunyuan',
     baseUrl: 'https://hunyuan.cloud.tencent.com/hyllm/v1',
     defaultModel: 'hunyuan-pro',
-    description: '腾讯混元系列模型',
+    description: 'Tencent Hunyuan series models',
     models: ['hunyuan-pro', 'hunyuan-standard', 'hunyuan-lite', 'hunyuan-vision']
   },
   {
-    name: '科大讯飞 (SparkDesk)',
+    name: 'iFlytek (SparkDesk)',
     baseUrl: 'https://spark-api-open.xf-yun.com/v1',
     defaultModel: 'spark-pro',
-    description: '科大讯飞星火认知大模型',
+    description: 'iFlytek Spark cognitive large model',
     models: ['spark-pro', 'spark-ultra', 'spark-max', 'spark-lite']
   },
   {
-    name: '自定义',
+    name: 'Custom',
     baseUrl: '',
     defaultModel: '',
-    description: '手动输入API配置',
+    description: 'Manually enter API configuration',
     models: []
   }
 ];
@@ -152,16 +152,16 @@ export class AuthService {
   }
 
   private async authenticateWithApiKey(): Promise<boolean> {
-    logger.info('使用API Key认证...');
+    logger.info('Authenticating with API Key...');
 
     const answers = await inquirer.prompt([
       {
         type: 'input',
         name: 'apiKey',
-        message: '输入你的xAgent API Key:',
+        message: 'Enter your xAgent API Key:',
         validate: (input: string) => {
           if (!input || input.trim().length === 0) {
-            return 'API Key不能为空';
+            return 'API Key cannot be empty';
           }
           return true;
         }
@@ -175,22 +175,22 @@ export class AuthService {
 
     const isValid = await this.validateApiKey();
     if (isValid) {
-      logger.success('API Key验证成功!', 'You can now start using xAgent CLI');
+      logger.success('API Key verified successfully!', 'You can now start using xAgent CLI');
       return true;
     } else {
-      logger.error('API Key无效，请重试。', 'Make sure you entered the correct API Key');
+      logger.error('Invalid API Key, please try again.', 'Make sure you entered the correct API Key');
       return false;
     }
   }
 
   private async authenticateWithOpenAICompatible(): Promise<boolean> {
-    logger.info('配置第三方模型API...\n');
+    logger.info('Configuring third-party model API...\n');
 
     const { provider } = await inquirer.prompt([
       {
         type: 'list',
         name: 'provider',
-        message: '选择第三方模型提供商:',
+        message: 'Select third-party model provider:',
         choices: THIRD_PARTY_PROVIDERS.map(p => ({
           name: `${p.name} - ${p.description}`,
           value: p
@@ -203,16 +203,16 @@ export class AuthService {
     let baseUrl = selectedProvider.baseUrl;
     let modelName = selectedProvider.defaultModel;
 
-    if (selectedProvider.name === '自定义') {
+    if (selectedProvider.name === 'Custom') {
       const customAnswers = await inquirer.prompt([
         {
           type: 'input',
           name: 'baseUrl',
-          message: '输入API Base URL:',
+          message: 'Enter API Base URL:',
           default: 'https://api.openai.com/v1',
           validate: (input: string) => {
             if (!input || input.trim().length === 0) {
-              return 'Base URL不能为空';
+              return 'Base URL cannot be empty';
             }
             return true;
           }
@@ -220,11 +220,11 @@ export class AuthService {
         {
           type: 'input',
           name: 'modelName',
-          message: '输入模型名称:',
+          message: 'Enter model name:',
           default: 'gpt-4',
           validate: (input: string) => {
             if (!input || input.trim().length === 0) {
-              return '模型名称不能为空';
+              return 'Model name cannot be empty';
             }
             return true;
           }
@@ -234,37 +234,37 @@ export class AuthService {
       baseUrl = (customAnswers.baseUrl as string).trim();
       modelName = (customAnswers.modelName as string).trim();
     } else {
-      logger.info(`\n已选择: ${selectedProvider.name}`);
-      logger.info(`API地址: ${baseUrl}`);
-      
+      logger.info(`\nSelected: ${selectedProvider.name}`);
+      logger.info(`API URL: ${baseUrl}`);
+
       if (selectedProvider.models && selectedProvider.models.length > 0) {
-        logger.info(`可用模型: ${selectedProvider.models.join(', ')}`);
-        
+        logger.info(`Available models: ${selectedProvider.models.join(', ')}`);
+
         const { selectedModel } = await inquirer.prompt([
           {
             type: 'list',
             name: 'selectedModel',
-            message: '选择模型:',
+            message: 'Select model:',
             choices: selectedProvider.models.map(model => ({
-              name: model === selectedProvider.defaultModel ? `${model} (默认)` : model,
+              name: model === selectedProvider.defaultModel ? `${model} (default)` : model,
               value: model
             }))
           }
         ]);
-        
+
         modelName = selectedModel;
       } else {
-        logger.info(`默认模型: ${modelName}\n`);
+        logger.info(`Default model: ${modelName}\n`);
 
         const { confirmModel } = await inquirer.prompt([
           {
             type: 'input',
             name: 'modelName',
-            message: `输入模型名称 (直接回车使用默认值 ${modelName}):`,
+            message: `Enter model name (press Enter to use default value ${modelName}):`,
             default: modelName,
             validate: (input: string) => {
               if (!input || input.trim().length === 0) {
-                return '模型名称不能为空';
+                return 'Model name cannot be empty';
               }
               return true;
             }
@@ -279,11 +279,11 @@ export class AuthService {
       {
         type: 'password',
         name: 'apiKey',
-        message: `输入${selectedProvider.name}的API Key:`,
+        message: `Enter ${selectedProvider.name} API Key:`,
         mask: '*',
         validate: (input: string) => {
           if (!input || input.trim().length === 0) {
-            return 'API Key不能为空';
+            return 'API Key cannot be empty';
           }
           return true;
         }
@@ -296,12 +296,12 @@ export class AuthService {
 
     const isValid = await this.validateApiKey();
     if (isValid) {
-      logger.success(`${selectedProvider.name}配置成功!`, `Model: ${modelName}, API: ${baseUrl}`);
-      logger.info(`   模型: ${modelName}`);
-      logger.info(`   API地址: ${baseUrl}`);
+      logger.success(`${selectedProvider.name} configured successfully!`, `Model: ${modelName}, API: ${baseUrl}`);
+      logger.info(`   Model: ${modelName}`);
+      logger.info(`   API URL: ${baseUrl}`);
       return true;
     } else {
-      logger.error(`${selectedProvider.name}配置验证失败，请检查API Key和网络连接。`, 'Verify your API Key and network connection');
+      logger.error(`${selectedProvider.name} configuration verification failed, please check API Key and network connection.`, 'Verify your API Key and network connection');
       return false;
     }
   }
@@ -378,11 +378,11 @@ export async function selectAuthType(): Promise<AuthType> {
     {
       type: 'list',
       name: 'authType',
-      message: '选择认证方式:',
+      message: 'Select authentication method:',
       choices: [
-        { name: '使用xAgent账号登录 (推荐)', value: AuthType.OAUTH_XAGENT },
-        { name: '使用xAgent API Key', value: AuthType.API_KEY },
-        { name: '使用第三方模型API (智谱GLM-4、DeepSeek等)', value: AuthType.OPENAI_COMPATIBLE }
+        { name: 'Login with xAgent account (recommended)', value: AuthType.OAUTH_XAGENT },
+        { name: 'Use xAgent API Key', value: AuthType.API_KEY },
+        { name: 'Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)', value: AuthType.OPENAI_COMPATIBLE }
       ]
     }
   ]);

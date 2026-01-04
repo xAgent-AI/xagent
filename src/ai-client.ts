@@ -223,13 +223,13 @@ export class AIClient {
 }
 
 export function detectThinkingKeywords(text: string): 'none' | 'normal' | 'hard' | 'mega' | 'ultra' {
-  const ultraKeywords = ['超级思考', '极限思考', '深度思考', '全力思考', '超强思考', '认真仔细思考',
+  const ultraKeywords = ['super think', 'extreme think', 'deep think', 'full think', 'ultra think', 'careful think',
     'ultrathink', 'think really super hard', 'think intensely'];
-  const megaKeywords = ['强力思考', '大力思考', '用力思考', '努力思考', '好好思考', '仔细思考',
+  const megaKeywords = ['strong think', 'powerful think', 'think hard', 'try hard to think', 'think well', 'think carefully',
     'megathink', 'think really hard', 'think a lot'];
-  const hardKeywords = ['再想想', '多想想', '想清楚', '想明白', '考虑清楚',
+  const hardKeywords = ['think again', 'think more', 'think clearly', 'think thoroughly', 'consider carefully',
     'think about it', 'think more', 'think harder'];
-  const normalKeywords = ['想想', '思考', '考虑', 'think'];
+  const normalKeywords = ['think', 'think', 'consider', 'think'];
 
   const lowerText = text.toLowerCase();
 

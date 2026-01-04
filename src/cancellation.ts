@@ -14,7 +14,7 @@ export class CancellationManager extends EventEmitter {
   }
 
   /**
-   * 设置按键处理器，监听 ESC 键
+   * Set up key handler to listen for ESC key
    */
   private setupKeyHandler(): void {
     if (process.stdin.isTTY) {
@@ -22,8 +22,8 @@ export class CancellationManager extends EventEmitter {
       this.rawModeEnabled = true;
 
       process.stdin.on('data', (chunk: Buffer) => {
-        // ESC 键的 ASCII 码是 27 (0x1B)
-        // 在某些终端中，ESC 键可能被编码为多字节序列
+        // ESC key ASCII code is 27 (0x1B)
+        // In some terminals, ESC key may be encoded as multi-byte sequence
         const key = chunk.toString('utf8');
 
         if (key === '\u001B' || key.charCodeAt(0) === 27) {
@@ -38,7 +38,7 @@ export class CancellationManager extends EventEmitter {
   }
 
   /**
-   * 开始一个新的操作
+   * Start a new operation
    */
   startOperation(operationId: string): void {
     this.operationId = operationId;
@@ -47,7 +47,7 @@ export class CancellationManager extends EventEmitter {
   }
 
   /**
-   * 取消当前操作
+   * Cancel current operation
    */
   cancel(): void {
     if (!this.isCancelled) {
@@ -58,14 +58,14 @@ export class CancellationManager extends EventEmitter {
   }
 
   /**
-   * 检查当前操作是否被取消
+   * Check if current operation is cancelled
    */
   isOperationCancelled(): boolean {
     return this.isCancelled;
   }
 
   /**
-   * 完成当前操作
+   * Complete current operation
    */
   completeOperation(): void {
     if (this.operationId) {
@@ -76,14 +76,14 @@ export class CancellationManager extends EventEmitter {
   }
 
   /**
-   * 获取当前操作 ID
+   * Get current operation ID
    */
   getCurrentOperationId(): string | null {
     return this.operationId;
   }
 
   /**
-   * 重置取消状态
+   * Reset cancellation state
    */
   reset(): void {
     this.isCancelled = false;
@@ -91,7 +91,7 @@ export class CancellationManager extends EventEmitter {
   }
 
   /**
-   * 清理资源
+   * Clean up resources
    */
   cleanup(): void {
     if (this.rawModeEnabled && process.stdin.isTTY) {
@@ -104,7 +104,7 @@ export class CancellationManager extends EventEmitter {
   }
 
   /**
-   * 创建一个可取消的 Promise 包装器
+   * Create a cancellable Promise wrapper
    */
   async withCancellation<T>(
     promise: Promise<T>,
@@ -120,10 +120,10 @@ export class CancellationManager extends EventEmitter {
         }
       };
 
-      // 立即检查是否已取消
+      // Check immediately if already cancelled
       checkCancellation();
 
-      // 监听取消事件
+      // Listen for cancellation event
       const onCancelled = () => {
         this.completeOperation();
         reject(new Error('Operation cancelled by user'));

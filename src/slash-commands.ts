@@ -99,142 +99,142 @@ export class SlashCommandHandler {
     console.log('');
     console.log(colors.primaryBright('╔════════════════════════════════════════════════════════════╗'));
     console.log(colors.primaryBright('║') + ' '.repeat(56) + colors.primaryBright('║'));
-    console.log(' '.repeat(14) + colors.gradient('📚 XAGENT CLI 帮助') + ' '.repeat(31) + colors.primaryBright('║'));
+    console.log(' '.repeat(14) + colors.gradient('📚 XAGENT CLI Help') + ' '.repeat(31) + colors.primaryBright('║'));
     console.log(colors.primaryBright('║') + ' '.repeat(56) + colors.primaryBright('║'));
     console.log(colors.primaryBright('╚════════════════════════════════════════════════════════════╝'));
     console.log('');
 
-    // 基础命令
-    this.showHelpCategory('基础命令', [
+    // Basic Commands
+    this.showHelpCategory('Basic Commands', [
       {
-        cmd: '/help [命令名]',
-        desc: '显示帮助信息',
-        detail: '查看所有可用命令或特定命令的详细说明',
+        cmd: '/help [command]',
+        desc: 'Show help information',
+        detail: 'View all available commands or detailed description of specific command',
         example: '/help\n/help mode'
       },
       {
         cmd: '/clear',
-        desc: '清空对话历史',
-        detail: '清除当前会话的所有对话记录，开始新的对话',
+        desc: 'Clear conversation history',
+        detail: 'Clear all conversation records of current session, start new conversation',
         example: '/clear'
       },
       {
         cmd: '/exit',
-        desc: '退出程序',
-        detail: '安全退出 XAGENT CLI',
+        desc: 'Exit program',
+        detail: 'Safely exit XAGENT CLI',
         example: '/exit'
       }
     ]);
 
-    // 项目管理
-    this.showHelpCategory('项目管理', [
+    // Project Management
+    this.showHelpCategory('Project Management', [
       {
         cmd: '/init',
-        desc: '初始化项目上下文',
-        detail: '在当前目录创建 XAGENT.md 文件，用于存储项目上下文信息',
+        desc: 'Initialize project context',
+        detail: 'Create XAGENT.md file in current directory, used to store project context information',
         example: '/init'
       },
       {
         cmd: '/memory [show|add|refresh]',
-        desc: '管理项目记忆',
-        detail: '查看、添加或刷新项目记忆信息',
-        example: '/memory show\n/memory add "项目使用 TypeScript"'
+        desc: 'Manage project memory',
+        detail: 'View, add or refresh project memory information',
+        example: '/memory show\n/memory add "Project uses TypeScript"'
       }
     ]);
 
-    // 认证与配置
-    this.showHelpCategory('认证与配置', [
+    // Authentication & Configuration
+    this.showHelpCategory('Authentication & Configuration', [
       {
         cmd: '/auth',
-        desc: '配置认证信息',
-        detail: '更改或查看当前的认证配置',
+        desc: 'Configure authentication information',
+        detail: 'Change or view current authentication configuration',
         example: '/auth'
       },
       {
-        cmd: '/mode [模式]',
-        desc: '切换审核模式',
-        detail: '切换工具执行的安全审核模式',
+        cmd: '/mode [mode]',
+        desc: 'Switch approval mode',
+        detail: 'Switch security approval mode for tool execution',
         example: '/mode\n/mode smart\n/mode yolo',
         modes: [
-          'yolo - 无限制执行所有操作',
-          'accept_edits - 自动接受编辑操作',
-          'plan - 先规划后执行',
-          'default - 安全执行，需要确认',
-          'smart - 智能审核（推荐）'
+          'yolo - Execute all operations without restriction',
+          'accept_edits - Automatically accept edit operations',
+          'plan - Plan before executing',
+          'default - Safe execution, requires confirmation',
+          'smart - Smart approval (recommended)'
         ]
       },
       {
         cmd: '/think [on|off|display]',
-        desc: '控制思考模式',
-        detail: '启用/禁用 AI 的思考过程显示',
+        desc: 'Control thinking mode',
+        detail: 'Enable/disable AI thinking process display',
         example: '/think on\n/think off\n/think display compact'
       },
       {
         cmd: '/language [zh|en]',
-        desc: '切换语言',
-        detail: '在中文和英文界面之间切换',
+        desc: 'Switch language',
+        detail: 'Switch between Chinese and English interface',
         example: '/language zh\n/language en'
       },
       {
         cmd: '/theme',
-        desc: '切换主题',
-        detail: '更改 UI 主题样式',
+        desc: 'Switch theme',
+        detail: 'Change UI theme style',
         example: '/theme'
       }
     ]);
 
-    // 功能扩展
-    this.showHelpCategory('功能扩展', [
+    // Feature Extensions
+    this.showHelpCategory('Feature Extensions', [
       {
         cmd: '/agents [list|online|install|remove]',
-        desc: '管理子代理',
-        detail: '查看、安装或移除专门的 AI 子代理',
+        desc: 'Manage sub-agents',
+        detail: 'View, install or remove specialized AI sub-agents',
         example: '/agents list\n/agents online\n/agents install explore-agent'
       },
       {
         cmd: '/mcp [list|add|remove|refresh]',
-        desc: '管理 MCP 服务器',
-        detail: '管理 Model Context Protocol 服务器',
+        desc: 'Manage MCP servers',
+        detail: 'Manage Model Context Protocol servers',
         example: '/mcp list\n/mcp add server-name'
       },
       {
         cmd: '/tools [verbose|simple]',
-        desc: '管理工具显示',
-        detail: '查看可用工具或切换工具调用显示模式',
+        desc: 'Manage tool display',
+        detail: 'View available tools or switch tool call display mode',
         example: '/tools\n/tools verbose\n/tools simple'
       }
     ]);
 
-    // 高级功能
-    this.showHelpCategory('高级功能', [
+    // Advanced Features
+    this.showHelpCategory('Advanced Features', [
       {
         cmd: '/restore',
-        desc: '从检查点恢复',
-        detail: '从历史检查点恢复对话状态',
+        desc: 'Restore from checkpoint',
+        detail: 'Restore conversation state from historical checkpoints',
         example: '/restore'
       },
       {
         cmd: '/stats',
-        desc: '显示会话统计',
-        detail: '查看当前会话的统计信息',
+        desc: 'Show session statistics',
+        detail: 'View statistics information of current session',
         example: '/stats'
       },
       {
         cmd: '/about',
-        desc: '显示版本信息',
-        detail: '查看 XAGENT CLI 的版本和相关信息',
+        desc: 'Show version information',
+        detail: 'View version and related information of XAGENT CLI',
         example: '/about'
       }
     ]);
 
-    // 快捷键
+    // Keyboard Shortcuts
     console.log('');
     console.log(colors.border(separator));
-    console.log(colors.primaryBright('快捷键'));
+    console.log(colors.primaryBright('Keyboard Shortcuts'));
     console.log(colors.border(separator));
     console.log('');
-    console.log(colors.textMuted('  ESC       - 取消当前操作'));
-    console.log(colors.textMuted('  Ctrl+C    - 退出程序'));
+    console.log(colors.textMuted('  ESC       - Cancel current operation'));
+    console.log(colors.textMuted('  Ctrl+C    - Exit program'));
     console.log('');
   }
 
@@ -259,13 +259,13 @@ export class SlashCommandHandler {
       console.log(colors.textMuted(`    ${cmd.detail}`));
 
       if (cmd.modes) {
-        console.log(colors.textDim(`    可用模式:`));
+        console.log(colors.textDim(`    Available modes:`));
         cmd.modes.forEach(mode => {
           console.log(colors.textDim(`      • ${mode}`));
         });
       }
 
-      console.log(colors.accent(`    示例:`));
+      console.log(colors.accent(`    Examples:`));
       cmd.example.split('\n').forEach(ex => {
         console.log(colors.codeText(`      ${ex}`));
       });
@@ -615,16 +615,16 @@ export class SlashCommandHandler {
     });
 
     console.log('');
-    const currentSetting = this.configManager.get('showToolDetails') ? '详细' : '简洁';
-    logger.info(`当前工具显示模式: ${currentSetting}`);
-    logger.info('使用 /tools verbose 切换到详细模式');
-    logger.info('使用 /tools simple 切换到简洁模式');
+    const currentSetting = this.configManager.get('showToolDetails') ? 'verbose' : 'simple';
+    logger.info(`Current tool display mode: ${currentSetting}`);
+    logger.info('Use /tools verbose to switch to verbose mode');
+    logger.info('Use /tools simple to switch to simple mode');
   }
 
   private async handleToolsVerbose(args: string[]): Promise<void> {
     if (args.length === 0) {
-      const currentSetting = this.configManager.get('showToolDetails') ? '详细' : '简洁';
-      logger.info(`当前工具显示模式: ${currentSetting}`);
+      const currentSetting = this.configManager.get('showToolDetails') ? 'verbose' : 'simple';
+      logger.info(`Current tool display mode: ${currentSetting}`);
       return;
     }
 
@@ -633,13 +633,13 @@ export class SlashCommandHandler {
     if (mode === 'verbose' || mode === 'detail' || mode === 'true' || mode === 'on') {
       this.configManager.set('showToolDetails', true);
       await this.configManager.save('global');
-      logger.success('工具显示模式已切换到详细模式', '将显示完整的工具调用信息');
+      logger.success('Tool display mode switched to verbose mode', 'Will show complete tool call information');
     } else if (mode === 'simple' || mode === 'concise' || mode === 'false' || mode === 'off') {
       this.configManager.set('showToolDetails', false);
       await this.configManager.save('global');
-      logger.success('工具显示模式已切换到简洁模式', '只显示工具执行状态');
+      logger.success('Tool display mode switched to simple mode', 'Only show tool execution status');
     } else {
-      logger.warn('无效的模式', '使用 verbose 或 simple');
+      logger.warn('Invalid mode', 'Use verbose or simple');
     }
   }
 
@@ -663,14 +663,14 @@ export class SlashCommandHandler {
         name: 'language',
         message: 'Select language:',
         choices: [
-          { name: '中文', value: 'zh' },
+          { name: 'Chinese', value: 'zh' },
           { name: 'English', value: 'en' }
         ]
       }
     ]);
 
     this.configManager.setLanguage(language);
-    logger.success(`Language changed to: ${language === 'zh' ? '中文' : 'English'}`, 'Restart CLI to apply changes');
+    logger.success(`Language changed to: ${language === 'zh' ? 'Chinese' : 'English'}`, 'Restart CLI to apply changes');
   }
 
   private async handleAbout(): Promise<void> {

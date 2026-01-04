@@ -7,7 +7,7 @@ import { colors, icons } from './theme.js';
 const logger = getLogger();
 
 /**
- * 审核结果类型
+ * Approval result type
  */
 export enum ApprovalDecision {
   APPROVED = 'approved',
@@ -17,7 +17,7 @@ export enum ApprovalDecision {
 }
 
 /**
- * 风险等级
+ * Risk level
  */
 export enum RiskLevel {
   LOW = 'LOW',
@@ -27,7 +27,7 @@ export enum RiskLevel {
 }
 
 /**
- * 审核结果
+ * Approval result
  */
 export interface ApprovalResult {
   decision: ApprovalDecision;
@@ -39,7 +39,7 @@ export interface ApprovalResult {
 }
 
 /**
- * 工具调用上下文
+ * Tool call context
  */
 export interface ToolCallContext {
   toolName: string;
@@ -48,29 +48,29 @@ export interface ToolCallContext {
 }
 
 /**
- * 白名单检查器
+ * Whitelist checker
  */
 export class WhitelistChecker {
   private static readonly WHITELISTED_TOOLS: Set<string> = new Set([
-    // 信息读取类工具
+    // Information reading tools
     'Read',
     'ListDirectory',
     'SearchCodebase',
     'Grep',
     'image_read',
 
-    // 任务管理类工具
+    // Task management tools
     'todo_write',
     'todo_read',
     'task',
     'exit_plan_mode',
     'web_search',
 
-    // 文件编辑类工具
+    // File editing tools
     'replace',
     'Write',
 
-    // 其他安全工具
+    // Other safe tools
     'web_fetch',
     'ask_user_question',
     'save_memory',
@@ -79,14 +79,14 @@ export class WhitelistChecker {
   ]);
 
   /**
-   * 检查工具是否在白名单中
+   * Check if tool is in whitelist
    */
   check(toolName: string): boolean {
     return WhitelistChecker.WHITELISTED_TOOLS.has(toolName);
   }
 
   /**
-   * 获取白名单工具列表
+   * Get list of whitelisted tools
    */
   getWhitelistedTools(): string[] {
     return Array.from(WhitelistChecker.WHITELISTED_TOOLS);
@@ -94,7 +94,7 @@ export class WhitelistChecker {
 }
 
 /**
- * 黑名单规则
+ * Blacklist rules
  */
 interface BlacklistRule {
   pattern: RegExp;
@@ -104,142 +104,142 @@ interface BlacklistRule {
 }
 
 /**
- * 黑名单检查器
+ * Blacklist checker
  */
 export class BlacklistChecker {
   private static readonly RULES: BlacklistRule[] = [
-    // 系统破坏类
+    // System destruction
     {
       pattern: /rm\s+-rf\s+\/$/,
-      category: '系统破坏',
+      category: 'System destruction',
       riskLevel: RiskLevel.CRITICAL,
-      description: '删除根目录'
+      description: 'Delete root directory'
     },
     {
       pattern: /rm\s+-rf\s+(\/etc|\/usr|\/bin|\/sbin|\/lib|\/lib64)/,
-      category: '系统破坏',
+      category: 'System destruction',
       riskLevel: RiskLevel.CRITICAL,
-      description: '删除系统目录'
+      description: 'Delete system directories'
     },
     {
       pattern: /rm\s+-rf\s+.*\*/,
-      category: '系统破坏',
+      category: 'System destruction',
       riskLevel: RiskLevel.HIGH,
-      description: '批量删除文件'
+      description: 'Batch delete files'
     },
     {
       pattern: /(mkfs|format)\s+/,
-      category: '系统破坏',
+      category: 'System destruction',
       riskLevel: RiskLevel.CRITICAL,
-      description: '格式化磁盘'
+      description: 'Format disk'
     },
     {
       pattern: /dd\s+.*of=\/dev\/(sd[a-z]|nvme[0-9]n[0-9])/,
-      category: '系统破坏',
+      category: 'System destruction',
       riskLevel: RiskLevel.CRITICAL,
-      description: '覆盖磁盘数据'
+      description: 'Overwrite disk data'
     },
 
-    // 权限提升类
+    // Privilege escalation
     {
       pattern: /chmod\s+777\s+/,
-      category: '权限提升',
+      category: 'Privilege escalation',
       riskLevel: RiskLevel.HIGH,
-      description: '设置文件权限为777'
+      description: 'Set file permissions to 777'
     },
     {
       pattern: /chmod\s+[45][0-9]{3}\s+/,
-      category: '权限提升',
+      category: 'Privilege escalation',
       riskLevel: RiskLevel.HIGH,
-      description: '设置SUID/SGID权限'
+      description: 'Set SUID/SGID permissions'
     },
     {
       pattern: /vi\s+\/etc\/sudoers/,
-      category: '权限提升',
+      category: 'Privilege escalation',
       riskLevel: RiskLevel.CRITICAL,
-      description: '修改sudo权限'
+      description: 'Modify sudo permissions'
     },
     {
       pattern: /echo.*>>.*\/etc\/sudoers/,
-      category: '权限提升',
+      category: 'Privilege escalation',
       riskLevel: RiskLevel.CRITICAL,
-      description: '修改sudo权限'
+      description: 'Modify sudo permissions'
     },
 
-    // 数据窃取类
+    // Data theft
     {
       pattern: /cat\s+\/etc\/passwd/,
-      category: '数据窃取',
+      category: 'Data theft',
       riskLevel: RiskLevel.HIGH,
-      description: '读取密码文件'
+      description: 'Read password file'
     },
     {
       pattern: /cat\s+\/etc\/shadow/,
-      category: '数据窃取',
+      category: 'Data theft',
       riskLevel: RiskLevel.CRITICAL,
-      description: '读取shadow文件'
+      description: 'Read shadow file'
     },
     {
       pattern: /cat\s+.*\/\.ssh\/id_rsa/,
-      category: '数据窃取',
+      category: 'Data theft',
       riskLevel: RiskLevel.CRITICAL,
-      description: '读取SSH私钥'
+      description: 'Read SSH private key'
     },
     {
       pattern: /grep\s+-[rRi].*password/,
-      category: '数据窃取',
+      category: 'Data theft',
       riskLevel: RiskLevel.HIGH,
-      description: '搜索密码信息'
+      description: 'Search for password information'
     },
     {
       pattern: /(curl|wget).*\|(sh|bash|python|perl)/,
-      category: '数据窃取',
+      category: 'Data theft',
       riskLevel: RiskLevel.CRITICAL,
-      description: '远程代码执行'
+      description: 'Remote code execution'
     },
 
-    // 网络攻击类
+    // Network attacks
     {
       pattern: /nmap\s+-[sS].*/,
-      category: '网络攻击',
+      category: 'Network attacks',
       riskLevel: RiskLevel.MEDIUM,
-      description: '网络扫描'
+      description: 'Network scanning'
     },
     {
       pattern: /nc\s+.*-l/,
-      category: '网络攻击',
+      category: 'Network attacks',
       riskLevel: RiskLevel.HIGH,
-      description: '创建网络监听'
+      description: 'Create network listener'
     },
     {
       pattern: /iptables\s+-F/,
-      category: '网络攻击',
+      category: 'Network attacks',
       riskLevel: RiskLevel.HIGH,
-      description: '清除防火墙规则'
+      description: 'Clear firewall rules'
     },
 
-    // 资源耗尽类
+    // Resource exhaustion
     {
       pattern: /:\)\s*{\s*:\s*\|\s*:&\s*};/,
-      category: '资源耗尽',
+      category: 'Resource exhaustion',
       riskLevel: RiskLevel.CRITICAL,
-      description: 'Fork炸弹'
+      description: 'Fork bomb'
     },
     {
       pattern: /while\s+true\s*;\s*do\s+.*done/,
-      category: '资源耗尽',
+      category: 'Resource exhaustion',
       riskLevel: RiskLevel.HIGH,
-      description: '无限循环'
+      description: 'Infinite loop'
     }
   ];
 
   /**
-   * 检查工具调用是否匹配黑名单规则
+   * Check if tool call matches blacklist rules
    */
   check(context: ToolCallContext): { matched: boolean; rule?: BlacklistRule } {
     const { toolName, params } = context;
 
-    // 对于 Bash 工具，检查命令内容
+    // For Bash tool, check command content
     if (toolName === 'Bash' && params.command) {
       const command = params.command as string;
 
@@ -250,7 +250,7 @@ export class BlacklistChecker {
       }
     }
 
-    // 对于文件操作工具，检查路径
+    // For file operation tools, check path
     if (['Write', 'DeleteFile', 'replace'].includes(toolName)) {
       const filePath = params.filePath || params.file_path || '';
       if (this.isSystemPath(filePath)) {
@@ -258,9 +258,9 @@ export class BlacklistChecker {
           matched: true,
           rule: {
             pattern: /system-path/,
-            category: '系统破坏',
+            category: 'System destruction',
             riskLevel: RiskLevel.HIGH,
-            description: '修改系统文件'
+            description: 'Modify system files'
           }
         };
       }
@@ -270,7 +270,7 @@ export class BlacklistChecker {
   }
 
   /**
-   * 检查是否为系统路径
+   * Check if it's a system path
    */
   private isSystemPath(filePath: string): boolean {
     const systemPaths = [
@@ -291,7 +291,7 @@ export class BlacklistChecker {
   }
 
   /**
-   * 获取所有黑名单规则
+   * Get all blacklist rules
    */
   getRules(): BlacklistRule[] {
     return [...BlacklistChecker.RULES];
@@ -299,7 +299,7 @@ export class BlacklistChecker {
 }
 
 /**
- * AI 审核检查器
+ * AI approval checker
  */
 export class AIApprovalChecker {
   private aiClient: AIClient | null = null;
@@ -309,7 +309,7 @@ export class AIApprovalChecker {
   }
 
   /**
-   * 初始化 AI 客户端
+   * Initialize AI client
    */
   private async initializeAIClient(): Promise<void> {
     try {
@@ -325,14 +325,14 @@ export class AIApprovalChecker {
   }
 
   /**
-   * 使用 AI 进行智能审核
+   * Use AI for intelligent review
    */
   async check(context: ToolCallContext): Promise<{ approved: boolean; analysis: string; riskLevel: RiskLevel }> {
     if (!this.aiClient) {
-      // 如果 AI 客户端未初始化，默认为中等风险，需要用户确认
+      // If AI client is not initialized, default to medium risk, requires user confirmation
       return {
         approved: false,
-        analysis: 'AI 审核不可用，需要用户手动确认',
+        analysis: 'AI review not available, requires manual user confirmation',
         riskLevel: RiskLevel.MEDIUM
       };
     }
@@ -343,19 +343,19 @@ export class AIApprovalChecker {
       const messages: Message[] = [
         {
           role: 'system',
-          content: `你是一个安全审核专家。你的任务是评估工具调用的安全性。
+          content: `You are a security review expert. Your task is to evaluate the security of tool calls.
 
-请从以下维度分析：
-1. 操作是否有恶意意图
-2. 是否可能造成数据泄露
-3. 是否可能破坏系统完整性
-4. 是否符合最佳实践
+Please analyze from the following dimensions:
+1. Whether the operation has malicious intent
+2. Whether it may cause data leakage
+3. Whether it may compromise system integrity
+4. Whether it follows best practices
 
-请以 JSON 格式返回结果：
+Please return results in JSON format:
 {
   "approved": boolean,
   "riskLevel": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
-  "analysis": "详细的分析说明"
+  "analysis": "Detailed analysis description"
 }`
         },
         {
@@ -373,49 +373,49 @@ export class AIApprovalChecker {
         ? response.choices[0].message.content
         : '{}';
 
-      // 解析 AI 响应
+      // Parse AI response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const result = JSON.parse(jsonMatch[0]);
         return {
           approved: result.approved || false,
-          analysis: result.analysis || '无详细分析',
+          analysis: result.analysis || 'No detailed analysis',
           riskLevel: result.riskLevel || RiskLevel.MEDIUM
         };
       }
 
-      // 如果无法解析，返回中等风险
+      // If unable to parse, return medium risk
       return {
         approved: false,
-        analysis: '无法解析 AI 响应，需要手动确认',
+        analysis: 'Unable to parse AI response, requires manual confirmation',
         riskLevel: RiskLevel.MEDIUM
       };
     } catch (error: any) {
       logger.error('AI approval check failed', error instanceof Error ? error.message : String(error));
       return {
         approved: false,
-        analysis: `AI 审核失败: ${error.message}，需要手动确认`,
+        analysis: `AI review failed: ${error.message}, requires manual confirmation`,
         riskLevel: RiskLevel.MEDIUM
       };
     }
   }
 
   /**
-   * 构建审核提示词
+   * Build review prompt
    */
   private buildApprovalPrompt(context: ToolCallContext): string {
     const { toolName, params } = context;
 
-    let prompt = `工具名称: ${toolName}\n`;
-    prompt += `参数: ${JSON.stringify(params, null, 2)}\n\n`;
+    let prompt = `Tool name: ${toolName}\n`;
+    prompt += `Parameters: ${JSON.stringify(params, null, 2)}\n\n`;
 
-    // 根据工具类型添加特定的分析指导
+    // Add specific analysis guidance based on tool type
     if (toolName === 'Bash') {
-      prompt += `这是一个 Shell 命令执行请求。请检查命令是否包含：\n- 危险的系统操作（如删除、格式化）\n- 权限提升操作\n- 数据窃取操作\n- 远程代码执行\n- 资源耗尽攻击`;
+      prompt += `This is a Shell command execution request. Please check if the command contains:\n- Dangerous system operations (such as deletion, formatting)\n- Privilege escalation operations\n- Data theft operations\n- Remote code execution\n- Resource exhaustion attacks`;
     } else if (['Write', 'replace', 'DeleteFile'].includes(toolName)) {
-      prompt += `这是一个文件操作请求。请检查：\n- 目标路径是否为系统路径\n- 操作是否可能破坏系统文件\n- 是否涉及敏感配置文件`;
+      prompt += `This is a file operation request. Please check:\n- Whether the target path is a system path\n- Whether the operation may damage system files\n- Whether it involves sensitive configuration files`;
     } else if (toolName === 'web_fetch' || toolName === 'web_search') {
-      prompt += `这是一个网络请求。请检查：\n- URL 是否为恶意网站\n- 是否可能泄露敏感信息\n- 是否可能执行远程代码`;
+      prompt += `This is a network request. Please check:\n- Whether the URL is a malicious website\n- Whether it may leak sensitive information\n- Whether it may execute remote code`;
     }
 
     return prompt;
@@ -423,7 +423,7 @@ export class AIApprovalChecker {
 }
 
 /**
- * 智能审核引擎
+ * Smart approval engine
  */
 export class SmartApprovalEngine {
   private whitelistChecker: WhitelistChecker;
@@ -439,7 +439,7 @@ export class SmartApprovalEngine {
   }
 
   /**
-   * 评估工具调用
+   * Evaluate tool call
    */
   async evaluate(context: ToolCallContext): Promise<ApprovalResult> {
     const startTime = Date.now();
@@ -448,7 +448,7 @@ export class SmartApprovalEngine {
       logger.debug(`[SmartApprovalEngine] Evaluating tool call: ${context.toolName}`);
     }
 
-    // 第一层：白名单检查
+    // First layer: Whitelist check
     const whitelistCheck = this.whitelistChecker.check(context.toolName);
     if (whitelistCheck) {
       const latency = Date.now() - startTime;
@@ -460,7 +460,7 @@ export class SmartApprovalEngine {
         decision: ApprovalDecision.APPROVED,
         riskLevel: RiskLevel.LOW,
         detectionMethod: 'whitelist',
-        description: `工具 '${context.toolName}' 在白名单中，直接执行`,
+        description: `Tool '${context.toolName}' is in the whitelist, executing directly`,
         latency
       };
     }
@@ -469,7 +469,7 @@ export class SmartApprovalEngine {
       logger.debug(`[WhitelistChecker] Tool '${context.toolName}' not in whitelist`);
     }
 
-    // 第二层：黑名单检查
+    // Second layer: Blacklist check
     const blacklistCheck = this.blacklistChecker.check(context);
     if (blacklistCheck.matched && blacklistCheck.rule) {
       const latency = Date.now() - startTime;
@@ -481,7 +481,7 @@ export class SmartApprovalEngine {
         decision: ApprovalDecision.REQUIRES_CONFIRMATION,
         riskLevel: blacklistCheck.rule.riskLevel,
         detectionMethod: 'blacklist',
-        description: `检测到潜在风险操作: ${blacklistCheck.rule.description}`,
+        description: `Detected potentially risky operation: ${blacklistCheck.rule.description}`,
         latency
       };
     }
@@ -490,7 +490,7 @@ export class SmartApprovalEngine {
       logger.debug(`[BlacklistChecker] No blacklist rule matched`);
     }
 
-    // 第三层：AI 智能审核
+    // Third layer: AI intelligent review
     const aiCheck = await this.aiChecker.check(context);
     const latency = Date.now() - startTime;
 
@@ -509,34 +509,34 @@ export class SmartApprovalEngine {
   }
 
   /**
-   * 请求用户确认
+   * Request user confirmation
    */
   async requestConfirmation(result: ApprovalResult): Promise<boolean> {
     const separator = icons.separator.repeat(40);
     console.log('');
-    console.log(colors.warning(`${icons.warning} [智能模式] 检测到潜在风险操作`));
+    console.log(colors.warning(`${icons.warning} [Smart Mode] Detected potentially risky operation`));
     console.log(colors.border(separator));
     console.log('');
-    console.log(colors.textMuted(`📊 风险等级: ${this.getRiskLevelDisplay(result.riskLevel)}`));
-    console.log(colors.textMuted(`🔍 检测方式: ${this.getDetectionMethodDisplay(result.detectionMethod)}`));
+    console.log(colors.textMuted(`📊 Risk Level: ${this.getRiskLevelDisplay(result.riskLevel)}`));
+    console.log(colors.textMuted(`🔍 Detection Method: ${this.getDetectionMethodDisplay(result.detectionMethod)}`));
     console.log('');
 
     if (result.aiAnalysis) {
-      console.log(colors.textMuted(`🤖 AI分析:`));
+      console.log(colors.textMuted(`🤖 AI Analysis:`));
       console.log(colors.textDim(`  ${result.aiAnalysis}`));
       console.log('');
     }
 
-    console.log(colors.textMuted(`⚠️  风险描述: ${result.description}`));
+    console.log(colors.textMuted(`⚠️  Risk Description: ${result.description}`));
     console.log('');
-    console.log(colors.warning('检测到潜在风险，是否继续执行？'));
+    console.log(colors.warning('Potentially risky operation detected, continue execution?'));
 
     try {
       const { confirmed } = await inquirer.prompt([
         {
           type: 'confirm',
           name: 'confirmed',
-          message: '是否继续执行？',
+          message: 'Continue execution?',
           default: false
         }
       ]);
@@ -549,7 +549,7 @@ export class SmartApprovalEngine {
   }
 
   /**
-   * 获取风险等级显示
+   * Get risk level display
    */
   private getRiskLevelDisplay(riskLevel: RiskLevel): string {
     const displays = {
@@ -562,20 +562,20 @@ export class SmartApprovalEngine {
   }
 
   /**
-   * 获取检测方式显示
+   * Get detection method display
    */
   private getDetectionMethodDisplay(method: string): string {
     const displays = {
-      whitelist: '白名单规则',
-      blacklist: '黑名单规则',
-      ai_review: 'AI智能审核',
-      manual: '手动审核'
+      whitelist: 'Whitelist rules',
+      blacklist: 'Blacklist rules',
+      ai_review: 'AI intelligent review',
+      manual: 'Manual review'
     };
     return displays[method as keyof typeof displays] || method;
   }
 
   /**
-   * 设置调试模式
+   * Set debug mode
    */
   setDebugMode(enabled: boolean): void {
     this.debugMode = enabled;
@@ -583,7 +583,7 @@ export class SmartApprovalEngine {
 }
 
 /**
- * 获取智能审核引擎实例
+ * Get smart approval engine instance
  */
 let smartApprovalEngineInstance: SmartApprovalEngine | null = null;
 

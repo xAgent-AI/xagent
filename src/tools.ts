@@ -991,7 +991,7 @@ export class ToolRegistry {
         required: []
       };
 
-      // 为每个工具定义具体的参数
+      // Define specific parameters for each tool
       switch (tool.name) {
         case 'Read':
           parameters = {
@@ -1432,7 +1432,7 @@ export class ToolRegistry {
       );
     }
 
-    // 智能审核模式
+    // Smart approval mode
     if (executionMode === ExecutionMode.SMART) {
       const { getSmartApprovalEngine } = await import('./smart-approval.js');
       const { getConfigManager } = await import('./config.js');
@@ -1441,48 +1441,48 @@ export class ToolRegistry {
 
       const approvalEngine = getSmartApprovalEngine(debugMode);
 
-      // 评估工具调用
+      // Evaluate tool call
       const result = await approvalEngine.evaluate({
         toolName,
         params,
         timestamp: Date.now()
       });
 
-      // 根据审核结果决定是否执行
+      // Decide whether to execute based on approval result
       if (result.decision === 'approved') {
-        // 白名单或 AI 审核通过，直接执行
+        // Whitelist or AI approval passed, execute directly
         console.log('');
-        console.log(colors.success(`✅ [智能模式] 工具 '${toolName}' 通过审核，直接执行`));
-        console.log(colors.textDim(`  检测方式: ${result.detectionMethod === 'whitelist' ? '白名单' : 'AI审核'}`));
-        console.log(colors.textDim(`  延迟: ${result.latency}ms`));
+        console.log(colors.success(`✅ [Smart Mode] Tool '${toolName}' passed approval, executing directly`));
+        console.log(colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`));
+        console.log(colors.textDim(`  Latency: ${result.latency}ms`));
         console.log('');
         return await tool.execute(params);
       } else if (result.decision === 'requires_confirmation') {
-        // 需要用户确认
+        // Requires user confirmation
         const confirmed = await approvalEngine.requestConfirmation(result);
 
         if (confirmed) {
           console.log('');
-          console.log(colors.success(`✅ [智能模式] 用户确认执行工具 '${toolName}'`));
+          console.log(colors.success(`✅ [Smart Mode] User confirmed execution of tool '${toolName}'`));
           console.log('');
           return await tool.execute(params);
         } else {
           console.log('');
-          console.log(colors.warning(`⚠️  [智能模式] 用户取消执行工具 '${toolName}'`));
+          console.log(colors.warning(`⚠️  [Smart Mode] User cancelled execution of tool '${toolName}'`));
           console.log('');
           throw new Error(`Tool execution cancelled by user: ${toolName}`);
         }
       } else {
-        // 拒绝执行
+        // Rejected execution
         console.log('');
-        console.log(colors.error(`❌ [智能模式] 工具 '${toolName}' 被拒绝执行`));
-        console.log(colors.textDim(`  原因: ${result.description}`));
+        console.log(colors.error(`❌ [Smart Mode] Tool '${toolName}' execution rejected`));
+        console.log(colors.textDim(`  Reason: ${result.description}`));
         console.log('');
         throw new Error(`Tool execution rejected: ${toolName}`);
       }
     }
 
-    // 其他模式直接执行
+    // Other modes execute directly
     return await tool.execute(params);
   }
 }

@@ -81,7 +81,7 @@ export class InteractiveSession {
       if (!authConfig.apiKey) {
         spinner.stop();
         await this.setupAuthentication();
-        // inquirer 可能会关闭 stdin，所以需要重新创建 readline 接口
+        // inquirer may close stdin, so need to recreate readline interface
         this.rl.close();
         this.rl = readline.createInterface({
           input: process.stdin,
@@ -164,9 +164,8 @@ export class InteractiveSession {
     console.log(colors.border(separator));
 
     if (language === 'zh') {
-      console.log(colors.primaryBright(`${icons.sparkles} 欢迎使用 XAGENT CLI!`));
-      console.log(colors.textMuted('输入 /help 查看可用命令'));
-    } else {
+      console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
+              console.log(colors.textMuted('Type /help to see available commands'));    } else {
       console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
       console.log(colors.textMuted('Type /help to see available commands'));
     }
@@ -216,7 +215,7 @@ export class InteractiveSession {
   }
 
   private promptLoop(): void {
-    // 重新创建 readline 接口，因为之前的接口可能已经被关闭
+    // Recreate readline interface as previous one may have been closed
     if (this.rl) {
       this.rl.close();
     }
@@ -344,14 +343,14 @@ export class InteractiveSession {
 
     switch (displayMode) {
       case 'full':
-        // 完整显示，使用小字体和灰色
+        // Full display, using small font and gray color
         console.log(colors.textDim(`${icons.brain} Thinking Process:`));
         console.log('');
         console.log(colors.textDim(reasoningContent));
         break;
 
       case 'compact':
-        // 简洁显示，截断部分内容
+        // Compact display, truncate partial content
         const maxLength = 500;
         const truncatedContent = reasoningContent.length > maxLength
           ? reasoningContent.substring(0, maxLength) + '... (truncated)'
@@ -364,7 +363,7 @@ export class InteractiveSession {
         break;
 
       case 'indicator':
-        // 只显示指示器
+        // Show indicator only
         console.log(colors.textDim(`${icons.brain} Thinking process completed`));
         console.log(colors.textDim(`[${reasoningContent.length} chars of reasoning]`));
         break;
@@ -522,14 +521,14 @@ export class InteractiveSession {
         parsedParams = params;
       }
 
-      // 根据配置显示不同详细程度的信息
+      // Display information with different detail levels based on configuration
       if (showToolDetails) {
-        // 详细模式：显示工具调用详情
+        // Verbose mode: display tool call details
         console.log('');
         console.log(colors.warning(`${icons.tool} Tool Call: ${name}`));
         console.log(colors.textDim(JSON.stringify(parsedParams, null, 2)));
       } else {
-        // 简洁模式：只显示工具正在执行
+        // Concise mode: only show tool is executing
         const toolDescription = this.getToolDescription(name, parsedParams);
         console.log('');
         console.log(colors.textMuted(`${icons.loading} ${toolDescription}`));
@@ -545,14 +544,13 @@ export class InteractiveSession {
         );
 
         if (showToolDetails) {
-          // 详细模式：显示完整结果
+          // Verbose mode: display complete results
           console.log('');
           console.log(colors.success(`${icons.check} Tool Result:`));
           console.log(colors.textDim(JSON.stringify(result, null, 2)));
         } else {
-          // 简洁模式：只显示成功状态
-          console.log(colors.success(` ${icons.check} 完成`));
-        }
+          // Concise mode: only show success status
+                  console.log(colors.success(` ${icons.check} Completed`));        }
 
         const toolCallRecord: ToolCall = {
           tool: name,
@@ -591,39 +589,39 @@ export class InteractiveSession {
   }
 
   /**
-   * 获取工具的友好描述
+   * Get user-friendly description for tool
    */
   private getToolDescription(toolName: string, params: any): string {
     const descriptions: Record<string, (params: any) => string> = {
-      'Read': (p) => `读取文件: ${this.truncatePath(p.filePath)}`,
-      'Write': (p) => `写入文件: ${this.truncatePath(p.filePath)}`,
-      'Grep': (p) => `搜索文本: "${p.pattern}"`,
-      'Bash': (p) => `执行命令: ${this.truncateCommand(p.command)}`,
-      'ListDirectory': (p) => `列出目录: ${this.truncatePath(p.path || '.')}`,
-      'SearchCodebase': (p) => `搜索文件: ${p.pattern}`,
-      'DeleteFile': (p) => `删除文件: ${this.truncatePath(p.filePath)}`,
-      'CreateDirectory': (p) => `创建目录: ${this.truncatePath(p.dirPath)}`,
-      'replace': (p) => `替换文本: ${this.truncatePath(p.file_path)}`,
-      'web_search': (p) => `网络搜索: "${p.query}"`,
-      'todo_write': () => `更新待办事项`,
-      'todo_read': () => `读取待办事项`,
-      'task': (p) => `启动子任务: ${p.description}`,
-      'ReadBashOutput': (p) => `读取任务输出: ${p.task_id}`,
-      'web_fetch': () => `获取网页内容`,
-      'ask_user_question': () => `询问用户`,
-      'save_memory': () => `保存记忆`,
-      'exit_plan_mode': () => `完成计划`,
-      'xml_escape': (p) => `XML转义: ${this.truncatePath(p.file_path)}`,
-      'image_read': (p) => `读取图片: ${this.truncatePath(p.image_input)}`,
-      'Skill': (p) => `执行技能: ${p.skill}`
+      'Read': (p) => `Read file: ${this.truncatePath(p.filePath)}`,
+      'Write': (p) => `Write file: ${this.truncatePath(p.filePath)}`,
+      'Grep': (p) => `Search text: "${p.pattern}"`,
+      'Bash': (p) => `Execute command: ${this.truncateCommand(p.command)}`,
+      'ListDirectory': (p) => `List directory: ${this.truncatePath(p.path || '.')}`,
+      'SearchCodebase': (p) => `Search files: ${p.pattern}`,
+      'DeleteFile': (p) => `Delete file: ${this.truncatePath(p.filePath)}`,
+      'CreateDirectory': (p) => `Create directory: ${this.truncatePath(p.dirPath)}`,
+      'replace': (p) => `Replace text: ${this.truncatePath(p.file_path)}`,
+      'web_search': (p) => `Web search: "${p.query}"`,
+      'todo_write': () => `Update todo list`,
+      'todo_read': () => `Read todo list`,
+      'task': (p) => `Launch subtask: ${p.description}`,
+      'ReadBashOutput': (p) => `Read task output: ${p.task_id}`,
+      'web_fetch': () => `Fetch web content`,
+      'ask_user_question': () => `Ask user`,
+      'save_memory': () => `Save memory`,
+      'exit_plan_mode': () => `Complete plan`,
+      'xml_escape': (p) => `XML escape: ${this.truncatePath(p.file_path)}`,
+      'image_read': (p) => `Read image: ${this.truncatePath(p.image_input)}`,
+      'Skill': (p) => `Execute skill: ${p.skill}`
     };
 
     const getDescription = descriptions[toolName];
-    return getDescription ? getDescription(params) : `执行工具: ${toolName}`;
+    return getDescription ? getDescription(params) : `Execute tool: ${toolName}`;
   }
 
   /**
-   * 截断路径显示
+   * Truncate path for display
    */
   private truncatePath(path: string, maxLength: number = 30): string {
     if (!path) return '';
@@ -632,7 +630,7 @@ export class InteractiveSession {
   }
 
   /**
-   * 截断命令显示
+   * Truncate command for display
    */
   private truncateCommand(command: string, maxLength: number = 40): string {
     if (!command) return '';

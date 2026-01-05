@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import readline from 'readline';
 import { getLogger } from './logger.js';
 
 const logger = getLogger();
@@ -6,7 +7,7 @@ const logger = getLogger();
 export class CancellationManager extends EventEmitter {
   private isCancelled: boolean = false;
   private operationId: string | null = null;
-  private rawModeEnabled: boolean = false;
+  private keyPressHandler: ((str: string, key: readline.Key) => void) | null = null;
 
   constructor() {
     super();
@@ -15,21 +16,21 @@ export class CancellationManager extends EventEmitter {
 
   /**
    * Set up key handler to listen for ESC key
+   * Using readline's emitKeypressEvents instead of rawMode to avoid conflicts with readline.question()
    */
   private setupKeyHandler(): void {
     if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-      this.rawModeEnabled = true;
+      // Use readline's built-in keypress handling which is compatible with line mode
+      readline.emitKeypressEvents(process.stdin);
 
-      process.stdin.on('data', (chunk: Buffer) => {
-        // ESC key ASCII code is 27 (0x1B)
-        // In some terminals, ESC key may be encoded as multi-byte sequence
-        const key = chunk.toString('utf8');
-
-        if (key === '\u001B' || key.charCodeAt(0) === 27) {
+      this.keyPressHandler = (str: string, key: readline.Key) => {
+        // ESC key detection - only handle ESC, let SIGINT handle Ctrl+C
+        if (str === '\u001B' || key.name === 'escape') {
           this.cancel();
         }
-      });
+      };
+
+      process.stdin.on('keypress', this.keyPressHandler);
 
       process.stdin.on('error', (error) => {
         logger.error(`Error in stdin handler: ${error}`);
@@ -53,7 +54,6 @@ export class CancellationManager extends EventEmitter {
     if (!this.isCancelled) {
       this.isCancelled = true;
       this.emit('cancelled', this.operationId);
-      logger.info(`Operation ${this.operationId} cancelled by user`);
     }
   }
 
@@ -94,11 +94,10 @@ export class CancellationManager extends EventEmitter {
    * Clean up resources
    */
   cleanup(): void {
-    if (this.rawModeEnabled && process.stdin.isTTY) {
-      process.stdin.setRawMode(false);
-      this.rawModeEnabled = false;
+    if (process.stdin.isTTY && this.keyPressHandler) {
+      process.stdin.removeListener('keypress', this.keyPressHandler);
+      this.keyPressHandler = null;
     }
-    process.stdin.removeAllListeners('data');
     process.stdin.removeAllListeners('error');
     this.removeAllListeners();
   }

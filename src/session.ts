@@ -17,7 +17,7 @@ import { theme, icons, colors, styleHelpers } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 
 export class InteractiveSession {
-  private rl: readline.Interface;
+  rl: readline.Interface;
   private aiClient: AIClient | null = null;
   private conversation: ChatMessage[] = [];
   private toolCalls: ToolCall[] = [];
@@ -60,10 +60,13 @@ export class InteractiveSession {
     console.log('');
 
     await this.initialize();
-
     this.showWelcomeMessage();
-
     this.promptLoop();
+
+    // Keep the promise pending until shutdown
+    return new Promise((resolve) => {
+      (this as any)._shutdownResolver = resolve;
+    });
   }
 
   private async initialize(): Promise<void> {
@@ -215,6 +218,11 @@ export class InteractiveSession {
   }
 
   private promptLoop(): void {
+    // Check if we're shutting down
+    if ((this as any)._isShuttingDown) {
+      return;
+    }
+
     // Recreate readline interface as previous one may have been closed
     if (this.rl) {
       this.rl.close();
@@ -224,20 +232,21 @@ export class InteractiveSession {
       output: process.stdout
     });
 
-    try {
-      const prompt = `${colors.primaryBright('❯')} `;
-      this.rl.question(prompt, async (input) => {
-        try {
-          await this.handleInput(input);
-        } catch (error: any) {
-          console.log(colors.error(`Error: ${error.message}`));
-        }
+    const prompt = `${colors.primaryBright('❯')} `;
+    this.rl.question(prompt, async (input) => {
+      // Check shutdown flag before processing
+      if ((this as any)._isShuttingDown) {
+        return;
+      }
 
-        this.promptLoop();
-      });
-    } catch (error: any) {
-      console.error('Error in promptLoop:', error);
-    }
+      try {
+        await this.handleInput(input);
+      } catch (error: any) {
+        console.log(colors.error(`Error: ${error.message}`));
+      }
+
+      this.promptLoop();
+    });
   }
 
   private async handleInput(input: string): Promise<void> {
@@ -495,9 +504,7 @@ export class InteractiveSession {
       spinner.stop();
 
       if (error.message === 'Operation cancelled by user') {
-        console.log('');
-        console.log(colors.warning(`${icons.warning} Operation cancelled by user`));
-        console.log('');
+        // Message is already logged by CancellationManager
         return;
       }
 
@@ -568,9 +575,6 @@ export class InteractiveSession {
         });
       } catch (error: any) {
         if (error.message === 'Operation cancelled by user') {
-          console.log('');
-          console.log(colors.warning(`${icons.warning} Tool execution cancelled by user`));
-          console.log('');
           return;
         }
 
@@ -655,8 +659,45 @@ export class InteractiveSession {
 export async function startInteractiveSession(): Promise<void> {
   const session = new InteractiveSession();
 
+  // Flag to control shutdown
+  (session as any)._isShuttingDown = false;
+
+  // Also listen for raw Ctrl+C on stdin (works in Windows PowerShell)
+  process.stdin.on('data', (chunk: Buffer) => {
+    const str = chunk.toString();
+    // Ctrl+C is character 0x03 or string '\u0003'
+    if (str === '\u0003' || str.charCodeAt(0) === 3) {
+      if (!(session as any)._isShuttingDown) {
+        (session as any)._isShuttingDown = true;
+
+        // Print goodbye immediately
+        const separator = icons.separator.repeat(40);
+        process.stdout.write('\n' + colors.border(separator) + '\n');
+        process.stdout.write(colors.primaryBright(`${icons.sparkles} Goodbye!`) + '\n');
+        process.stdout.write(colors.border(separator) + '\n\n');
+
+        // Force exit
+        process.exit(0);
+      }
+    }
+  });
+
   process.on('SIGINT', () => {
-    session.shutdown();
+    if ((session as any)._isShuttingDown) {
+      return;
+    }
+    (session as any)._isShuttingDown = true;
+
+    // Remove all SIGINT listeners to prevent re-entry
+    process.removeAllListeners('SIGINT');
+
+    // Print goodbye immediately
+    const separator = icons.separator.repeat(40);
+    process.stdout.write('\n' + colors.border(separator) + '\n');
+    process.stdout.write(colors.primaryBright(`${icons.sparkles} Goodbye!`) + '\n');
+    process.stdout.write(colors.border(separator) + '\n\n');
+
+    // Force exit
     process.exit(0);
   });
 

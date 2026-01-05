@@ -517,10 +517,10 @@ export class InteractiveSession {
     const toolRegistry = getToolRegistry();
     const showToolDetails = this.configManager.get('showToolDetails') || false;
 
-    for (const toolCall of toolCalls) {
+    // Prepare all tool calls
+    const preparedToolCalls = toolCalls.map((toolCall, index) => {
       const { name, arguments: params } = toolCall.function;
 
-      // Parse arguments if it's a JSON string (OpenAI API format)
       let parsedParams: any;
       try {
         parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
@@ -528,40 +528,60 @@ export class InteractiveSession {
         parsedParams = params;
       }
 
-      // Display information with different detail levels based on configuration
+      return { name, params: parsedParams, index };
+    });
+
+    // Display all tool calls info
+    for (const { name, params } of preparedToolCalls) {
       if (showToolDetails) {
-        // Verbose mode: display tool call details
         console.log('');
         console.log(colors.warning(`${icons.tool} Tool Call: ${name}`));
-        console.log(colors.textDim(JSON.stringify(parsedParams, null, 2)));
+        console.log(colors.textDim(JSON.stringify(params, null, 2)));
       } else {
-        // Concise mode: only show tool is executing
-        const toolDescription = this.getToolDescription(name, parsedParams);
+        const toolDescription = this.getToolDescription(name, params);
         console.log('');
         console.log(colors.textMuted(`${icons.loading} ${toolDescription}`));
       }
+    }
 
-      try {
-        const operationId = `tool-${name}-${Date.now()}`;
-        const toolPromise = toolRegistry.execute(name, parsedParams, this.executionMode);
+    // Execute all tools in parallel
+    const results = await toolRegistry.executeAll(
+      preparedToolCalls.map(tc => ({ name: tc.name, params: tc.params })),
+      this.executionMode
+    );
 
-        const result = await this.cancellationManager.withCancellation(
-          toolPromise,
-          operationId
-        );
+    // Process results and maintain order
+    for (const { tool, result, error } of results) {
+      const toolCall = preparedToolCalls.find(tc => tc.name === tool);
+      if (!toolCall) continue;
 
+      const { params } = toolCall;
+
+      if (error) {
+        if (error === 'Operation cancelled by user') {
+          return;
+        }
+
+        console.log('');
+        console.log(colors.error(`${icons.cross} Tool Error: ${error}`));
+
+        this.conversation.push({
+          role: 'tool',
+          content: JSON.stringify({ error }),
+          timestamp: Date.now()
+        });
+      } else {
         if (showToolDetails) {
-          // Verbose mode: display complete results
           console.log('');
           console.log(colors.success(`${icons.check} Tool Result:`));
           console.log(colors.textDim(JSON.stringify(result, null, 2)));
         } else {
-          // Concise mode: only show success status
-                  console.log(colors.success(` ${icons.check} Completed`));        }
+          console.log(colors.success(` ${icons.check} Completed`));
+        }
 
         const toolCallRecord: ToolCall = {
-          tool: name,
-          params: parsedParams,
+          tool,
+          params,
           result,
           timestamp: Date.now()
         };
@@ -571,19 +591,6 @@ export class InteractiveSession {
         this.conversation.push({
           role: 'tool',
           content: JSON.stringify(result),
-          timestamp: Date.now()
-        });
-      } catch (error: any) {
-        if (error.message === 'Operation cancelled by user') {
-          return;
-        }
-
-        console.log('');
-        console.log(colors.error(`${icons.cross} Tool Error: ${error.message}`));
-
-        this.conversation.push({
-          role: 'tool',
-          content: JSON.stringify({ error: error.message }),
           timestamp: Date.now()
         });
       }

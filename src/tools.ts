@@ -8,6 +8,7 @@ import inquirer from 'inquirer';
 import { Tool, ExecutionMode, AuthType } from './types.js';
 import type { Message, ToolDefinition } from './ai-client.js';
 import { colors } from './theme.js';
+import { getCancellationManager } from './cancellation.js';
 
 const execAsync = promisify(exec);
 
@@ -1484,6 +1485,53 @@ export class ToolRegistry {
 
     // Other modes execute directly
     return await tool.execute(params);
+  }
+
+  async executeAll(
+    toolCalls: Array<{ name: string; params: any }>,
+    executionMode: ExecutionMode
+  ): Promise<Array<{ tool: string; result: any; error?: string }>> {
+    const results: Array<{ tool: string; result: any; error?: string }> = [];
+    const cancellationManager = getCancellationManager();
+    let cancelled = false;
+
+    // Listen for cancellation
+    const cancelHandler = () => {
+      cancelled = true;
+    };
+    cancellationManager.on('cancelled', cancelHandler);
+
+    const executePromises = toolCalls.map(async (toolCall, index) => {
+      const { name, params } = toolCall;
+      const operationId = `tool-${name}-${index}-${Date.now()}`;
+
+      try {
+        const result = await cancellationManager.withCancellation(
+          this.execute(name, params, executionMode),
+          operationId
+        );
+        return { tool: name, result, error: undefined };
+      } catch (error: any) {
+        if (error.message === 'Operation cancelled by user') {
+          return { tool: name, result: undefined, error: 'Cancelled' };
+        }
+        return { tool: name, result: undefined, error: error.message };
+      }
+    });
+
+    const settledResults = await Promise.all(executePromises);
+    cancellationManager.off('cancelled', cancelHandler);
+
+    // Filter out cancelled tools and mark them appropriately
+    for (const result of settledResults) {
+      if (result.error === 'Cancelled' && cancelled) {
+        // Don't add cancelled results to the final output
+        continue;
+      }
+      results.push(result);
+    }
+
+    return results;
   }
 }
 

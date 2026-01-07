@@ -329,6 +329,59 @@ program
     console.log('');
   });
 
+program
+  .command('gui')
+  .description('Start GUI subagent for browser automation')
+  .option('--headless', 'Run browser in headless mode', false)
+  .option('--url <url>', 'Initial URL to navigate to')
+  .action(async (options) => {
+    const separator = icons.separator.repeat(40);
+    console.log('');
+    console.log(colors.primaryBright(`${icons.robot} GUI Subagent - Browser Automation`));
+    console.log(colors.border(separator));
+    console.log('');
+
+    try {
+      const { createGUISubAgent } = await import('./gui-subagent/index.js');
+      
+      const guiAgent = await createGUISubAgent({
+        headless: options.headless ?? false,
+        browserPath: '',
+        viewport: { width: 1280, height: 800 },
+      });
+
+      console.log(colors.success('✅ GUI Subagent initialized successfully!'));
+      console.log('');
+      console.log(colors.textMuted('Available actions:'));
+      console.log(colors.textDim('  - click: Click on an element'));
+      console.log(colors.textDim('  - double_click: Double click'));
+      console.log(colors.textDim('  - right_click: Right click'));
+      console.log(colors.textDim('  - type: Type text'));
+      console.log(colors.textDim('  - hotkey: Press keyboard shortcuts'));
+      console.log(colors.textDim('  - scroll: Scroll up/down/left/right'));
+      console.log(colors.textDim('  - navigate: Go to a URL'));
+      console.log(colors.textDim('  - navigate_back: Go back'));
+      console.log(colors.textDim('  - finished: Complete the task'));
+      console.log('');
+      console.log(colors.primaryBright('Use the GUI tools in the interactive session to control the browser.'));
+      console.log('');
+
+      if (options.url) {
+        console.log(colors.textMuted(`Navigating to: ${options.url}`));
+        await guiAgent.execute({
+          thought: '导航到指定的URL',
+          action: `navigate(url='${options.url}')`
+        });
+      }
+    } catch (error: any) {
+      console.log('');
+      console.log(colors.error(`Failed to start GUI Subagent: ${error.message}`));
+      console.log(colors.textMuted('Make sure you have Chrome/Chromium installed.'));
+      console.log('');
+      process.exit(1);
+    }
+  });
+
 program.parse(process.argv);
 
 if (!process.argv.slice(2).length) {

@@ -504,7 +504,7 @@ export class TodoReadTool implements Tool {
 export interface SubAgentTask {
   description: string;
   prompt: string;
-  subagent_type: 'general-purpose' | 'plan-agent' | 'explore-agent' | 'frontend-tester' | 'code-reviewer' | 'frontend-developer' | 'backend-developer';
+  subagent_type: 'general-purpose' | 'plan-agent' | 'explore-agent' | 'frontend-tester' | 'code-reviewer' | 'frontend-developer' | 'backend-developer' | 'gui-subagent';
   useContext?: boolean;
   outputFormat?: string;
   constraints?: string[];
@@ -515,6 +515,93 @@ export interface ToolCallOptions {
   agentName?: string;
 }
 
+// GUI Subagent Tools
+let guiAgentInstance: any = null;
+let guiOperatorInstance: any = null;
+
+export class GUIOperateTool implements Tool {
+  name = 'gui_operate';
+  description = 'Perform GUI operations on the browser including clicks, typing, navigation, etc. Use this for browser automation tasks.';
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
+
+  async execute(params: {
+    action: string;
+    operator_action?: {
+      type: string;
+      inputs: Record<string, any>;
+    };
+    errorMessage?: string;
+  }): Promise<{ success: boolean; action: string; normalizedAction?: any; errorMessage?: string }> {
+    try {
+      // Lazy initialization of GUI agent
+      if (!guiAgentInstance) {
+        const { createGUISubAgent } = await import('./gui-subagent/index.js');
+        guiAgentInstance = await createGUISubAgent({ headless: false });
+      }
+
+      const result = await guiAgentInstance.execute(params);
+      return result;
+    } catch (error: any) {
+      return {
+        success: false,
+        action: params.action,
+        errorMessage: error.message
+      };
+    }
+  }
+}
+
+export class GUIScreenshotTool implements Tool {
+  name = 'gui_screenshot';
+  description = 'Take a screenshot of the current browser state for the GUI subagent.';
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
+
+  async execute(): Promise<{ status: string; base64?: string; url?: string; errorMessage?: string }> {
+    try {
+      if (!guiAgentInstance) {
+        const { createGUISubAgent } = await import('./gui-subagent/index.js');
+        guiAgentInstance = await createGUISubAgent({ headless: false });
+      }
+
+      const screenshot = await guiAgentInstance.takeScreenshot();
+      return screenshot;
+    } catch (error: any) {
+      return {
+        status: 'failed',
+        errorMessage: error.message
+      };
+    }
+  }
+}
+
+export class GUICleanupTool implements Tool {
+  name = 'gui_cleanup';
+  description = 'Cleanup and close the GUI subagent browser instance.';
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
+
+  async execute(): Promise<{ success: boolean; message: string }> {
+    try {
+      if (guiAgentInstance) {
+        await guiAgentInstance.destroyInstance();
+        guiAgentInstance = null;
+      }
+      if (guiOperatorInstance) {
+        await guiOperatorInstance.destroyInstance();
+        guiOperatorInstance = null;
+      }
+      return {
+        success: true,
+        message: 'GUI subagent cleanup completed'
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        message: error.message
+      };
+    }
+  }
+}
+
 export class TaskTool implements Tool {
   name = 'task';
   description = 'Launch specialized subagent(s) for complex multi-step tasks. Supports parallel execution of multiple agents.';
@@ -523,7 +610,7 @@ export class TaskTool implements Tool {
   async execute(params: {
     description: string;
     prompt?: string;
-    subagent_type?: 'general-purpose' | 'plan-agent' | 'explore-agent' | 'frontend-tester' | 'code-reviewer' | 'frontend-developer' | 'backend-developer';
+    subagent_type?: 'general-purpose' | 'plan-agent' | 'explore-agent' | 'frontend-tester' | 'code-reviewer' | 'frontend-developer' | 'backend-developer' | 'gui-subagent';
     agents?: SubAgentTask[];
     useContext?: boolean;
     outputFormat?: string;
@@ -574,7 +661,8 @@ export class TaskTool implements Tool {
         mode,
         agentManager,
         toolRegistry,
-        aiClient
+        aiClient,
+        config
       );
       
       return result;
@@ -593,6 +681,7 @@ export class TaskTool implements Tool {
     agentManager: any,
     toolRegistry: any,
     aiClient: any,
+    config: any,
     indentLevel: number = 1
   ): Promise<{ success: boolean; message: string; result?: any }> {
     const agent = agentManager.getAgent(subagent_type);
@@ -600,6 +689,39 @@ export class TaskTool implements Tool {
     if (!agent) {
       throw new Error(`Agent ${subagent_type} not found`);
     }
+
+    // Determine the model to use for this subagent
+    let modelName = config.get('modelName') || 'Qwen3-Coder';
+    let baseUrl = config.get('baseUrl') || 'https://apis.xagent.cn/v1';
+    let apiKey = config.get('apiKey') || '';
+    
+    if (agent.model) {
+      // If agent has a model field, it can be a model name or a config reference like 'guiSubagentModel'
+      if (typeof agent.model === 'string' && agent.model.endsWith('Model')) {
+        // It's a config reference, use corresponding config values
+        modelName = config.get(agent.model) || modelName;
+        const baseUrlKey = agent.model.replace('Model', 'BaseUrl');
+        const apiKeyKey = agent.model.replace('Model', 'ApiKey');
+        if (config.get(baseUrlKey)) {
+          baseUrl = config.get(baseUrlKey);
+        }
+        if (config.get(apiKeyKey)) {
+          apiKey = config.get(apiKeyKey);
+        }
+      } else if (typeof agent.model === 'string') {
+        // It's an explicit model name
+        modelName = agent.model;
+      }
+    }
+
+    // Create a new AIClient for this subagent with its specific model
+    const { AIClient: SubAgentAIClient } = await import('./ai-client.js');
+    const subAgentClient = new SubAgentAIClient({
+      type: AuthType.API_KEY,
+      apiKey: apiKey,
+      baseUrl: baseUrl,
+      modelName: modelName
+    });
     
     const indent = '  '.repeat(indentLevel);
     const indentNext = '  '.repeat(indentLevel + 1);
@@ -714,7 +836,7 @@ export class TaskTool implements Tool {
       
       // Use withCancellation to make API call cancellable
       const result = await cancellationManager.withCancellation(
-        aiClient.chatCompletion(messages, {
+        subAgentClient.chatCompletion(messages, {
           tools: toolDefinitions,
           temperature: 0.7
         }),
@@ -1386,6 +1508,10 @@ export class ToolRegistry {
     this.register(new XmlEscapeTool());
     this.register(new ImageReadTool());
     this.register(new SkillTool());
+    // GUI Subagent Tools
+    this.register(new GUIOperateTool());
+    this.register(new GUIScreenshotTool());
+    this.register(new GUICleanupTool());
   }
 
   register(tool: Tool): void {

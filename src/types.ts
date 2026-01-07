@@ -74,6 +74,9 @@ export interface Settings {
   apiKey?: string;
   baseUrl?: string;
   modelName?: string;
+  guiSubagentModel?: string;
+  guiSubagentBaseUrl?: string;
+  guiSubagentApiKey?: string;
   searchApiKey?: string;
   executionMode: ExecutionMode;
   approvalMode?: ExecutionMode;

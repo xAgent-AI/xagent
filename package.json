@@ -41,6 +41,7 @@
     "node-pty": "^1.0.0",
     "open": "^10.0.0",
     "ora": "^8.0.0",
+    "puppeteer": "^23.11.1",
     "string-width": "^7.0.0",
     "strip-ansi": "^7.1.0",
     "terminal-link": "^3.0.0",

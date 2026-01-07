@@ -9,6 +9,7 @@ export * from './mcp.js';
 export * from './checkpoint.js';
 export * from './slash-commands.js';
 export * from './session.js';
+export * from './session-manager.js';
 export * from './workflow.js';
 export * from './input-processor.js';
 export * from './conversation.js';

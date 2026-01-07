@@ -11,12 +11,16 @@ import { getAgentManager, DEFAULT_AGENTS, AgentManager } from './agents.js';
 import { getMemoryManager, MemoryManager } from './memory.js';
 import { getMCPManager, MCPManager } from './mcp.js';
 import { getCheckpointManager, CheckpointManager } from './checkpoint.js';
+import { getConversationManager, ConversationManager } from './conversation.js';
+import { getSessionManager, SessionManager } from './session-manager.js';
 import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 
 export class InteractiveSession {
+  private conversationManager: ConversationManager;
+  private sessionManager: SessionManager;
   rl: readline.Interface;
   private aiClient: AIClient | null = null;
   private conversation: ChatMessage[] = [];
@@ -44,6 +48,8 @@ export class InteractiveSession {
     this.memoryManager = getMemoryManager(process.cwd());
     this.mcpManager = getMCPManager();
     this.checkpointManager = getCheckpointManager(process.cwd());
+    this.conversationManager = getConversationManager();
+    this.sessionManager = getSessionManager();
     this.slashCommandHandler = new SlashCommandHandler();
     this.executionMode = ExecutionMode.DEFAULT;
     this.cancellationManager = getCancellationManager();
@@ -131,6 +137,16 @@ export class InteractiveSession {
 
       await this.agentManager.loadAgents();
       await this.memoryManager.loadMemory();
+      await this.conversationManager.initialize();
+      await this.sessionManager.initialize();
+
+      // Create a new conversation and session for this interactive session
+      const conversation = await this.conversationManager.createConversation();
+      await this.sessionManager.createSession(
+        conversation.id,
+        this.currentAgent?.name || 'general-purpose',
+        this.executionMode
+      );
 
       const mcpServers = this.configManager.getMcpServers();
       Object.entries(mcpServers).forEach(([name, config]) => {
@@ -357,6 +373,15 @@ export class InteractiveSession {
       }
     }
 
+    // Record input to session manager
+    const sessionInput = {
+      type: 'text' as const,
+      content: userContent,
+      rawInput: message,
+      timestamp: Date.now()
+    };
+    await this.sessionManager.addInput(sessionInput);
+
     // Calculate thinking tokens based on config and user input
     const thinkingConfig = this.configManager.getThinkingConfig();
     let thinkingTokens = 0;
@@ -374,6 +399,7 @@ export class InteractiveSession {
     };
 
     this.conversation.push(userMessage);
+    await this.conversationManager.addMessage(userMessage);
 
     await this.generateResponse(agent, thinkingTokens);
   }
@@ -454,6 +480,23 @@ export class InteractiveSession {
       };
 
       this.toolCalls.push(toolCall);
+
+      // Record command execution to session manager
+      await this.sessionManager.addInput({
+        type: 'command',
+        content: command,
+        rawInput: command,
+        timestamp: Date.now()
+      });
+
+      await this.sessionManager.addOutput({
+        role: 'tool',
+        content: JSON.stringify(result),
+        toolName: 'Bash',
+        toolParams: { command },
+        toolResult: result,
+        timestamp: Date.now()
+      });
     } catch (error: any) {
       console.log(`${indent}${colors.error(`Command execution failed: ${error.message}`)}`);
     }
@@ -531,6 +574,13 @@ export class InteractiveSession {
       console.log('');
 
       this.conversation.push({
+        role: 'assistant',
+        content,
+        timestamp: Date.now()
+      });
+
+      // Record output to session manager
+      await this.sessionManager.addOutput({
         role: 'assistant',
         content,
         timestamp: Date.now()
@@ -636,6 +686,16 @@ export class InteractiveSession {
 
         this.toolCalls.push(toolCallRecord);
 
+        // Record tool output to session manager
+        await this.sessionManager.addOutput({
+          role: 'tool',
+          content: JSON.stringify(result),
+          toolName: tool,
+          toolParams: params,
+          toolResult: result,
+          timestamp: Date.now()
+        });
+
         this.conversation.push({
           role: 'tool',
           content: JSON.stringify(result),
@@ -701,6 +761,9 @@ export class InteractiveSession {
     this.rl.close();
     this.mcpManager.disconnectAllServers();
     this.cancellationManager.cleanup();
+
+    // End the current session
+    this.sessionManager.completeCurrentSession();
 
     const separator = icons.separator.repeat(40);
     console.log('');

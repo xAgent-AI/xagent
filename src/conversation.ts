@@ -54,8 +54,6 @@ export class ConversationManager {
 
     this.currentConversationId = conversationId;
 
-    console.log(`✅ Created new conversation: ${conversationId}`);
-
     return conversation;
   }
 

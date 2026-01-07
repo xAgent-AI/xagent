@@ -126,3 +126,34 @@ export interface InputType {
   content: string;
   metadata?: any;
 }
+
+export interface SessionInput {
+  type: 'text' | 'command' | 'file' | 'image';
+  content: string;
+  rawInput?: string;
+  filePath?: string;
+  timestamp: number;
+}
+
+export interface SessionOutput {
+  role: 'assistant' | 'tool';
+  content: string;
+  toolName?: string;
+  toolParams?: any;
+  toolResult?: any;
+  timestamp: number;
+  duration?: number;
+}
+
+export interface Session {
+  id: string;
+  conversationId: string;
+  startTime: number;
+  endTime?: number;
+  inputs: SessionInput[];
+  outputs: SessionOutput[];
+  agent?: string;
+  executionMode?: string;
+  totalTokens?: number;
+  status: 'active' | 'completed' | 'cancelled';
+}

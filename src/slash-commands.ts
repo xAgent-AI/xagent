@@ -548,7 +548,7 @@ export class SlashCommandHandler {
   }
 
   private async refreshMemory(): Promise<void> {
-    const spinner = ora('Refreshing memory...').start();
+    const spinner = ora({ text: 'Refreshing memory...', interval: 200 }).start();
 
     try {
       await this.memoryManager.loadMemory();

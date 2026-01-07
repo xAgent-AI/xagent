@@ -13,7 +13,7 @@ import { getMCPManager, MCPManager } from './mcp.js';
 import { getCheckpointManager, CheckpointManager } from './checkpoint.js';
 import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
-import { theme, icons, colors, styleHelpers } from './theme.js';
+import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 
 export class InteractiveSession {
@@ -466,11 +466,16 @@ export class InteractiveSession {
     }
 
     const indent = this.getIndent();
-    const spinner = ora({
-      text: colors.textMuted(`${icons.brain} Thinking... (Press ESC to cancel)`),
-      spinner: 'dots',
-      color: 'cyan'
-    }).start();
+    const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
+    const icon = colors.primary(icons.brain);
+    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let frameIndex = 0;
+
+    // Custom spinner: only icon rotates, text stays static
+    const spinnerInterval = setInterval(() => {
+      process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
+      frameIndex = (frameIndex + 1) % frames.length;
+    }, 120);
 
     try {
       const memory = await this.memoryManager.loadMemory();
@@ -503,7 +508,8 @@ export class InteractiveSession {
         operationId
       );
 
-      spinner.stop();
+      clearInterval(spinnerInterval);
+      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r'); // Clear spinner line
 
       const assistantMessage = response.choices[0].message;
       const content = typeof assistantMessage.content === 'string'
@@ -520,7 +526,8 @@ export class InteractiveSession {
       console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
       console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
       console.log('');
-      console.log(`${indent}${content.replace(/^/gm, indent)}`);
+      const renderedContent = renderMarkdown(content, (process.stdout.columns || 80) - indent.length * 2);
+      console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
       console.log('');
 
       this.conversation.push({
@@ -541,15 +548,15 @@ export class InteractiveSession {
         );
       }
     } catch (error: any) {
-      spinner.stop();
+      clearInterval(spinnerInterval);
+      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
 
       if (error.message === 'Operation cancelled by user') {
         // Message is already logged by CancellationManager
         return;
       }
 
-      spinner.fail(colors.error(`Error: ${error.message}`));
-      console.log(colors.error(error.message));
+      console.log(colors.error(`Error: ${error.message}`));
     }
   }
 

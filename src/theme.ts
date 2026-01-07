@@ -375,4 +375,79 @@ export const theme = {
   }
 };
 
+/**
+ * Simple markdown renderer for terminal output
+ */
+export function renderMarkdown(text: string, maxWidth: number = 80): string {
+  if (!text) return '';
+
+  const lines = text.split('\n');
+  const result: string[] = [];
+
+  let inCodeBlock = false;
+  let codeLanguage = '';
+  let codeContent: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Check for code block start/end
+    if (line.startsWith('```')) {
+      if (!inCodeBlock) {
+        // Start of code block
+        inCodeBlock = true;
+        codeLanguage = line.slice(3).trim() || '';
+        codeContent = [];
+      } else {
+        // End of code block
+        inCodeBlock = false;
+        if (codeContent.length > 0) {
+          result.push('');
+          result.push(colors.accent(`${icons.code} ${codeLanguage ? codeLanguage + ' Code' : 'Code'}:`));
+          codeContent.forEach(line => {
+            result.push(colors.codeText(line));
+          });
+          result.push(colors.border(icons.separator.repeat(Math.min(40, maxWidth))));
+          result.push('');
+        }
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeContent.push(line);
+      continue;
+    }
+
+    // Process inline markdown
+    let processed = line;
+
+    // Headers (only H1, H2, H3)
+    if (line.startsWith('### ')) {
+      processed = colors.primaryBright(styleHelpers.text.bold(line.slice(4)));
+    } else if (line.startsWith('## ')) {
+      processed = colors.primaryBright(styleHelpers.text.bold(line.slice(3)));
+    } else if (line.startsWith('# ')) {
+      processed = colors.primaryBright(styleHelpers.text.bold(line.slice(2)));
+    } else {
+      // Inline formatting
+      processed = processed
+        // Code inline
+        .replace(/`([^`]+)`/g, (_, code) => colors.codeText(code))
+        // Bold
+        .replace(/\*\*([^*]+)\*\*/g, (_, text) => styleHelpers.text.bold(text))
+        // Italic
+        .replace(/\*([^*]+)\*/g, (_, text) => styleHelpers.text.italic(text))
+        // Strikethrough
+        .replace(/~~([^~]+)~~/g, (_, text) => colors.textDim(text))
+        // Links
+        .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => colors.primaryBright(`${text}: ${styleHelpers.text.underline(url)}`));
+    }
+
+    result.push(processed);
+  }
+
+  return result.join('\n');
+}
+
 export default theme;

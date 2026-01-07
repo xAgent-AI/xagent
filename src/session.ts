@@ -30,8 +30,10 @@ export class InteractiveSession {
   private checkpointManager: CheckpointManager;
   private currentAgent: any = null;
   private cancellationManager: CancellationManager;
+  private indentLevel: number;
+  private indentString: string;
 
-  constructor() {
+  constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout
@@ -45,6 +47,24 @@ export class InteractiveSession {
     this.slashCommandHandler = new SlashCommandHandler();
     this.executionMode = ExecutionMode.DEFAULT;
     this.cancellationManager = getCancellationManager();
+    this.indentLevel = indentLevel;
+    this.indentString = '  '.repeat(indentLevel);
+  }
+
+  private getIndent(): string {
+    return this.indentString;
+  }
+
+  setAIClient(aiClient: AIClient): void {
+    this.aiClient = aiClient;
+  }
+
+  setExecutionMode(mode: ExecutionMode): void {
+    this.executionMode = mode;
+  }
+
+  setAgent(agent: any): void {
+    this.currentAgent = agent;
   }
 
   async start(): Promise<void> {
@@ -342,20 +362,21 @@ export class InteractiveSession {
   }
 
   private displayThinkingContent(reasoningContent: string): void {
+    const indent = this.getIndent();
     const thinkingConfig = this.configManager.getThinkingConfig();
     const displayMode = thinkingConfig.displayMode || 'compact';
 
-    const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80));
+    const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length);
 
     console.log('');
-    console.log(colors.border(separator));
+    console.log(`${indent}${colors.border(separator)}`);
 
     switch (displayMode) {
       case 'full':
         // Full display, using small font and gray color
-        console.log(colors.textDim(`${icons.brain} Thinking Process:`));
+        console.log(`${indent}${colors.textDim(`${icons.brain} Thinking Process:`)}`);
         console.log('');
-        console.log(colors.textDim(reasoningContent));
+        console.log(`${indent}${colors.textDim(reasoningContent.replace(/^/gm, indent))}`);
         break;
 
       case 'compact':
@@ -365,33 +386,34 @@ export class InteractiveSession {
           ? reasoningContent.substring(0, maxLength) + '... (truncated)'
           : reasoningContent;
 
-        console.log(colors.textDim(`${icons.brain} Thinking Process:`));
+        console.log(`${indent}${colors.textDim(`${icons.brain} Thinking Process:`)}`);
         console.log('');
-        console.log(colors.textDim(truncatedContent));
-        console.log(colors.textDim(`[${reasoningContent.length} chars total]`));
+        console.log(`${indent}${colors.textDim(truncatedContent.replace(/^/gm, indent))}`);
+        console.log(`${indent}${colors.textDim(`[${reasoningContent.length} chars total]`)}`);
         break;
 
       case 'indicator':
         // Show indicator only
-        console.log(colors.textDim(`${icons.brain} Thinking process completed`));
-        console.log(colors.textDim(`[${reasoningContent.length} chars of reasoning]`));
+        console.log(`${indent}${colors.textDim(`${icons.brain} Thinking process completed`)}`);
+        console.log(`${indent}${colors.textDim(`[${reasoningContent.length} chars of reasoning]`)}`);
         break;
 
       default:
-        console.log(colors.textDim(`${icons.brain} Thinking:`));
+        console.log(`${indent}${colors.textDim(`${icons.brain} Thinking:`)}`);
         console.log('');
-        console.log(colors.textDim(reasoningContent));
+        console.log(`${indent}${colors.textDim(reasoningContent.replace(/^/gm, indent))}`);
     }
 
-    console.log(colors.border(separator));
+    console.log(`${indent}${colors.border(separator)}`);
     console.log('');
   }
 
   private async executeShellCommand(command: string): Promise<void> {
+    const indent = this.getIndent();
     console.log('');
-    console.log(colors.textMuted(`${icons.code} Executing:`));
-    console.log(colors.codeText(`  $ ${command}`));
-    console.log(colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80))));
+    console.log(`${indent}${colors.textMuted(`${icons.code} Executing:`)}`);
+    console.log(`${indent}${colors.codeText(`  $ ${command}`)}`);
+    console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
     console.log('');
 
     const toolRegistry = getToolRegistry();
@@ -400,11 +422,11 @@ export class InteractiveSession {
       const result = await toolRegistry.execute('Bash', { command }, this.executionMode);
 
       if (result.stdout) {
-        console.log(result.stdout);
+        console.log(`${indent}${result.stdout.replace(/^/gm, indent)}`);
       }
 
       if (result.stderr) {
-        console.log(colors.warning(result.stderr));
+        console.log(`${indent}${colors.warning(result.stderr.replace(/^/gm, indent))}`);
       }
 
       const toolCall: ToolCall = {
@@ -416,7 +438,7 @@ export class InteractiveSession {
 
       this.toolCalls.push(toolCall);
     } catch (error: any) {
-      console.log(colors.error(`Command execution failed: ${error.message}`));
+      console.log(`${indent}${colors.error(`Command execution failed: ${error.message}`)}`);
     }
   }
 
@@ -426,6 +448,7 @@ export class InteractiveSession {
       return;
     }
 
+    const indent = this.getIndent();
     const spinner = ora({
       text: colors.textMuted(`${icons.brain} Thinking... (Press ESC to cancel)`),
       spinner: 'dots',
@@ -477,10 +500,10 @@ export class InteractiveSession {
       }
 
       console.log('');
-      console.log(colors.primaryBright(`${icons.robot} Assistant:`));
-      console.log(colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80))));
+      console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
+      console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
       console.log('');
-      console.log(content);
+      console.log(`${indent}${content.replace(/^/gm, indent)}`);
       console.log('');
 
       this.conversation.push({
@@ -516,6 +539,7 @@ export class InteractiveSession {
   private async handleToolCalls(toolCalls: any[]): Promise<void> {
     const toolRegistry = getToolRegistry();
     const showToolDetails = this.configManager.get('showToolDetails') || false;
+    const indent = this.getIndent();
 
     // Prepare all tool calls
     const preparedToolCalls = toolCalls.map((toolCall, index) => {
@@ -535,12 +559,12 @@ export class InteractiveSession {
     for (const { name, params } of preparedToolCalls) {
       if (showToolDetails) {
         console.log('');
-        console.log(colors.warning(`${icons.tool} Tool Call: ${name}`));
-        console.log(colors.textDim(JSON.stringify(params, null, 2)));
+        console.log(`${indent}${colors.warning(`${icons.tool} Tool Call: ${name}`)}`);
+        console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
       } else {
         const toolDescription = this.getToolDescription(name, params);
         console.log('');
-        console.log(colors.textMuted(`${icons.loading} ${toolDescription}`));
+        console.log(`${indent}${colors.textMuted(`${icons.loading} ${toolDescription}`)}`);
       }
     }
 
@@ -563,7 +587,7 @@ export class InteractiveSession {
         }
 
         console.log('');
-        console.log(colors.error(`${icons.cross} Tool Error: ${error}`));
+        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
 
         this.conversation.push({
           role: 'tool',
@@ -573,10 +597,10 @@ export class InteractiveSession {
       } else {
         if (showToolDetails) {
           console.log('');
-          console.log(colors.success(`${icons.check} Tool Result:`));
-          console.log(colors.textDim(JSON.stringify(result, null, 2)));
+          console.log(`${indent}${colors.success(`${icons.check} Tool Result:`)}`);
+          console.log(`${indent}${colors.textDim(JSON.stringify(result, null, 2))}`);
         } else {
-          console.log(colors.success(` ${icons.check} Completed`));
+          console.log(`${indent}${colors.success(` ${icons.check} Completed`)}`);
         }
 
         const toolCallRecord: ToolCall = {

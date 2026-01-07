@@ -7,8 +7,10 @@ import axios from 'axios';
 import inquirer from 'inquirer';
 import { Tool, ExecutionMode, AuthType } from './types.js';
 import type { Message, ToolDefinition } from './ai-client.js';
-import { colors } from './theme.js';
+import { colors, icons, styleHelpers } from './theme.js';
 import { getCancellationManager } from './cancellation.js';
+import { SystemPromptGenerator } from './system-prompt-generator.js';
+import { InteractiveSession } from './session.js';
 
 const execAsync = promisify(exec);
 
@@ -429,7 +431,7 @@ export class WebSearchTool implements Tool {
 
 export class TodoWriteTool implements Tool {
   name = 'todo_write';
-  description = 'Create and manage structured task lists';
+  description = 'Create and manage structured task todo lists';
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   private todoList: Array<{ id: string; task: string; status: 'pending' | 'in_progress' | 'completed' | 'failed'; priority: 'high' | 'medium' | 'low' }> = [];
@@ -497,36 +499,46 @@ export class TodoReadTool implements Tool {
   }
 }
 
+export interface SubAgentTask {
+  description: string;
+  prompt: string;
+  subagent_type: 'general-purpose' | 'plan-agent' | 'explore-agent' | 'frontend-tester' | 'code-reviewer' | 'frontend-developer' | 'backend-developer';
+  useContext?: boolean;
+  outputFormat?: string;
+  constraints?: string[];
+}
+
+export interface ToolCallOptions {
+  indentLevel?: number;
+  agentName?: string;
+}
+
 export class TaskTool implements Tool {
   name = 'task';
-  description = 'Launch specialized subagent for complex multi-step tasks';
+  description = 'Launch specialized subagent(s) for complex multi-step tasks. Supports parallel execution of multiple agents.';
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
     description: string;
-    prompt: string;
-    subagent_type: 'general-purpose' | 'plan-agent' | 'explore-agent' | 'frontend-tester';
+    prompt?: string;
+    subagent_type?: 'general-purpose' | 'plan-agent' | 'explore-agent' | 'frontend-tester' | 'code-reviewer' | 'frontend-developer' | 'backend-developer';
+    agents?: SubAgentTask[];
     useContext?: boolean;
     outputFormat?: string;
     constraints?: string[];
-  }): Promise<{ success: boolean; message: string; result?: any }> {
-    const { description, prompt, subagent_type, useContext = true, outputFormat, constraints } = params;
+    executionMode?: ExecutionMode;
+    parallel?: boolean;
+  }, _executionMode?: ExecutionMode): Promise<{ success: boolean; message: string; result?: any }> {
+    const mode = params.executionMode || _executionMode || ExecutionMode.YOLO;
     
     try {
       const { getAgentManager } = await import('./agents.js');
       const agentManager = getAgentManager(process.cwd());
       
-      const agent = agentManager.getAgent(subagent_type);
-      
-      if (!agent) {
-        throw new Error(`Agent ${subagent_type} not found`);
-      }
-      
-      const { AIClient } = await import('./ai-client.js');
-      const configManager = await import('./config.js');
-      const { getConfigManager } = configManager;
+      const { getConfigManager } = await import('./config.js');
       const config = getConfigManager();
       
+      const { AIClient } = await import('./ai-client.js');
       const aiClient = new AIClient({
         type: AuthType.API_KEY,
         apiKey: config.get('apiKey'),
@@ -534,38 +546,296 @@ export class TaskTool implements Tool {
         modelName: config.get('modelName') || 'Qwen3-Coder'
       });
       
-      const systemPrompt = agent.systemPrompt;
-      const fullPrompt = constraints 
-        ? `${prompt}\n\nConstraints:\n${constraints.map(c => `- ${c}`).join('\n')}`
-        : prompt;
+      const toolRegistry = getToolRegistry();
       
-      const messages: Message[] = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: fullPrompt }
-      ];
+      if (params.agents && params.agents.length > 0) {
+        return await this.executeParallelAgents(
+          params.agents,
+          params.description,
+          mode,
+          agentManager,
+          toolRegistry,
+          aiClient
+        );
+      }
       
-      const toolDefinitions: ToolDefinition[] = (agent.allowedTools || []).map(toolName => ({
+      if (!params.subagent_type || !params.prompt) {
+        throw new Error('Either subagent_type and prompt, or agents array must be provided');
+      }
+      
+      const result = await this.executeSingleAgent(
+        params.subagent_type,
+        params.prompt,
+        params.description,
+        params.useContext ?? true,
+        params.constraints || [],
+        mode,
+        agentManager,
+        toolRegistry,
+        aiClient
+      );
+      
+      return result;
+    } catch (error: any) {
+      throw new Error(`Task execution failed: ${error.message}`);
+    }
+  }
+  
+  private async executeSingleAgent(
+    subagent_type: string,
+    prompt: string,
+    description: string,
+    useContext: boolean,
+    constraints: string[],
+    mode: ExecutionMode,
+    agentManager: any,
+    toolRegistry: any,
+    aiClient: any,
+    indentLevel: number = 1
+  ): Promise<{ success: boolean; message: string; result?: any }> {
+    const agent = agentManager.getAgent(subagent_type);
+    
+    if (!agent) {
+      throw new Error(`Agent ${subagent_type} not found`);
+    }
+    
+    const indent = '  '.repeat(indentLevel);
+    const indentNext = '  '.repeat(indentLevel + 1);
+    const agentName = agent.name || subagent_type;
+
+    // Helper function to indent multi-line content
+    const indentMultiline = (content: string, baseIndent: string): string => {
+      return content.split('\n').map(line => `${baseIndent}  ${line}`).join('\n');
+    };
+    
+    const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, mode, agent);
+    const enhancedSystemPrompt = systemPromptGenerator.generateEnhancedSystemPrompt(agent.systemPrompt);
+    
+    const fullPrompt = constraints.length > 0
+      ? `${prompt}\n\nConstraints:\n${constraints.map(c => `- ${c}`).join('\n')}`
+      : prompt;
+    
+    let messages: Message[] = [
+      { role: 'system', content: enhancedSystemPrompt },
+      { role: 'user', content: fullPrompt }
+    ];
+    
+    const availableTools = agentManager.getAvailableToolsForAgent(agent, mode);
+    const allToolDefinitions = toolRegistry.getToolDefinitions();
+    
+    const toolDefinitions: ToolDefinition[] = availableTools.map((toolName: string) => {
+      const fullDef = allToolDefinitions.find((def: any) => def.function.name === toolName);
+      if (fullDef) {
+        return fullDef;
+      }
+      return {
         type: 'function' as const,
         function: {
           name: toolName,
           description: `Tool: ${toolName}`,
           parameters: { type: 'object', properties: {}, required: [] }
         }
-      }));
+      };
+    });
+
+    let iteration = 0;
+    const maxIterations = 10;
+
+    while (iteration < maxIterations) {
+      iteration++;
       
       const result = await aiClient.chatCompletion(messages, {
         tools: toolDefinitions,
         temperature: 0.7
       });
-      
+
+      if (!result || !result.choices || result.choices.length === 0) {
+        throw new Error(`Sub-agent ${subagent_type} returned empty response`);
+      }
+
+      const choice = result.choices[0];
+      const messageContent = choice.message?.content;
+      const toolCalls = choice.message.tool_calls;
+
+      let contentStr: string;
+      let hasValidContent = false;
+
+      if (typeof messageContent === 'string') {
+        contentStr = messageContent;
+        hasValidContent = messageContent.trim() !== '';
+      } else if (Array.isArray(messageContent)) {
+        const textParts = messageContent
+          .filter(item => typeof item?.text === 'string' && item.text.trim() !== '')
+          .map(item => item.text);
+        contentStr = textParts.join('');
+        hasValidContent = textParts.length > 0;
+      } else {
+        contentStr = '';
+        hasValidContent = false;
+      }
+
+      // Only throw empty content error if there's no text content AND no tool calls
+      // When AI model returns tool_calls, message.content can be null/empty, which is valid
+      if (!hasValidContent && (!toolCalls || toolCalls.length === 0)) {
+        throw new Error(`Sub-agent ${subagent_type} returned empty content`);
+      }
+
+      if (choice.finish_reason === 'length') {
+        throw new Error(`Sub-agent ${subagent_type} response truncated due to length limits`);
+      }
+
+      // Add assistant message to conversation
+      messages.push({ role: 'assistant', content: contentStr });
+
+      // Display assistant response (if there's any text content) with proper indentation
+      if (contentStr) {
+        console.log(`\n${indent}${colors.primaryBright(agentName)}: ${description}`);
+        const truncatedContent = contentStr.length > 500 ? contentStr.substring(0, 500) + '...' : contentStr;
+        const indentedContent = indentMultiline(truncatedContent, indent);
+        console.log(`${indentedContent}\n`);
+      }
+
+      // Process tool calls with proper indentation
+      if (toolCalls && toolCalls.length > 0) {
+        for (const toolCall of toolCalls) {
+          const { name, arguments: params } = toolCall.function;
+
+          let parsedParams: any;
+          try {
+            parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
+          } catch (e) {
+            parsedParams = params;
+          }
+
+          console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${name}`)}`);
+
+          try {
+            const toolResult = await toolRegistry.execute(name, parsedParams, mode, indent);
+
+            // Display tool result with proper indentation for multi-line content
+            const resultPreview = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
+            const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
+            const indentedPreview = indentMultiline(truncatedPreview, indent);
+            console.log(`${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`);
+
+            messages.push({
+              role: 'tool',
+              content: JSON.stringify(toolResult),
+              tool_call_id: toolCall.id
+            });
+          } catch (error: any) {
+            console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error.message}\n`);
+
+            messages.push({
+              role: 'tool',
+              content: JSON.stringify({ error: error.message }),
+              tool_call_id: toolCall.id
+            });
+          }
+        }
+        console.log('');
+        continue; // Continue to next iteration to get final response
+      }
+
+      // No more tool calls, return the result
       return {
         success: true,
         message: `Task "${description}" completed by ${subagent_type}`,
-        result: result
+        result: contentStr
       };
-    } catch (error: any) {
-      throw new Error(`Task execution failed: ${error.message}`);
     }
+
+    // Max iterations reached - return accumulated results instead of throwing error
+    // Get the last assistant message content
+    const lastAssistantMsg = messages.filter(m => m.role === 'assistant').pop();
+    const lastContent = lastAssistantMsg?.content || '';
+
+    return {
+      success: true,
+      message: `Task "${description}" completed (max iterations reached) by ${subagent_type}`,
+      result: lastContent
+    };
+  }
+  
+  private async executeParallelAgents(
+    agents: SubAgentTask[],
+    description: string,
+    mode: ExecutionMode,
+    agentManager: any,
+    toolRegistry: any,
+    aiClient: any,
+    indentLevel: number = 1
+  ): Promise<{ success: boolean; message: string; results: any[]; errors: any[] }> {
+    const indent = '  '.repeat(indentLevel);
+    const indentNext = '  '.repeat(indentLevel + 1);
+    
+    console.log(`\n${indent}${colors.accent('◆')} ${colors.primaryBright('Parallel Agents')}: ${agents.length} running...`);
+    
+    const startTime = Date.now();
+    
+    const agentPromises = agents.map(async (agentTask, index) => {
+      try {
+        const result = await this.executeSingleAgent(
+          agentTask.subagent_type,
+          agentTask.prompt,
+          agentTask.description,
+          agentTask.useContext ?? true,
+          agentTask.constraints || [],
+          mode,
+          agentManager,
+          toolRegistry,
+          aiClient,
+          indentLevel + 1
+        );
+        
+        return {
+          success: true,
+          agent: agentTask.subagent_type,
+          description: agentTask.description,
+          result: result.result
+        };
+      } catch (error: any) {
+        return {
+          success: false,
+          agent: agentTask.subagent_type,
+          description: agentTask.description,
+          error: error.message
+        };
+      }
+    });
+    
+    const results = await Promise.all(agentPromises);
+    
+    const duration = Date.now() - startTime;
+    
+    const successfulAgents = results.filter(r => r.success);
+    const failedAgents = results.filter(r => !r.success);
+    
+    console.log(`${indent}${colors.success('✔')} Parallel task completed in ${colors.textMuted(duration + 'ms')}`);
+    console.log(`${indent}${colors.info('ℹ')} Success: ${successfulAgents.length}/${agents.length} agents\n`);
+    
+    if (failedAgents.length > 0) {
+      console.log(`${indent}${colors.error('✖')} Failed agents:`);
+      for (const failed of failedAgents) {
+        console.log(`${indentNext}  ${colors.error('•')} ${failed.agent}: ${failed.error}`);
+      }
+      console.log('');
+    }
+    
+    return {
+      success: failedAgents.length === 0,
+      message: `Parallel task "${description}" completed: ${successfulAgents.length}/${agents.length} successful`,
+      results: successfulAgents.map(r => ({
+        agent: r.agent,
+        description: r.description,
+        result: r.result
+      })),
+      errors: failedAgents.map(r => ({
+        agent: r.agent,
+        description: r.description,
+        error: r.error
+      }))
+    };
   }
 }
 
@@ -1231,14 +1501,42 @@ export class ToolRegistry {
                 type: 'string',
                 description: 'Brief description of the task (3-5 words)'
               },
+              agents: {
+                type: 'array',
+                description: 'Optional: Array of agents to run in parallel for comprehensive analysis',
+                items: {
+                  type: 'object',
+                  properties: {
+                    description: {
+                      type: 'string',
+                      description: 'Brief description of the sub-agent task'
+                    },
+                    prompt: {
+                      type: 'string',
+                      description: 'The task for the sub-agent to perform'
+                    },
+                    subagent_type: {
+                      type: 'string',
+                      enum: ['general-purpose', 'plan-agent', 'explore-agent', 'frontend-tester', 'code-reviewer', 'frontend-developer', 'backend-developer'],
+                      description: 'The type of specialized agent'
+                    },
+                    constraints: {
+                      type: 'array',
+                      items: { type: 'string' },
+                      description: 'Optional: Constraints or limitations'
+                    }
+                  },
+                  required: ['description', 'prompt', 'subagent_type']
+                }
+              },
               prompt: {
                 type: 'string',
-                description: 'The task for the agent to perform'
+                description: 'Optional: The task for the agent to perform (use agents for parallel execution)'
               },
               subagent_type: {
                 type: 'string',
-                enum: ['general-purpose', 'plan-agent', 'explore-agent', 'frontend-tester'],
-                description: 'The type of specialized agent'
+                enum: ['general-purpose', 'plan-agent', 'explore-agent', 'frontend-tester', 'code-reviewer', 'frontend-developer', 'backend-developer'],
+                description: 'Optional: The type of specialized agent (use agents for parallel execution)'
               },
               useContext: {
                 type: 'boolean',
@@ -1249,11 +1547,12 @@ export class ToolRegistry {
                 description: 'Optional: Output format template'
               },
               constraints: {
-                type: 'string',
+                type: 'array',
+                items: { type: 'string' },
                 description: 'Optional: Constraints or limitations'
               }
             },
-            required: ['description', 'prompt', 'subagent_type']
+            required: ['description']
           };
           break;
 
@@ -1420,7 +1719,7 @@ export class ToolRegistry {
     });
   }
 
-  async execute(toolName: string, params: any, executionMode: ExecutionMode): Promise<any> {
+  async execute(toolName: string, params: any, executionMode: ExecutionMode, indent: string = ''): Promise<any> {
     const tool = this.get(toolName);
 
     if (!tool) {
@@ -1435,10 +1734,21 @@ export class ToolRegistry {
 
     // Smart approval mode
     if (executionMode === ExecutionMode.SMART) {
+      const debugMode = process.env.DEBUG === 'smart-approval';
+
+      // task tool bypasses smart approval entirely
+      if (toolName === 'task') {
+        if (debugMode) {
+          const { getLogger } = await import('./logger.js');
+          const logger = getLogger();
+          logger.debug(`[SmartApprovalEngine] Tool '${toolName}' bypassed smart approval completely`);
+        }
+        return await tool.execute(params, executionMode);
+      }
+
       const { getSmartApprovalEngine } = await import('./smart-approval.js');
       const { getConfigManager } = await import('./config.js');
       const configManager = getConfigManager();
-      const debugMode = process.env.DEBUG === 'smart-approval';
 
       const approvalEngine = getSmartApprovalEngine(debugMode);
 
@@ -1453,38 +1763,38 @@ export class ToolRegistry {
       if (result.decision === 'approved') {
         // Whitelist or AI approval passed, execute directly
         console.log('');
-        console.log(colors.success(`✅ [Smart Mode] Tool '${toolName}' passed approval, executing directly`));
-        console.log(colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`));
-        console.log(colors.textDim(`  Latency: ${result.latency}ms`));
+        console.log(`${indent}${colors.success(`✅ [Smart Mode] Tool '${toolName}' passed approval, executing directly`)}`);
+        console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
+        console.log(`${indent}${colors.textDim(`  Latency: ${result.latency}ms`)}`);
         console.log('');
-        return await tool.execute(params);
+        return await tool.execute(params, executionMode);
       } else if (result.decision === 'requires_confirmation') {
         // Requires user confirmation
         const confirmed = await approvalEngine.requestConfirmation(result);
 
         if (confirmed) {
           console.log('');
-          console.log(colors.success(`✅ [Smart Mode] User confirmed execution of tool '${toolName}'`));
+          console.log(`${indent}${colors.success(`✅ [Smart Mode] User confirmed execution of tool '${toolName}'`)}`);
           console.log('');
-          return await tool.execute(params);
+          return await tool.execute(params, executionMode);
         } else {
           console.log('');
-          console.log(colors.warning(`⚠️  [Smart Mode] User cancelled execution of tool '${toolName}'`));
+          console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled execution of tool '${toolName}'`)}`);
           console.log('');
           throw new Error(`Tool execution cancelled by user: ${toolName}`);
         }
       } else {
         // Rejected execution
         console.log('');
-        console.log(colors.error(`❌ [Smart Mode] Tool '${toolName}' execution rejected`));
-        console.log(colors.textDim(`  Reason: ${result.description}`));
+        console.log(`${indent}${colors.error(`❌ [Smart Mode] Tool '${toolName}' execution rejected`)}`);
+        console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
         console.log('');
         throw new Error(`Tool execution rejected: ${toolName}`);
       }
     }
 
     // Other modes execute directly
-    return await tool.execute(params);
+    return await tool.execute(params, executionMode);
   }
 
   async executeAll(

@@ -7,6 +7,7 @@ dist
 coverage
 .vscode
 .idea
+.trae
 *.tsbuildinfo
 
 # 测试相关

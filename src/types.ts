@@ -23,7 +23,7 @@ export interface AuthConfig {
 export interface Tool {
   name: string;
   description: string;
-  execute: (params: any) => Promise<any>;
+  execute: (params: any, executionMode?: ExecutionMode) => Promise<any>;
   allowedModes: ExecutionMode[];
 }
 
@@ -34,7 +34,6 @@ export interface AgentConfig {
   model?: string;
   allowedTools?: string[];
   allowedMcps?: string[];
-  isInheritTools?: boolean;
   isInheritMcps?: boolean;
   proactive?: boolean;
   color?: string;

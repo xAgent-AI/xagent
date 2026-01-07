@@ -1,5 +1,6 @@
 import { ToolRegistry } from './tools.js';
-import { ExecutionMode } from './types.js';
+import { ExecutionMode, AgentConfig } from './types.js';
+import { getAgentManager } from './agents.js';
 
 export interface ToolParameter {
   type: string;
@@ -21,52 +22,26 @@ export interface ToolSchema {
 export class SystemPromptGenerator {
   private toolRegistry: ToolRegistry;
   private executionMode: ExecutionMode;
+  private agentConfig?: AgentConfig;
 
-  constructor(toolRegistry: ToolRegistry, executionMode: ExecutionMode) {
+  constructor(toolRegistry: ToolRegistry, executionMode: ExecutionMode, agentConfig?: AgentConfig) {
     this.toolRegistry = toolRegistry;
     this.executionMode = executionMode;
+    this.agentConfig = agentConfig;
   }
 
   generateEnhancedSystemPrompt(baseSystemPrompt: string): string {
-    const availableTools = this.toolRegistry.getAll().filter(
+    let availableTools = this.toolRegistry.getAll().filter(
       tool => tool.allowedModes.includes(this.executionMode)
     );
 
+    if (this.agentConfig) {
+      const agentManager = getAgentManager();
+      const allowedToolNames = agentManager.getAvailableToolsForAgent(this.agentConfig, this.executionMode);
+      availableTools = availableTools.filter(tool => allowedToolNames.includes(tool.name));
+    }
+
     let enhancedPrompt = baseSystemPrompt;
-
-    // Add execution mode information at the beginning
-    enhancedPrompt += `
-
-## Current Execution Mode: ${this.executionMode.toUpperCase()}
-
-## Self Introduction
-
-When users ask you to introduce yourself, ALWAYS respond with the following exact format (do not modify or add any additional text):
-
-I am xAgent CLI, an interactive command-line assistant focused on software engineering tasks.
-
-Core capabilities:
- - Code analysis and understanding
- - Bug fixing and feature implementation
- - Code refactoring and optimization
- - Project building and testing
- - Git operations and version control
-
-Key features:
- - Multi-mode execution support (DEFAULT, YOLO, ACCEPT_EDITS, PLAN)
- - 2-level thinking mode (Off, On)
- - Rich toolset (file operations, code search, Web search, etc.)
- - Interactive dialogue and task management
- - Support for multiple AI models (e.g., glm-4.7)
-
-Usage:
- npm start start
-
-Enter /help to view all available commands.
-
-IMPORTANT: This is the ONLY self-introduction you should provide. Do not add any additional information or modify this text.
-
-`;
 
     // Only add tool-related content if tools are available
     if (availableTools.length > 0) {
@@ -509,23 +484,25 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
           },
           subagent_type: {
             type: 'string',
-            description: 'Type of agent to use (search, code-reviewer, etc.)',
+            description: 'Type of agent to use (plan-agent, explore-agent, frontend-tester, code-reviewer, frontend-developer, backend-developer)',
             required: true
           },
           response_language: {
             type: 'string',
             description: 'Language for the response',
-            required: true
+            required: false
           }
         },
         usage: 'Delegate specialized tasks to expert agents',
         examples: [
-          'Search task: Task(description="Find authentication code", query="where is authentication implemented?", subagent_type="search", response_language="en")'
+          'Plan task: Task(description="Create implementation plan", query="Create a detailed plan for implementing user authentication system", subagent_type="plan-agent")',
+          'Explore codebase: Task(description="Explore auth module", query="Find and analyze all authentication-related code in the codebase", subagent_type="explore-agent")',
+          'Run tests: Task(description="Create component tests", query="Write unit tests for the Button component including edge cases", subagent_type="frontend-tester")'
         ],
         bestPractices: [
           'Choose appropriate agent type for the task',
           'Provide clear task descriptions',
-          'Specify desired response language',
+          'Specify desired response language if needed',
           'Review agent results carefully'
         ]
       }

@@ -8,6 +8,7 @@ export class CancellationManager extends EventEmitter {
   private isCancelled: boolean = false;
   private operationId: string | null = null;
   private keyPressHandler: ((str: string, key: readline.Key) => void) | null = null;
+  private sigintHandler: (() => void) | null = null;
 
   constructor() {
     super();
@@ -16,16 +17,16 @@ export class CancellationManager extends EventEmitter {
 
   /**
    * Set up key handler to listen for ESC key
-   * Using readline's emitKeypressEvents instead of rawMode to avoid conflicts with readline.question()
    */
   private setupKeyHandler(): void {
     if (process.stdin.isTTY) {
-      // Use readline's built-in keypress handling which is compatible with line mode
+      // Use readline's keypress handling
       readline.emitKeypressEvents(process.stdin);
 
       this.keyPressHandler = (str: string, key: readline.Key) => {
-        // ESC key detection - only handle ESC, let SIGINT handle Ctrl+C
+        logger.debug(`[CancellationManager] Key pressed: str='${str}', name='${key.name}'`);
         if (str === '\u001B' || key.name === 'escape') {
+          logger.debug(`[CancellationManager] ESC key detected!`);
           this.cancel();
         }
       };
@@ -35,6 +36,15 @@ export class CancellationManager extends EventEmitter {
       process.stdin.on('error', (error) => {
         logger.error(`Error in stdin handler: ${error}`);
       });
+
+      // Also listen for SIGINT (Ctrl+C)
+      this.sigintHandler = () => {
+        logger.debug('[CancellationManager] SIGINT received!');
+        this.cancel();
+      };
+      process.on('SIGINT', this.sigintHandler);
+    } else {
+      logger.debug('[CancellationManager] stdin is not a TTY, ESC cancellation disabled');
     }
   }
 
@@ -98,6 +108,10 @@ export class CancellationManager extends EventEmitter {
       process.stdin.removeListener('keypress', this.keyPressHandler);
       this.keyPressHandler = null;
     }
+    if (this.sigintHandler) {
+      process.off('SIGINT', this.sigintHandler);
+      this.sigintHandler = null;
+    }
     process.stdin.removeAllListeners('error');
     this.removeAllListeners();
   }
@@ -109,39 +123,46 @@ export class CancellationManager extends EventEmitter {
     promise: Promise<T>,
     operationId: string
   ): Promise<T> {
+    logger.debug(`[CancellationManager] withCancellation started: ${operationId}`);
     this.startOperation(operationId);
 
-    return new Promise((resolve, reject) => {
-      const checkCancellation = () => {
-        if (this.isOperationCancelled()) {
-          this.completeOperation();
-          reject(new Error('Operation cancelled by user'));
-        }
-      };
-
-      // Check immediately if already cancelled
-      checkCancellation();
-
-      // Listen for cancellation event
-      const onCancelled = () => {
-        this.completeOperation();
-        reject(new Error('Operation cancelled by user'));
-      };
-
-      this.once('cancelled', onCancelled);
-
-      promise
-        .then((result) => {
-          this.off('cancelled', onCancelled);
-          this.completeOperation();
-          resolve(result);
-        })
-        .catch((error) => {
-          this.off('cancelled', onCancelled);
-          this.completeOperation();
-          reject(error);
-        });
+    // Create a promise that can be rejected externally
+    let rejectCancellation: ((reason?: any) => void) | null = null;
+    const cancelPromise = new Promise((_, reject) => {
+      rejectCancellation = reject;
     });
+
+    // Listen for cancellation event
+    const onCancelled = () => {
+      logger.debug(`[CancellationManager] 'cancelled' event received: ${operationId}`);
+      if (rejectCancellation) {
+        rejectCancellation(new Error('Operation cancelled by user'));
+      }
+    };
+
+    this.on('cancelled', onCancelled);
+
+    // Race between the original promise and cancellation
+    try {
+      const result = await Promise.race([
+        promise,
+        cancelPromise
+      ]);
+
+      this.off('cancelled', onCancelled);
+      this.completeOperation();
+      logger.debug(`[CancellationManager] Operation completed: ${operationId}`);
+      return result as T;
+    } catch (error: any) {
+      this.off('cancelled', onCancelled);
+      if (error.message === 'Operation cancelled by user') {
+        this.completeOperation();
+        logger.debug(`[CancellationManager] Operation cancelled: ${operationId}`);
+      } else {
+        this.completeOperation();
+      }
+      throw error;
+    }
   }
 }
 

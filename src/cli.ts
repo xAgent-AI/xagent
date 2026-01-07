@@ -9,8 +9,12 @@ import { getAgentManager } from './agents.js';
 import { getMCPManager } from './mcp.js';
 import { getLogger } from './logger.js';
 import { theme, icons, colors } from './theme.js';
+import { getCancellationManager } from './cancellation.js';
 
 const logger = getLogger();
+
+// Initialize CancellationManager early to set up ESC handler
+getCancellationManager();
 
 const program = new Command();
 

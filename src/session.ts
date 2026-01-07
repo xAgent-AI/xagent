@@ -81,6 +81,16 @@ export class InteractiveSession {
 
     await this.initialize();
     this.showWelcomeMessage();
+
+    // Listen for ESC cancellation to stop main session
+    const cancelHandler = () => {
+      (this as any)._isShuttingDown = true;
+      this.rl?.close();
+      this.cancellationManager.cleanup();
+      process.exit(0);
+    };
+    this.cancellationManager.on('cancelled', cancelHandler);
+
     this.promptLoop();
 
     // Keep the promise pending until shutdown
@@ -237,32 +247,39 @@ export class InteractiveSession {
     console.log('');
   }
 
-  private promptLoop(): void {
+  private async promptLoop(): Promise<void> {
     // Check if we're shutting down
     if ((this as any)._isShuttingDown) {
       return;
     }
 
-    // Recreate readline interface as previous one may have been closed
+    // Recreate readline interface
     if (this.rl) {
       this.rl.close();
     }
+
+    // Enable raw mode BEFORE emitKeypressEvents for better ESC detection
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+    process.stdin.resume();
+    readline.emitKeypressEvents(process.stdin);
+
     this.rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout
     });
 
     const prompt = `${colors.primaryBright('❯')} `;
-    this.rl.question(prompt, async (input) => {
-      // Check shutdown flag before processing
+    this.rl.question(prompt, async (input: string) => {
       if ((this as any)._isShuttingDown) {
         return;
       }
 
       try {
         await this.handleInput(input);
-      } catch (error: any) {
-        console.log(colors.error(`Error: ${error.message}`));
+      } catch (err: any) {
+        console.log(colors.error(`Error: ${err.message}`));
       }
 
       this.promptLoop();

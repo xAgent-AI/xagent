@@ -18,7 +18,36 @@ const execAsync = promisify(exec);
 
 export class ReadTool implements Tool {
   name = 'Read';
-  description = 'Read the contents of a file';
+  description = `Read the contents of a file. This is your PRIMARY tool for understanding existing code, configuration, and documentation.
+
+# When to Use
+- When you need to understand existing code before making changes
+- When user asks you to "read", "show", "view", or "check" a file
+- When debugging and need to inspect source files
+- When analyzing project structure by reading key files
+- When examining configuration files (package.json, tsconfig.json, etc.)
+- When checking documentation or README files
+
+# When NOT to Use
+- For files you've already read in the same conversation (use memory instead)
+- When you only need file metadata (use ListDirectory or Bash with ls instead)
+- For binary files that cannot be read as text
+
+# Parameters
+- \`filePath\`: Absolute path or path relative to project root
+- \`offset\`: (Optional) Line number to start reading from (0-based)
+- \`limit\`: (Optional) Maximum number of lines to read
+
+# Examples
+- Read specific file: Read(filePath="/path/to/file.ts")
+- Read with pagination: Read(filePath="src/app.ts", offset=0, limit=100)
+
+# Best Practices
+- Use absolute paths or paths relative to the project root
+- Use offset and limit for large files to avoid loading entire content
+- Combine with ListDirectory to explore project structure first
+- Don't re-read files unnecessarily`;
+
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { filePath: string; offset?: number; limit?: number }): Promise<string> {
@@ -42,7 +71,32 @@ export class ReadTool implements Tool {
 
 export class WriteTool implements Tool {
   name = 'Write';
-  description = 'Write content to a file';
+  description = `Create a new file or completely overwrite an existing file with new content.
+
+# When to Use
+- Creating new files (source code, configuration, documentation)
+- Completely replacing file content (not partial edits)
+- Generating files from templates or scratch
+- When user explicitly asks to "create", "write", or "generate" a file
+
+# When NOT to Use
+- For making small edits to existing files (use Replace instead)
+- When you only need to append content (read file first, then write)
+- For creating directories (use CreateDirectory instead)
+
+# Parameters
+- \`filePath\`: Absolute path or path relative to project root
+- \`content\`: The complete content to write to the file
+
+# Examples
+- Create new file: Write(filePath="src/utils.ts", content="...")
+- Create config file: Write(filePath=".env.example", content="API_KEY=...")
+
+# Best Practices
+- Parent directories are created automatically
+- Use appropriate file extensions
+- Ensure content is complete and syntactically correct
+- For partial edits, use Replace tool instead`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: { filePath: string; content: string }): Promise<{ success: boolean; message: string }> {
@@ -67,7 +121,40 @@ export class WriteTool implements Tool {
 
 export class GrepTool implements Tool {
   name = 'Grep';
-  description = 'Search for text patterns in files';
+  description = `Search for text patterns within files using regex or literal string matching. This is your PRIMARY tool for finding specific code, functions, or content.
+
+# When to Use
+- Finding specific function definitions or calls
+- Searching for variable usages or imports
+- Locating error messages or log statements
+- Finding all occurrences of a pattern across the codebase
+- When you need line-by-line results with context
+
+# When NOT to Use
+- When you only need to find files containing text (use SearchCodebase instead)
+- When searching by file pattern rather than content (use SearchCodebase)
+- For very large codebases where you only need file names (SearchCodebase is faster)
+
+# Parameters
+- \`pattern\`: Regex or literal string to search for
+- \`path\`: (Optional) Directory to search in, default: "."
+- \`include\`: (Optional) File glob pattern to include
+- \`exclude\`: (Optional) File glob pattern to exclude
+- \`case_sensitive\`: (Optional) Case-sensitive search, default: false
+- \`fixed_strings\`: (Optional) Treat pattern as literal string, default: false
+- \`context\`: (Optional) Lines of context before/after matches
+- \`no_ignore\`: (Optional) Don't ignore node_modules/.git, default: false
+
+# Examples
+- Find function: Grep(pattern="function myFunction")
+- Find with context: Grep(pattern="TODO", context=3)
+- TypeScript only: Grep(pattern="interface", include="*.ts")
+
+# Best Practices
+- Use case_sensitive=true for short patterns to reduce false positives
+- Use fixed_strings=true if your pattern has special regex characters
+- Use context to see the surrounding code for each match
+- Combine with include/exclude to narrow down file types`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
@@ -175,7 +262,41 @@ export class GrepTool implements Tool {
 
 export class BashTool implements Tool {
   name = 'Bash';
-  description = 'Execute shell commands';
+  description = `Execute shell commands in the terminal. This is your PRIMARY tool for running commands, scripts, and system operations.
+
+# When to Use
+- Running build commands (npm run build, tsc, etc.)
+- Installing dependencies (npm install, pip install, etc.)
+- Running tests (npm test, pytest, etc.)
+- Git operations (git commit, git push, etc.)
+- Running linters or formatters
+- Any command-line operations
+
+# When NOT to Use
+- For file operations (use Read/Write/Replace/CreateDirectory instead)
+- For searching file content (use Grep instead)
+- For finding files (use SearchCodebase or ListDirectory instead)
+- For commands that require user interaction (non-interactive only)
+- For dangerous commands without understanding the impact
+
+# Parameters
+- \`command\`: The shell command to execute
+- \`cwd\`: (Optional) Working directory for the command
+- \`description\`: (Optional) Description of what the command does
+- \`timeout\`: (Optional) Timeout in seconds, default: 120
+- \`run_in_bg\`: (Optional) Run in background, default: false
+
+# Examples
+- Install dependencies: Bash(command="npm install", description="Install npm dependencies")
+- Run tests: Bash(command="npm test", description="Run unit tests")
+- Build project: Bash(command="npm run build", description="Build the project")
+
+# Best Practices
+- Always provide a description for context
+- Set appropriate timeout for long-running commands
+- Use run_in_bg=true for commands that take a long time
+- Check the command is safe before executing
+- Use absolute paths or paths relative to project root`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: {
@@ -251,7 +372,34 @@ export class BashTool implements Tool {
 
 export class ListDirectoryTool implements Tool {
   name = 'ListDirectory';
-  description = 'List files and directories in a path';
+  description = `List files and directories in a path. This is your PRIMARY tool for exploring project structure.
+
+# When to Use
+- Exploring project structure and organization
+- Finding what files exist in a directory
+- Getting an overview of the codebase layout
+- When user asks to "list files" or "show directory contents"
+- Navigating through project directories
+
+# When NOT to Use
+- When you need to read file contents (use Read instead)
+- For recursive exploration of entire codebase (use recursive=true)
+- When you need to search for specific files (use SearchCodebase instead)
+
+# Parameters
+- \`path\`: (Optional) Directory path, default: "."
+- \`recursive\`: (Optional) List recursively, default: false
+
+# Examples
+- List current directory: ListDirectory(path=".")
+- List src directory: ListDirectory(path="src")
+- List all files recursively: ListDirectory(path=".", recursive=true)
+
+# Best Practices
+- Use recursive=true to see entire subtree
+- Results are absolute paths
+- Ignores node_modules and .git by default
+- Combine with Read to examine file contents`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { path?: string; recursive?: boolean }): Promise<string[]> {
@@ -281,7 +429,38 @@ export class ListDirectoryTool implements Tool {
 
 export class SearchCodebaseTool implements Tool {
   name = 'SearchCodebase';
-  description = 'Search for files matching a pattern';
+  description = `Search for files matching a glob pattern. This is your PRIMARY tool for finding files by name or extension.
+
+# When to Use
+- Finding all files of a certain type (*.ts, *.json, *.md)
+- Locating files in specific directories or subdirectories
+- Finding configuration files, test files, or source files
+- When you need a list of file paths, not content
+
+# When NOT to Use
+- When you need to search file contents (use Grep instead)
+- When you need to find specific text within files (use Grep instead)
+- For searching non-file patterns (use Grep or Bash)
+
+# Parameters
+- \`pattern\`: Glob pattern (e.g., "**/*.ts", "src/**/*.test.ts")
+- \`path\`: (Optional) Directory to search in, default: "."
+
+# Examples
+- Find all TypeScript files: SearchCodebase(pattern="**/*.ts")
+- Find test files: SearchCodebase(pattern="**/*.test.ts")
+- Find config files: SearchCodebase(pattern="**/config.*")
+
+# Glob Patterns
+- \`*\` matches any characters except /
+- \`**\` matches any characters including /
+- \`?\` matches single character
+- Use brackets for character classes: [abc]
+
+# Best Practices
+- Use **/*.ts for recursive search in all directories
+- Combine with path parameter to search specific directories
+- Results are file paths, not content (use Grep on results if needed)`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { pattern: string; path?: string }): Promise<string[]> {
@@ -302,7 +481,30 @@ export class SearchCodebaseTool implements Tool {
 
 export class DeleteFileTool implements Tool {
   name = 'DeleteFile';
-  description = 'Delete a file';
+  description = `Delete a file from the filesystem.
+
+# When to Use
+- Removing temporary or debug files
+- Cleaning up generated files
+- Removing files as part of a refactoring task
+- When user explicitly requests file deletion
+
+# When NOT to Use
+- For removing directories (use Bash with rm -rf instead)
+- When uncertain if a file should be deleted (confirm with user first)
+- For removing important source files without explicit user request
+
+# Parameters
+- \`filePath\`: Absolute path to the file to delete
+
+# Examples
+- Delete temporary file: DeleteFile(filePath="debug.log")
+- Remove unused file: DeleteFile(filePath="src/old-component.tsx")
+
+# Best Practices
+- Ensure you have the correct file path
+- Consider if the file might be needed later
+- This action is irreversible - be certain before executing`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: { filePath: string }): Promise<{ success: boolean; message: string }> {
@@ -324,7 +526,30 @@ export class DeleteFileTool implements Tool {
 
 export class CreateDirectoryTool implements Tool {
   name = 'CreateDirectory';
-  description = 'Create a directory';
+  description = `Create a new directory (folder) in the filesystem.
+
+# When to Use
+- Creating project structure (src/components, tests/unit, etc.)
+- Setting up directories for new features or modules
+- Organizing files into appropriate folders
+- When user requests to create a folder structure
+
+# When NOT to Use
+- For creating parent directories while writing files (Write tool does this automatically)
+- For creating multiple nested directories at once (create step by step or use Bash)
+
+# Parameters
+- \`dirPath\`: Path of the directory to create
+- \`recursive\`: (Optional, default: true) Create parent directories if they don't exist
+
+# Examples
+- Create single directory: CreateDirectory(dirPath="src/utils")
+- Create nested structure: CreateDirectory(dirPath="src/components/buttons", recursive=true)
+
+# Best Practices
+- recursive=true (default) creates all intermediate parent directories
+- Use appropriate naming conventions (kebab-case for directories)
+- Consider the overall project structure before creating`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: { dirPath: string; recursive?: boolean }): Promise<{ success: boolean; message: string }> {
@@ -346,7 +571,43 @@ export class CreateDirectoryTool implements Tool {
 
 export class ReplaceTool implements Tool {
   name = 'replace';
-  description = 'Replace text in a file';
+  description = `Replace specific text within an existing file. This is your PRIMARY tool for making targeted edits to code.
+
+# When to Use
+- Modifying specific code sections without rewriting entire files
+- Changing function implementations, variable values, or configurations
+- Fixing bugs by editing specific lines
+- Updating imports, exports, or references
+
+# When NOT to Use
+- When you need to create a completely new file (use Write instead)
+- When you want to append content to a file (read first, then Write)
+- When making changes across multiple files (use Grep to find, then Replace individually)
+
+# Parameters
+- \`file_path\`: Path to the file to edit
+- \`instruction\`: Description of what to change (for your own tracking)
+- \`old_string\`: The exact text to find and replace (must match exactly)
+- \`new_string\`: The new text to replace with
+
+# Critical Requirements
+- \`old_string\` MUST be an EXACT match, including whitespace and indentation
+- Include at least 3 lines of context before and after the target text
+- Ensure unique matching to avoid unintended replacements
+
+# Examples
+replace(
+  file_path="src/app.ts",
+  instruction="Update API endpoint",
+  old_string="const API_URL = 'https://api.old.com';",
+  new_string="const API_URL = 'https://api.new.com';"
+)
+
+# Best Practices
+- Read the file first to understand the exact content
+- Include sufficient context in old_string to ensure unique match
+- Be careful with special regex characters in old_string (they're escaped automatically)
+- If multiple occurrences exist, all will be replaced`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: {
@@ -391,7 +652,33 @@ export class ReplaceTool implements Tool {
 
 export class WebSearchTool implements Tool {
   name = 'web_search';
-  description = 'Search web and return results';
+  description = `Search the web for information. This tool queries a search API to find relevant results.
+
+# When to Use
+- When you need current information not in your training data
+- Finding documentation, tutorials, or guides
+- Researching APIs, libraries, or tools
+- Getting up-to-date information on technical topics
+- When user asks for "latest", "recent", or "current" information
+
+# When NOT to Use
+- When information is likely in the codebase or project files
+- For information that doesn't change frequently (check docs first)
+- When you can use web_fetch with a known URL instead
+- For purely conversational queries
+
+# Parameters
+- \`query\`: Search query string
+
+# Examples
+- Find React documentation: web_search(query="React useEffect documentation")
+- Get latest Node.js version: web_search(query="Node.js latest LTS version 2024")
+
+# Best Practices
+- Be specific in your query for better results
+- Combine with web_fetch to get full content from relevant URLs
+- Use quotes for exact phrase matching
+- Consider adding context like year or version in query`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { query: string }): Promise<{ results: any[]; message: string }> {
@@ -433,7 +720,52 @@ export class WebSearchTool implements Tool {
 
 export class TodoWriteTool implements Tool {
   name = 'todo_write';
-  description = 'Create and manage structured task todo lists';
+  description = `Create and manage structured task todo lists. Use this tool VERY frequently to track your progress and give users visibility into what needs to be done.
+
+# When to Use
+- Complex, multi-step tasks (3+ steps)
+- User explicitly requests a todo list
+- User provides multiple tasks to accomplish
+- Immediately when starting work on a new feature
+- After completing a task (update status immediately)
+- Breaking down large features into smaller steps
+- Tracking independent subtasks that can be worked on
+
+# When NOT to Use
+- Single, straightforward task
+- Trivial operations in less than 3 steps
+- Purely conversational or informational responses
+- When you already have an up-to-date todo list
+
+# Task States
+- **pending** - Not started, waiting to be worked on
+- **in_progress** - Currently working on (limit ONE at a time)
+- **completed** - Finished successfully
+- **failed** - Could not complete due to errors
+
+# Task Descriptions
+Each task needs:
+- \`id\`: Unique identifier
+- \`task\`: Clear, actionable description in imperative form (e.g., "Run tests")
+- \`status\`: Current state
+- \`priority\`: high/medium/low
+
+# Examples
+\`\`\`json
+{
+  "todos": [
+    { "id": "1", "task": "Run the build and check for errors", "status": "in_progress", "priority": "high" },
+    { "id": "2", "task": "Fix any type errors found", "status": "pending", "priority": "high" },
+    { "id": "3", "task": "Write unit tests for new feature", "status": "pending", "priority": "medium" }
+  ]
+}
+\`\`\`
+
+# Best Practices
+- Mark tasks as completed IMMEDIATELY after finishing
+- Don't batch multiple completions - update as you go
+- Keep task descriptions clear and actionable
+- Use appropriate priority levels to indicate urgency`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   private todoList: Array<{ id: string; task: string; status: 'pending' | 'in_progress' | 'completed' | 'failed'; priority: 'high' | 'medium' | 'low' }> = [];
@@ -470,7 +802,25 @@ export class TodoWriteTool implements Tool {
 
 export class TodoReadTool implements Tool {
   name = 'todo_read';
-  description = 'Read current session todo list';
+  description = `Read the current session's todo list and get a summary of all tasks. Use this to check what tasks remain and their current status.
+
+# When to Use
+- Before starting work to understand what needs to be done
+- After completing a task to verify the todo list is updated
+- When user asks about progress or remaining tasks
+- To get an overview of task distribution (pending, in_progress, completed)
+
+# What It Returns
+- Full list of all todos with their IDs, tasks, statuses, and priorities
+- Summary counts: total, pending, in_progress, completed, failed
+
+# Examples
+- User asks: "What are we working on right now?" → Use todo_read to show current state
+- After a task completes → Check todo_read to confirm the list is accurate
+
+# Best Practices
+- Use todo_write to modify the list, not todo_read
+- Check todo_read after todo_write to verify updates`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   private todoWriteTool: TodoWriteTool;
@@ -521,7 +871,46 @@ let guiOperatorInstance: any = null;
 
 export class GUIOperateTool implements Tool {
   name = 'gui_operate';
-  description = 'Perform GUI operations on the browser including clicks, typing, navigation, etc. Use this for browser automation tasks.';
+  description = `Perform GUI operations on desktop applications including web browsers, PC, and Mac applications. Supports clicks, typing, keyboard shortcuts, navigation, and more.
+
+# When to Use
+- Browser automation (Chrome, Edge, Firefox, Safari)
+- Desktop application automation (PC, Mac, Linux)
+- Web scraping and form filling
+- GUI testing and interaction
+- Visual workflow automation
+
+# When NOT to Use
+- For non-GUI tasks (use other tools like Bash, Read, etc.)
+- When API access is available instead
+- For terminal/CLI only operations
+
+# Supported Platforms & Applications
+- **Web Browsers**: Chrome, Edge, Firefox, Safari
+- **PC (Windows)**: Any Windows desktop application
+- **Mac**: Any macOS application
+- **Linux**: Any Linux desktop application (X11, Wayland)
+
+# Actions Available
+- \`click\`: Click on an element/area
+- \`double_click\`: Double click
+- \`right_click\`: Right click
+- \`type\`: Type text into input fields
+- \`hotkey\`: Press keyboard shortcuts (max 3 keys)
+- \`scroll\`: Scroll in any direction
+- \`navigate\`: Navigate to URL (for browsers)
+- \`navigate_back\`: Go back in history
+- \`finished\`: Complete the automation task
+
+# Coordinate System
+- **raw**: Pixel coordinates (e.g., {"x": 640, "y": 480})
+- **normalized**: Relative coordinates 0-1 (e.g., {"x": 0.5, "y": 0.5})
+
+# Best Practices
+- Use navigate first to open browser/application
+- Use hotkey for keyboard shortcuts
+- Use finished when task is complete
+- Normalized coordinates adapt to screen size`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: {
@@ -553,7 +942,31 @@ export class GUIOperateTool implements Tool {
 
 export class GUIScreenshotTool implements Tool {
   name = 'gui_screenshot';
-  description = 'Take a screenshot of the current browser state for the GUI subagent.';
+  description = `Take a screenshot of the current GUI application state (browser or desktop app). Use this to capture visual feedback after GUI operations.
+
+# When to Use
+- After navigation to verify page loaded
+- After GUI interaction to confirm results
+- To capture visual state for analysis
+- To document current application view
+- For desktop application screenshots
+
+# When NOT to Use
+- When visual confirmation is not needed
+- For non-GUI automation tasks
+- In headless mode when screenshot is unnecessary
+
+# Supported Applications
+- Web browsers (Chrome, Edge, Firefox, Safari)
+- Desktop applications (Windows, Mac, Linux)
+
+# Output
+Returns base64-encoded image data or image URL
+
+# Best Practices
+- Use after important state changes
+- Helps verify automation steps worked correctly
+- Useful for both browser and desktop apps`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(): Promise<{ status: string; base64?: string; url?: string; errorMessage?: string }> {
@@ -576,7 +989,26 @@ export class GUIScreenshotTool implements Tool {
 
 export class GUICleanupTool implements Tool {
   name = 'gui_cleanup';
-  description = 'Cleanup and close the GUI subagent browser instance.';
+  description = `Cleanup and close the GUI automation instance (browser or desktop application). Always call this when GUI automation is complete to free resources.
+
+# When to Use
+- When GUI automation task is finished
+- Before switching to non-GUI tasks
+- At the end of browser/desktop automation workflow
+- When you need to restart the GUI application
+
+# When NOT to Use
+- In the middle of an ongoing automation
+- When GUI is still needed for the task
+
+# Supported Cleanup
+- Web browsers: Closes browser instance
+- Desktop apps: Closes application instance
+
+# Best Practices
+- Always call this when done with GUI tasks
+- Prevents resource leaks
+- Application can be re-initialized later if needed`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(): Promise<{ success: boolean; message: string }> {
@@ -604,7 +1036,43 @@ export class GUICleanupTool implements Tool {
 
 export class TaskTool implements Tool {
   name = 'task';
-  description = 'Launch specialized subagent(s) for complex multi-step tasks. Supports parallel execution of multiple agents.';
+  description = `Launch specialized AI subagents to handle complex, multi-step tasks. Subagents are expert agents designed for specific domains like planning, code exploration, frontend testing, and more.
+
+# When to Use
+- Complex tasks requiring specialized expertise (planning, analysis, testing)
+- Multi-step workflows that benefit from dedicated focus
+- When you need to delegate work to avoid context overload
+- Parallel execution of independent tasks across different domains
+- User explicitly requests a specific type of agent (e.g., "use the frontend tester")
+
+# Available SubAgents
+1. **plan-agent** - Task planning and breakdown, risk analysis, implementation roadmaps
+2. **explore-agent** - Codebase exploration, architecture analysis, finding specific code
+3. **frontend-tester** - Writing and running frontend tests, UI validation
+4. **code-reviewer** - Code review, security checks, bug detection
+5. **frontend-developer** - Frontend development (React, TypeScript, modern web)
+6. **backend-developer** - Backend development (Node.js, APIs, databases)
+7. **gui-subagent** - Browser automation, visual web interactions, desktop application automation
+
+# When NOT to Use
+- Simple, straightforward tasks you can handle directly
+- Tasks that don't require specialized expertise
+- Single-step operations (use other tools instead)
+
+# Examples
+- "Analyze the authentication module and create a security report" → explore-agent
+- "Create a detailed implementation plan for feature X" → plan-agent
+- "Write unit tests for this React component" → frontend-tester
+- "Review my changes for potential bugs" → code-reviewer
+- "Automatically fill out this form and navigate the website" → gui-subagent
+- "Test the login process on the desktop application" → gui-subagent
+- "send a message to the my mom on the desktop application wechat" → gui-subagent
+
+# Best Practices
+- Provide clear, specific prompts to subagents
+- Include relevant context (file paths, requirements, constraints)
+- Set appropriate executionMode if needed
+- For parallel execution, ensure tasks are truly independent`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
@@ -1125,7 +1593,32 @@ export class TaskTool implements Tool {
 
 export class ReadBashOutputTool implements Tool {
   name = 'ReadBashOutput';
-  description = 'Retrieve output from running or completed background tasks';
+  description = `Retrieve output from a background task that was started with Bash(run_in_bg=true).
+
+# When to Use
+- Checking the output of a long-running background process
+- Monitoring progress of builds, tests, or servers
+- Retrieving logs from background tasks
+- When you started a task with run_in_bg=true and need results
+
+# When NOT to Use
+- For synchronous commands (they return output directly)
+- When the background task hasn't been started yet
+- For tasks that have already completed (use Bash directly)
+
+# Parameters
+- \`task_id\`: The ID returned from the background Bash command
+- \`poll_interval\`: (Optional) Seconds to wait before checking, default: 10
+
+# Examples
+- Check build output: ReadBashOutput(task_id="task_1234567890")
+- Wait and check: ReadBashOutput(task_id="task_123", poll_interval=5)
+
+# Best Practices
+- Save the task_id from Bash response for later use
+- Use appropriate poll_interval based on expected task duration
+- Check status to see if task is still running or completed
+- Combine with todo_write to track background task progress`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
@@ -1163,7 +1656,32 @@ export class ReadBashOutputTool implements Tool {
 
 export class WebFetchTool implements Tool {
   name = 'web_fetch';
-  description = 'Fetch and process URL content, including local and private network addresses';
+  description = `Fetch and extract content from a specific URL. This tool retrieves the full content of a webpage.
+
+# When to Use
+- When you have a specific URL and need its content
+- Extracting documentation from web pages
+- Fetching API documentation or guides
+- Getting content from known URLs (not for searching)
+
+# When NOT to Use
+- When you need to search but don't have a specific URL (use web_search first)
+- For pages requiring authentication or login
+- For very large files or pages (may timeout)
+- When the URL format is unknown (use web_search first)
+
+# Parameters
+- \`prompt\`: A prompt containing the URL to fetch (e.g., "Summarize https://example.com/docs")
+
+# Examples
+- Fetch documentation: web_fetch(prompt="Extract key points from https://react.dev/docs")
+- Get API spec: web_fetch(prompt="Fetch the OpenAPI spec from https://api.example.com/openapi.json")
+
+# Best Practices
+- Ensure the URL is accessible and doesn't require authentication
+- Use specific prompts to extract relevant information
+- Check if the page is accessible if you get errors
+- Large pages may be truncated due to size limits`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { prompt: string }): Promise<{ content: string; url: string; status: number }> {
@@ -1203,7 +1721,37 @@ export class WebFetchTool implements Tool {
 
 export class AskUserQuestionTool implements Tool {
   name = 'ask_user_question';
-  description = 'Ask user questions during execution';
+  description = `Ask the user questions during execution to gather input, preferences, or clarifications.
+
+# When to Use
+- When you need user input or preferences to proceed
+- When a task has multiple options and user should choose
+- When clarification is needed for ambiguous requests
+- When user explicitly asks to be prompted
+
+# When NOT to Use
+- When you can make reasonable assumptions
+- For simple confirmations (just proceed with reasonable default)
+- When the information is already available in context
+- For information you should know or can infer
+
+# Parameters
+- \`questions\`: Array of questions with:
+  - \`question\`: The question text
+  - \`header\`: (Optional) Short label for the question
+  - \`options\`: (Optional) Multiple choice options
+  - \`multiSelect\`: (Optional) Allow multiple selections
+
+# Examples
+- Simple input: Ask user their preferred name
+- Multiple choice: Ask which framework to use (React, Vue, Angular)
+- Multi-select: Ask which features to include (with checkboxes)
+
+# Best Practices
+- Limit to 1-4 questions at a time
+- Provide options when possible for faster response
+- Use multiSelect=true when multiple answers are valid
+- Be clear and concise in question wording`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
@@ -1258,7 +1806,33 @@ export class AskUserQuestionTool implements Tool {
 
 export class SaveMemoryTool implements Tool {
   name = 'save_memory';
-  description = 'Save specific information to long-term memory';
+  description = `Save specific information to long-term memory for future sessions. Useful for remembering user preferences, project conventions, or important facts.
+
+# When to Use
+- User explicitly asks to "remember" something
+- User provides preferences or configuration details
+- Important project conventions or patterns to remember
+- Information that should persist across sessions
+
+# When NOT to Use
+- For temporary information only needed in current session
+- For information already in project files or configuration
+- For obvious or trivial facts
+- When user doesn't explicitly want information saved
+
+# Parameters
+- \`fact\`: The specific fact or information to remember
+
+# Examples
+- Remember user preference: save_memory(fact="User prefers TypeScript over JavaScript")
+- Remember project convention: save_memory(fact="Project uses kebab-case for component files")
+- Remember important context: save_memory(fact="API endpoint is https://api.example.com/v2")
+
+# Best Practices
+- Save only when user explicitly requests or provides clear preference
+- Keep facts concise and specific
+- Remember project-specific conventions for consistency
+- This persists across sessions (global memory)`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { fact: string }): Promise<{ success: boolean; message: string }> {
@@ -1282,7 +1856,32 @@ export class SaveMemoryTool implements Tool {
 
 export class ExitPlanModeTool implements Tool {
   name = 'exit_plan_mode';
-  description = 'Complete plan presentation in plan mode and prepare for coding';
+  description = `Complete plan presentation in plan mode and transition to execution. This tool is used when you have finished planning and are ready to implement.
+
+# When to Use
+- When you have completed creating a plan or design document
+- When the plan is ready for review and execution
+- After presenting the full implementation plan to the user
+- When ready to transition from planning to coding
+
+# When NOT to Use
+- When still in the middle of planning (continue planning first)
+- When the plan needs revision based on feedback
+- When user hasn't reviewed the plan yet
+- In non-plan execution modes
+
+# Parameters
+- \`plan\`: The complete plan text to be saved and executed
+
+# Examples
+- Exit after creating implementation plan
+- Present final design and exit to implementation
+
+# Best Practices
+- Ensure the plan is complete and comprehensive
+- Include all necessary steps and considerations
+- The plan will be saved for reference during execution
+- Use this only when truly ready to start coding`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { plan: string }): Promise<{ success: boolean; message: string; plan: string }> {
@@ -1302,7 +1901,29 @@ export class ExitPlanModeTool implements Tool {
 
 export class XmlEscapeTool implements Tool {
   name = 'xml_escape';
-  description = 'Automatically escape special characters in XML/HTML files';
+  description = `Automatically escape special characters in XML/HTML files to make them valid.
+
+# When to Use
+- When content contains special XML characters (<, >, &, ", ')
+- When generating XML/HTML from raw content
+- When fixing encoding issues in markup files
+
+# When NOT to Use
+- For files that should contain raw XML/HTML
+- For JavaScript, CSS, or other non-XML files
+- When escaping should be done manually
+
+# Parameters
+- \`file_path\`: Path to the file to escape
+- \`escape_all\`: (Optional) Also escape additional entities (©, ®, €)
+
+# Examples
+- Escape XML content in HTML file
+- Fix special characters in generated markup
+
+# Best Practices
+- Backup files before escaping if unsure
+- escape_all=true adds common HTML entities`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: {
@@ -1370,7 +1991,33 @@ export class XmlEscapeTool implements Tool {
 
 export class ImageReadTool implements Tool {
   name = 'image_read';
-  description = 'Read image files and generate detailed analysis using VL model';
+  description = `Read image files and generate detailed analysis using a vision-language model.
+
+# When to Use
+- Analyzing UI designs or mockups
+- Examining screenshots or diagrams
+- Extracting information from images
+- Validating visual content or assets
+
+# When NOT to Use
+- For text-based file analysis (use Read instead)
+- When the image is not relevant to the task
+- For very large images (may have size limits)
+
+# Parameters
+- \`image_input\`: Path to image or base64 data
+- \`prompt\`: Instructions for what to analyze
+- \`input_type\`: (Optional) 'file_path' or 'base64'
+- \`task_brief\`: (Optional) Brief task description
+
+# Examples
+- Analyze UI mockup: image_read(image_input="design.png", prompt="Describe the UI components")
+- Validate screenshot: image_read(image_input="screenshot.jpg", prompt="Check if login form is visible")
+
+# Best Practices
+- Provide clear prompts for what to look for
+- Use task_brief for context
+- Supports PNG, JPG, GIF, WEBP, SVG, BMP`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
@@ -1447,7 +2094,28 @@ export class ImageReadTool implements Tool {
 
 export class SkillTool implements Tool {
   name = 'Skill';
-  description = 'Execute skills in main conversation';
+  description = `Execute pre-defined workflows (skills) from the xAgent marketplace. Skills are reusable workflows that automate common tasks.
+
+# When to Use
+- When a skill exists for the requested task
+- When you need to run a multi-step workflow
+- When the task matches a marketplace workflow
+
+# When NOT to Use
+- When a simple tool can accomplish the task
+- When creating new functionality from scratch
+- When skill doesn't exist for the specific task
+
+# Parameters
+- \`skill\`: The skill/workflow name to execute
+
+# Examples
+- Execute a PDF processing skill
+- Run a data analysis workflow
+
+# Best Practices
+- Skills are pre-configured workflows from the marketplace
+- Check if a relevant skill exists first`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { skill: string }): Promise<{ success: boolean; message: string; result?: any }> {

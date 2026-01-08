@@ -1,28 +1,65 @@
-# 🤖 xAgent CLI
+# 🤖 xAgent CLI - Your Autonomous Life AI Assistant
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js Version](https://img.shields.io/node/v/xagent-cli-reproduction.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
 
-![xAgent CLI Screenshot](./assets/xagent-cli.jpg)
+![xAgent CLI Screenshot](./assets/xagent-cli.svg)
 
-**English** | [中文](README_CN.md) | [日本語](README_JA.md) | [한국어](README_KO.md) | [Français](README_FR.md) | [Deutsch](README_DE.md) | [Español](README_ES.md) | [Русский](README_RU.md)
+**[English](README.md)** | [中文](README_CN.md) 
 
-xAgent CLI is a powerful AI assistant that runs directly in your terminal. It seamlessly analyzes code repositories, executes coding tasks, understands context-specific needs, and boosts productivity by automating everything from simple file operations to complex workflows.
+---
 
-[More Tutorials](https://platform.xagent.cn/)
+## 🚀 X Future Agent - Built for Your Digital Life
+
+**xAgent CLI** is more than an AI coding assistant—it's an **intelligent agent for personal PCs and autonomous living**. It understands your daily needs, from code development to life management, enhancing every aspect of your digital life.
+
+🎯 **Vision**: To become the most helpful AI companion on everyone's PC, making life smarter and easier.
+
+---
 
 ## ✨ Key Features
 
-1. **Free AI Models**: Access powerful and free AI models through xAgent open platform, including Kimi K2, Qwen3 Coder, DeepSeek v3, and more
-2. **Flexible Integration**: Keep your favorite development tools while integrating into existing systems for automation
-3. **Natural Language Interaction**: Say goodbye to complex commands, drive AI with everyday conversation, from code development to life assistance
-4. **Open Platform**: Install SubAgents and MCP with one click from xAgent Open Market, quickly expand intelligent agents and build your own AI team
+### 🤖 X Future Agent - Autonomous Life Intelligence
 
-## Feature Comparison
+xAgent represents the future evolution of AI assistants:
+
+- **Life Automation**: Automatically handle daily tasks like file organization, data backup, and schedule management
+- **Smart Device Management**: Deep integration with your personal PC for truly intelligent interactions
+- **Context Awareness**: Remembers your preferences and habits for personalized service
+- **Proactive Assistance**: Offers help at the right moment, not just passive responses
+
+### 🖥️ Smart Use of Your Personal PC
+
+```text
+> Organize files on my desktop, categorize them by type into different folders
+> Set up a script to automatically backup important files to cloud storage daily
+> Monitor my computer resources and alert me when CPU usage is too high
+> Batch process these images, resize them, and rename them by date
+```
+
+### 💻 Professional Development Capabilities
+
+- **Smart Coding Assistant**: Code writing, debugging, and optimization
+- **Multi-Model Support**: Free access to powerful models like Kimi K2, Qwen3 Coder, DeepSeek v3
+- **SubAgent Team**: Specialized AI agents for different scenarios
+- **Workflow Automation**: Install workflows from the market for complex tasks
+
+### 🔧 Flexible Integration
+
+- **MCP Protocol Support**: Seamless integration with various tools and services
+- **Open Market**: One-click installation of SubAgents, MCP tools, and workflows
+- **Natural Language Interaction**: Say goodbye to complex commands, drive AI with everyday conversation
+- **Cross-Platform**: Works on Windows, macOS, and Linux
+
+---
+
+## 📊 Feature Comparison
 
 | Feature | xAgent CLI | Claude Code | Gemini CLI |
 |---------|-----------|-------------|------------|
+| **Life Automation** | ✅ | ❌ | ❌ |
+| **Personal PC Smart Management** | ✅ | ❌ | ❌ |
 | Todo Planning | ✅ | ✅ | ❌ |
 | SubAgent | ✅ | ✅ | ❌ |
 | Custom Commands | ✅ | ✅ | ✅ |
@@ -32,248 +69,208 @@ xAgent CLI is a powerful AI assistant that runs directly in your terminal. It se
 | JetBrains Plugin | ✅ | ✅ | ❌ |
 | Conversation Recovery | ✅ | ✅ | ❌ |
 | Built-in Open Market | ✅ | ❌ | ❌ |
-| Memory Auto-compression | ✅ | ✅ | ✅ |
+| Context Auto-compression | ✅ | ✅ | ✅ |
 | Multimodal Capability | ✅ | ⚠️ (Limited in China) | ⚠️ (Limited in China) |
-| Search | ✅ | ❌ | ⚠️ (Requires VPN) |
-| Free | ✅ | ❌ | ⚠️ (Limited Usage) |
+| Web Search | ✅ | ❌ | ⚠️ (Requires VPN) |
+| **Free to Use** | ✅ | ❌ | ⚠️ (Limited Usage) |
 | Hook | ✅ | ✅ | ❌ |
-| Output Style | ✅ | ✅ | ❌ |
-| Thinking | ✅ | ✅ | ❌ |
-| Workflow | ✅ | ❌ | ❌ |
-| SDK | ✅ | ✅ | ❌ |
-| ACP | ✅ | ✅ | ✅ |
+| Thinking Mode | ✅ | ✅ | ❌ |
+| Workflow System | ✅ | ❌ | ❌ |
 
-## ⭐ Key Features
+---
 
-* Support 4 running modes: yolo (model has maximum permissions, can perform any operation), accepting edits (model only has file modification permissions), plan mode (plan first, then execute), default (model has no permissions)
-* Upgraded subAgent functionality: Transform CLI from general assistant to expert team, providing more professional and accurate advice. Use /agent to see more pre-configured agents
-* Upgraded task tool: Effectively compress context length, allowing CLI to complete your tasks more thoroughly. Auto-compression when context reaches 70%
-* Integrated with xAgent Open Market: Quickly install useful MCP tools, Subagents, custom instructions and workflows
-* Free multimodal model usage: You can also paste images in CLI now (Ctrl+V to paste images)
-* Support for conversation history saving and rollback (xagent --resume and /chat commands)
-* Support for more useful terminal commands (xagent -h to see more commands)
-* VSCode plugin support
-* Auto-upgrade: xAgent CLI automatically detects if current version is latest
+## 🎯 Typical Use Cases
+
+### 🏠 Life Assistant Scenarios
+
+```text
+> Organize my desktop, move images to Pictures and documents to Documents
+> Set up weekly automatic backup of my work files to cloud storage
+> Remind me of an important meeting at 3 PM today
+> Analyze my spending records and generate a monthly expense report
+> Find the 10 largest files taking up disk space on my computer
+```
+
+### 💼 Productivity Scenarios
+
+```text
+> Batch rename these files with date + project name format
+> Download all PDF documents from this webpage and organize them into folders
+> Analyze this Excel data and generate a visualization chart
+> Translate this document while preserving the original format
+```
+
+### 👨‍💻 Development Scenarios
+
+```text
+> Analyze the architecture and module dependencies of this project
+> Find the root cause of this bug and fix it
+> Create a RESTful API with user authentication and database connection
+> Code review this PR and check for potential issues
+```
+
+### 🔄 Automation Workflows
+
+```text
+> Create a script that downloads stock prices daily and sends email notifications
+> Set up automatic dependency updates for my projects every morning
+> Monitor website status and send alerts when it's down
+```
+
+---
 
 ## 📥 Installation
 
-### System requirements
+### System Requirements
 
-- Operating Systems: macOS 10.15+, Ubuntu 20.04+/Debian 10+, or Windows 10+ (with WSL 1, WSL 2, or Git for Windows)
-- Hardware: 4GB+ RAM
-- Software: Node.js 22+
-- Network: Internet connection required for authentication and AI processing
-- Shell: Works best in Bash, Zsh or Fish
+- **Operating Systems**: macOS 10.15+, Ubuntu 20.04+/Debian 10+, Windows 10+
+- **Hardware**: 4GB+ RAM
+- **Software**: Node.js 22+
+- **Network**: Internet connection required for authentication and AI processing
 
 ### Installation Commands
 
-**MAC/Linux/Ubuntu Users**:
-
-* One-click installation command (Recommended)
+**Mac/Linux/Ubuntu**:
 ```shell
 bash -c "$(curl -fsSL https://cloud.xagent.cn/xagent-cli/install.sh)"
 ```
 
-* Using Node.js installation
+Or using Node.js:
 ```shell
 npm i -g @xagent-ai/xagent-cli
 ```
 
-This command automatically installs all necessary dependencies for your terminal.
-
 **Windows Users**:
+1. Download and install [Node.js 22+](https://nodejs.org/en/download)
+2. Restart your terminal (CMD or PowerShell)
+3. Run `npm install -g @xagent-ai/xagent-cli`
+4. Run `xagent` to start
 
-1. Go to https://nodejs.org/en/download to download the latest Node.js installer
-2. Run the installer to install Node.js
-3. Restart your terminal: CMD or PowerShell
-4. Run `npm install -g @xagent-ai/xagent-cli` to install xAgent CLI
-5. Run `xagent` to start xAgent CLI
+**China Users** (using mirror):
+```shell
+# Download nvm
+curl -o nvm-setup.exe https://cloud.xagent.cn/xagent-cli/nvm-setup.exe
+# Install and configure Node.js 22
+nvm node_mirror https://npmmirror.com/mirrors/node/
+nvm npm_mirror https://npmmirror.com/mirrors/npm/
+nvm install 22 && nvm use 22
+npm install -g @xagent-ai/xagent-cli
+```
 
-If you are in China Mainland, you can use the following command to install xAgent CLI:
-1. Go to https://cloud.xagent.cn/xagent-cli/nvm-setup.exe to download the latest nvm installer
-2. Run the installer to install nvm
-3. **Restart your terminal: CMD or PowerShell**
-4. Run `nvm node_mirror https://npmmirror.com/mirrors/node/` and `nvm npm_mirror https://npmmirror.com/mirrors/npm/`
-5. Run `nvm install 22` to install Node.js 22
-6. Run `nvm use 22` to use Node.js 22
-7. Run `npm install -g @xagent-ai/xagent-cli` to install xAgent CLI
-8. Run `xagent` to start xAgent CLI
-
-## 🗑️ Uninstall
+### Uninstall
 
 ```shell
 npm uninstall -g @xagent-ai/xagent-cli
 ```
 
+---
+
 ## 🔑 Authentication
 
 xAgent offers three authentication options:
 
-1. **Recommended**: Use xAgent's native authentication
-2. **Alternative**: Use xAgent API Key
-3. **Third-party Models**: Connect via OpenAI-compatible APIs (智谱GLM-4、DeepSeek、通义千问、文心一言、Kimi等)
-
-![xAgent CLI Login](./assets/login.jpg)
-
 ### Option 1: xAgent Native Authentication (Recommended)
 
-Choose option 1 to login directly, which will open xAgent account authentication in a web page. After completing authentication, you can use it for free.
-
-![xAgent CLI Web Login](./assets/web-login.jpg)
+Select option 1 to log in directly, which opens the authentication page in your browser. After completion, you can use it for free.
 
 ### Option 2: xAgent API Key
 
-If you are in an environment like a server where you cannot open a web page, please use option 2 to login.
+For server environments where you cannot open a web browser.
 
-To get your API key:
 1. Register for an xAgent account
-2. Go to your profile settings or click [this direct link](https://xagent.cn/?open=setting)
-3. Click "Reset" in the pop-up dialog to generate a new API key
+2. Visit [Account Settings](https://xagent.cn/?open=setting)
+3. Click "Reset" to generate a new API Key
+4. Paste the key in the terminal to complete setup
 
-![xAgent Profile Settings](./assets/profile-settings.jpg)
+### Option 3: Third-Party Model APIs
 
-After generating your key, paste it into the terminal prompt to complete setup.
-
-### Option 3: Third-party Model APIs
-
-xAgent CLI supports connecting to various third-party LLM providers through OpenAI-compatible APIs. Supported providers include:
-
-- **智谱AI (GLM-4)**: GLM-4, GLM-4 Flash, GLM-4 Plus
-- **DeepSeek**: deepseek-chat, deepseek-coder
-- **阿里通义千问**: qwen-max, qwen-plus, qwen-turbo
-- **百度文心一言**: ernie-bot-4, ernie-bot-turbo
-- **月之暗面 (Kimi)**: moonshot-v1-8k, moonshot-v1-32k, moonshot-v1-128k
-
-#### Configuration Steps:
-
-1. Run `xagent auth` command
-2. Select "使用第三方模型API (智谱GLM-4、DeepSeek等)" option
-3. Choose your preferred provider from the list
-4. Enter your API Key (will be masked for security)
-5. Confirm or modify the model name
-6. Wait for validation to complete
-
-#### Example Configuration for 智谱GLM-4:
+Connect to GLM-4, DeepSeek, Qwen, Ernie Bot, Kimi, and more:
 
 ```bash
 xagent auth
-# 选择: 使用第三方模型API (智谱GLM-4、DeepSeek等)
-# 选择: 智谱AI (GLM-4) - 智谱AI GLM-4系列模型
-# 输入API Key: (your GLM API key)
-# 输入模型名称: glm-4 (直接回车使用默认值)
+# Select third-party model API
+# Select provider and enter API Key
 ```
 
-#### Getting API Keys:
-
-- **智谱AI**: https://open.bigmodel.cn/usercenter/apikeys
+Supported providers:
+- **Zhipu AI (GLM-4)**: https://open.bigmodel.cn/usercenter/apikeys
 - **DeepSeek**: https://platform.deepseek.com/api_keys
-- **阿里云**: https://dashscope.console.aliyun.com/apiKey
-- **百度智能云**: https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application
-- **月之暗面**: https://platform.moonshot.cn/console/api-keys
+- **Alibaba Cloud**: https://dashscope.console.aliyun.com/apiKey
+- **Baidu**: https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application
+- **Moonshot (Kimi)**: https://platform.moonshot.cn/console/api-keys
 
-#### Custom Configuration:
-
-If your provider is not in the preset list, select "自定义" and manually enter:
-- API Base URL
-- Model Name
-- API Key
-
-For detailed configuration examples, see [Third-party Model Configuration Guide](./docs/third-party-models.md).
+---
 
 ## 🚀 Getting Started
 
-To launch xAgent CLI, navigate to your workspace in terminal and type:
+### Launch xAgent
 
 ```shell
 xagent
 ```
 
-### Starting New Projects
-
-For new projects, simply describe what you want to create:
+### New Project Development
 
 ```shell
 cd new-project/
 xagent
-> Create a web-based Minecraft game using HTML
+> Create a personal blog website using React
 ```
 
-### Working with Existing Projects
-
-For existing codebases, begin with the `/init` command to help xAgent understand your project:
+### Existing Projects
 
 ```shell
-cd project1/
+cd existing-project/
 xagent
-> /init
-> Analyze requirements according to the PRD document in requirement.md file, and output a technical document, then implement the solution.
+> /init  # Scan project structure and create documentation
+> Analyze requirements according to the PRD and output a technical solution
 ```
 
-The `/init` command scans your codebase, learns its structure, and creates an XAGENT.md file with comprehensive documentation.
+### Using SubAgents
 
-For a complete list of slash commands and usage instructions, see [here](./i18/en/commands.md).
-
-## 💡 Common Use Cases
-
-xAgent CLI extends beyond coding to handle a wide range of tasks:
-
-### 📊 Information & Planning
-
-```text
-> Help me find the best-rated restaurants in Los Angeles and create a 3-day food tour itinerary.
+```shell
+xagent
+> /agent   # View available agents
+> /agent plan-agent  # Switch to plan expert agent
 ```
 
-```text
-> Search for the latest iPhone price comparisons and find the most cost-effective purchase option.
+---
+
+## 🛠️ Execution Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **YOLO** | Maximum permissions, can perform any operation | Fully trust AI |
+| **ACCEPT_EDITS** | File modification only | Safe coding scenarios |
+| **PLAN** | Plan first, then execute | Complex task planning |
+| **DEFAULT** | No permissions by default | Requires explicit approval |
+| **SMART** | Intelligent mode | Recommended for daily use |
+
+---
+
+## 📦 Open Market
+
+Install powerful extensions with one click:
+
+```bash
+# View SubAgents in the market
+xagent agent --list
+
+# Install a SubAgent
+xagent agent --add <name>
+
+# View MCP servers
+xagent mcp --list
+
+# Install a workflow
+xagent workflow --add <workflow-id>
 ```
 
-### 📁 File Management
+---
 
-```text
-> Organize files on my desktop by file type into separate folders.
-```
+## 🔧 Custom Configuration
 
-```text
-> Batch download all images from this webpage and rename them by date.
-```
-
-### 📈 Data Analysis
-
-```text
-> Analyze sales data in this Excel spreadsheet and generate a simple chart.
-```
-
-```text
-> Extract customer information from these CSV files and merge them into a unified table.
-```
-
-### 👨‍💻 Development Support
-
-```text
-> Analyze main architectural components and module dependencies of this system.
-```
-
-```text
-> I'm getting a null pointer exception after my request, please help me find the cause of the problem.
-```
-
-### ⚙️ Workflow Automation
-
-```text
-> Create a script to periodically backup my important files to cloud storage.
-```
-
-```text
-> Write a program that downloads stock prices daily and sends me email notifications.
-```
-
-*Note: Advanced automation tasks can leverage MCP servers to integrate your local system tools with enterprise collaboration suites.*
-
-## 🔧 Switch to customized model
-
-xAgent CLI can connect to any OpenAI-compatible API. Edit the settings file in `~/.xagent/settings.json` to change the model you use.
-
-Here is a settings demo file:
+Edit `~/.xagent/settings.json` to customize:
 
 ```json
 {
@@ -282,192 +279,103 @@ Here is a settings demo file:
     "apiKey": "your xagent key",
     "baseUrl": "https://apis.xagent.cn/v1",
     "modelName": "Qwen3-Coder",
-    "searchApiKey": "your xagent key"
+    "executionMode": "smart",
+    "language": "en"
 }
 ```
 
-## 🔄 GitHub Actions
+---
 
-You can also use xAgent CLI in your GitHub Actions workflows with the community-maintained action: [xagent-cli-action](https://github.com/xagent-ai/xagent-cli-action)
+## 🏗️ Technology Stack
 
-## 👥 Community Communication
+- **Runtime**: Node.js ≥22
+- **Language**: TypeScript (strict mode)
+- **UI Framework**: React via Ink (terminal rendering)
+- **Build Tools**: esbuild + tsc
+- **Package Manager**: npm
+- **Testing Framework**: Vitest
+- **Code Quality**: ESLint + Prettier
 
-If you encounter problems in use, you can directly raise Issues on the GitHub page.
+### Core Components
 
-You can also scan the following WeChat group to join the community group for communication and discussion.
+```
+xagent-cli/
+├── src/
+│   ├── tools/              # Tool implementations (file ops, search, exec)
+│   ├── agents/             # Agent management (specialized AI team)
+│   ├── config/             # Configuration management
+│   ├── auth/               # Authentication service
+│   ├── session/            # Interactive session
+│   ├── memory/             # Memory management
+│   ├── workflow/           # Workflow system
+│   ├── checkpoint/         # Checkpoint system
+│   ├── slash-commands/     # Slash commands
+│   ├── gui-subagent/       # GUI automation agent
+│   └── tests/              # Unit tests
+├── dist/                   # Compiled output
+├── docs/                   # Documentation
+├── assets/                 # Static assets
+└── package.json
+```
 
-### WeChat Group
+---
 
-![WeChat group](./assets/xagent-wechat.jpg)
+## 🧪 Testing & Quality
 
-## 📄 License
+```bash
+# Unit tests
+npm test
 
-xAgent CLI is open-source under [MIT License](./LICENSE).
+# ESLint check
+npm run lint
+
+# ESLint auto-fix
+npm run lint:fix
+
+# Code formatting
+npm run format
+
+# Type checking
+npm run typecheck
+```
+
+---
+
+## 📚 Documentation
+
+- **[Architecture](docs/architecture/overview.md)**: High-level design and component interactions
+- **[Tool System](docs/architecture/tool-system-design.md)**: Tool implementation and scheduling
+- **[MCP Integration](docs/architecture/mcp-integration-guide.md)**: Model Context Protocol server integration
+- **[CLI Commands](docs/cli/commands.md)**: Command reference
+- **[Contributing Guide](CONTRIBUTING.md)**: Detailed contribution instructions
+- **[Third-Party Models](docs/third-party-models.md)**: External model API configuration
+
+---
 
 ## 🤝 Contributing
 
 We welcome contributions! Please follow these steps:
 
 1. Fork the repository and create a feature branch
-2. Ensure your changes pass existing tests and linting rules
+2. Ensure changes pass existing tests and linting
 3. Add tests for new functionality
 4. Update documentation if needed
-5. Submit a pull request with a clear description of changes
+5. Submit a PR with a clear description
 
-### Code Style
+### Code Standards
 
-- Use TypeScript with strict mode
-- Follow existing ESLint and Prettier configuration
-- Write meaningful commit messages (conventional commits are appreciated but not required)
-- Keep bundle size in mind when adding dependencies
+- Use TypeScript strict mode
+- Follow ESLint and Prettier configurations
+- Write meaningful commit messages
+- Consider bundle size when adding dependencies
 
-## 📚 Documentation
+---
 
-- **[Architecture](./docs/architecture/overview.md)**: High-level design and component interactions
-- **[Tool System](./docs/architecture/tool-system-design.md)**: How tools are implemented and scheduled
-- **[MCP Integration](./docs/architecture/mcp-integration-guide.md)**: Integrating Model Context Protocol servers
-- **[CLI Commands](./docs/cli/commands.md)**: User-facing command reference
-- **[Contributing Guide](./CONTRIBUTING.md)**: Detailed contribution instructions
+## 📄 License
 
-## 🏛️ Technology Stack
+MIT License - See [LICENSE](./LICENSE)
 
-- **Runtime**: Node.js ≥22
-- **Language**: TypeScript with strict mode
-- **UI Framework**: React via [Ink](https://github.com/vadimdemedes/ink) for terminal rendering
-- **Build Tool**: esbuild for bundling, tsc for type checking
-- **Package Manager**: npm (workspaces)
-- **Testing**: Vitest for unit tests, custom integration test runner
-- **Linting/Formatting**: ESLint, Prettier
-
-## 📊 Project Structure
-
-```
-xagent-cli/
-├── src/                      # Source code
-│   ├── tools/             # Tool implementations
-│   ├── agents/            # Agent management
-│   ├── config/            # Configuration handling
-│   ├── auth/              # Authentication service
-│   ├── session/           # Interactive session
-│   ├── memory/            # Memory management
-│   ├── workflow/          # Workflow system
-│   ├── checkpoint/         # Checkpoint system
-│   ├── slash-commands/    # Slash command handlers
-│   └── tests/             # Unit tests
-├── dist/                     # Compiled JavaScript (generated)
-├── docs/                     # Documentation
-├── assets/                   # Images and static assets
-└── package.json              # Project configuration
-```
-
-## 🔌 Core Components
-
-### Tool System
-- **File Operations**: Read, Write, Delete, Create Directory, Search Codebase
-- **Search**: Grep (text search), Web Search, Web Fetch
-- **Execution**: Bash (shell commands), with background task support
-- **Management**: Todo List, Memory, Checkpoint
-
-### Agent System
-- **General Purpose**: All-around assistant for general tasks
-- **Plan Agent**: Specialized in planning and breaking down complex tasks
-- **Explore Agent**: Code exploration and analysis
-- **Frontend Tester**: UI/UX testing and validation
-
-### Integration
-- **MCP Protocol**: Native support for Model Context Protocol servers
-- **VS Code**: Plugin for IDE integration
-- **JetBrains**: Plugin for JetBrains IDEs
-
-## 🧪 Testing
-
-### Unit Tests
-
-```bash
-npm test
-```
-
-### Integration Tests
-
-Integration tests verify tool interactions and sandbox behavior. They can run with different sandbox backends:
-
-```bash
-# No sandbox
-npm run test:integration:sandbox:none
-
-# With Docker sandbox
-npm run test:integration:sandbox:docker
-
-# With Podman sandbox
-npm run test:integration:sandbox:podman
-```
-
-### End-to-End Tests
-
-```bash
-npm run test:e2e
-```
-
-### Linting and Formatting
-
-```bash
-npm run lint          # ESLint check
-npm run lint:fix      # ESLint auto-fix
-npm run format        # Prettier formatting
-npm run typecheck     # TypeScript type checking
-```
-
-## 🚀 Quick Start Guide
-
-1. **Install xAgent CLI**
-   ```bash
-   npm install -g @xagent-ai/xagent-cli
-   ```
-
-2. **Authenticate**
-   ```bash
-   xagent auth
-   ```
-
-3. **Start Session**
-   ```bash
-   cd your-project
-   xagent
-   ```
-
-4. **Initialize Project**
-   ```bash
-   xagent
-   > /init
-   ```
-
-5. **Start Coding**
-   ```bash
-   xagent
-   > Create a REST API with Express.js
-   ```
-
-## 💡 Tips and Best Practices
-
-- Use `/init` to help xAgent understand your project structure
-- Use `/agent` to switch between specialized agents for different tasks
-- Enable plan mode for complex multi-step tasks
-- Use conversation history to resume previous sessions
-- Leverage MCP servers to integrate external tools
-- Use checkpoint to save important states before major changes
-
-## 📞 Roadmap
-
-- [ ] Enhanced multimodal support
-- [ ] More built-in agents
-- [ ] Improved workflow system
-- [ ] Better error handling and recovery
-- [ ] Performance optimizations
-- [ ] More language support
-
-## 📞 Changelog
-
-See [CHANGELOG.md](./CHANGELOG.md) for a list of changes in each version.
+---
 
 ## 🙏 Acknowledgments
 
@@ -476,13 +384,23 @@ See [CHANGELOG.md](./CHANGELOG.md) for a list of changes in each version.
 - Uses [Vitest](https://vitest.dev/) for testing
 - Icons from [Heroicons](https://heroicons.com/)
 
+---
+
 ## 📞 Support
 
 - **Documentation**: https://platform.xagent.cn/docs/
 - **GitHub Issues**: https://github.com/xagent-ai/xagent-cli/issues
 - **Discussions**: https://github.com/xagent-ai/xagent-cli/discussions
-- **WeChat Group**: Scan the QR code above to join
+- **WeChat Group**: Scan the QR code below to join
+
+![WeChat group](./assets/xagent-wechat.PNG)
 
 ---
 
+<div align="center">
+
+**Empowering Your Digital Life with AI**
+
 Made with ❤️ by the xAgent Team
+
+</div>

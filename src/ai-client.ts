@@ -71,9 +71,12 @@ export class AIClient {
       model,
       messages,
       temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 4096,
       stream: options.stream ?? false
     };
+
+    if (options.maxTokens && options.maxTokens > 0) {
+      requestBody.max_tokens = options.maxTokens;
+    }
 
     if (options.tools && options.tools.length > 0) {
       requestBody.tools = options.tools;
@@ -110,9 +113,12 @@ export class AIClient {
       model,
       messages,
       temperature: options.temperature ?? 0.7,
-      max_tokens: options.maxTokens ?? 4096,
       stream: true
     };
+
+    if (options.maxTokens && options.maxTokens > 0) {
+      requestBody.max_tokens = options.maxTokens;
+    }
 
     if (options.tools && options.tools.length > 0) {
       requestBody.tools = options.tools;

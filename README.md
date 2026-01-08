@@ -4,7 +4,7 @@
 [![Node.js Version](https://img.shields.io/node/v/xagent-cli-reproduction.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
 
-![xAgent CLI Screenshot](./assets/xagent-cli.svg)
+![xAgent CLI Screenshot](./assets/xagent-cli.png)
 
 **[English](README.md)** | [中文](README_CN.md) 
 
@@ -393,7 +393,7 @@ MIT License - See [LICENSE](./LICENSE)
 - **Discussions**: https://github.com/xagent-ai/xagent-cli/discussions
 - **WeChat Group**: Scan the QR code below to join
 
-![WeChat group](./assets/xagent-wechat.PNG)
+![WeChat group](./assets/xagent-wechat.png)
 
 ---
 

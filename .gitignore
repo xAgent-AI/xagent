@@ -72,3 +72,4 @@ docs/generated/
 *.seed
 *.pid.lock
 IFLOW*
+XAGENT*

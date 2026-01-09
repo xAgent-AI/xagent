@@ -2144,6 +2144,85 @@ export class SkillTool implements Tool {
   }
 }
 
+export class ListSkillsTool implements Tool {
+  name = 'ListSkills';
+  description = `List all available skills from the xAgent skills library. Use this tool when you need to:
+- See what skills are available
+- Find skills that match a user's request
+- Get an overview of capabilities
+
+This returns a list of all skills with their names, descriptions, and categories.`;
+
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+
+  async execute(): Promise<{ success: boolean; skills: any[] }> {
+    try {
+      const { getWorkflowManager } = await import('./workflow.js');
+      const workflowManager = getWorkflowManager(process.cwd());
+      const skills = await workflowManager.listSkills();
+
+      return {
+        success: true,
+        skills: skills.map(s => ({
+          id: s.id,
+          name: s.name,
+          description: s.description,
+          category: s.category
+        }))
+      };
+    } catch (error: any) {
+      throw new Error(`Failed to list skills: ${error.message}`);
+    }
+  }
+}
+
+export class GetSkillDetailsTool implements Tool {
+  name = 'GetSkillDetails';
+  description = `Get detailed information about a specific skill. Use this tool when:
+- You want to understand what a skill does before executing it
+- You need the full skill documentation to help the user
+- You need to verify a skill exists before using it
+
+# Parameters
+- \`skill\`: The skill name/id to get details for
+
+# Returns
+The full skill documentation including instructions, examples, and guidelines.`;
+
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+
+  async execute(params: { skill: string }): Promise<{ success: boolean; details: any }> {
+    const { skill } = params;
+    
+    if (!skill) {
+      throw new Error('Skill parameter is required');
+    }
+
+    try {
+      const { getWorkflowManager } = await import('./workflow.js');
+      const workflowManager = getWorkflowManager(process.cwd());
+      const details = await workflowManager.getSkillDetails(skill);
+
+      if (!details) {
+        throw new Error(`Skill '${skill}' not found`);
+      }
+
+      return {
+        success: true,
+        details: {
+          id: details.id,
+          name: details.name,
+          description: details.description,
+          category: details.category,
+          content: details.content
+        }
+      };
+    } catch (error: any) {
+      throw new Error(`Failed to get skill details: ${error.message}`);
+    }
+  }
+}
+
 export class ToolRegistry {
   private tools: Map<string, Tool> = new Map();
   private todoWriteTool: TodoWriteTool;
@@ -2176,6 +2255,8 @@ export class ToolRegistry {
     this.register(new XmlEscapeTool());
     this.register(new ImageReadTool());
     this.register(new SkillTool());
+    this.register(new ListSkillsTool());
+    this.register(new GetSkillDetailsTool());
     // GUI Subagent Tools
     this.register(new GUIOperateTool());
     this.register(new GUIScreenshotTool());
@@ -2649,6 +2730,27 @@ export class ToolRegistry {
               skill: {
                 type: 'string',
                 description: 'The skill name to execute'
+              }
+            },
+            required: ['skill']
+          };
+          break;
+
+        case 'ListSkills':
+          parameters = {
+            type: 'object',
+            properties: {},
+            required: []
+          };
+          break;
+
+        case 'GetSkillDetails':
+          parameters = {
+            type: 'object',
+            properties: {
+              skill: {
+                type: 'string',
+                description: 'The skill name/id to get details for'
               }
             },
             required: ['skill']

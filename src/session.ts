@@ -91,12 +91,16 @@ export class InteractiveSession {
     await this.initialize();
     this.showWelcomeMessage();
 
-    // Listen for ESC cancellation to stop main session
+    // Track if an operation is in progress
+    (this as any)._isOperationInProgress = false;
+
+    // Listen for ESC cancellation - only cancel operations, don't exit the program
     const cancelHandler = () => {
-      (this as any)._isShuttingDown = true;
-      this.rl?.close();
-      this.cancellationManager.cleanup();
-      process.exit(0);
+      if ((this as any)._isOperationInProgress) {
+        // An operation is running, let it be cancelled
+        return;
+      }
+      // No operation running, ignore ESC or show a message
     };
     this.cancellationManager.on('cancelled', cancelHandler);
 
@@ -585,6 +589,9 @@ export class InteractiveSession {
       return;
     }
 
+    // Mark that an operation is in progress
+    (this as any)._isOperationInProgress = true;
+
     const indent = this.getIndent();
     const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
     const icon = colors.primary(icons.brain);
@@ -674,9 +681,15 @@ export class InteractiveSession {
           [...this.toolCalls]
         );
       }
+
+      // Operation completed successfully, clear the flag
+      (this as any)._isOperationInProgress = false;
     } catch (error: any) {
       clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
+
+      // Clear the operation flag
+      (this as any)._isOperationInProgress = false;
 
       if (error.message === 'Operation cancelled by user') {
         // Message is already logged by CancellationManager
@@ -688,6 +701,9 @@ export class InteractiveSession {
   }
 
   private async handleToolCalls(toolCalls: any[]): Promise<void> {
+    // Mark that tool execution is in progress
+    (this as any)._isOperationInProgress = true;
+
     const toolRegistry = getToolRegistry();
     const showToolDetails = this.configManager.get('showToolDetails') || false;
     const indent = this.getIndent();
@@ -733,6 +749,9 @@ export class InteractiveSession {
       const { params } = toolCall;
 
       if (error) {
+        // Clear the operation flag
+        (this as any)._isOperationInProgress = false;
+
         if (error === 'Operation cancelled by user') {
           return;
         }

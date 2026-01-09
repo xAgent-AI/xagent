@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { Settings, AuthType, ExecutionMode, MCPServerConfig, CheckpointConfig, ThinkingConfig } from './types.js';
+import { Settings, AuthType, ExecutionMode, MCPServerConfig, CheckpointConfig, ThinkingConfig, CompressionConfig } from './types.js';
 import { getLogger } from './logger.js';
 
 const logger = getLogger();
@@ -16,8 +16,8 @@ const DEFAULT_SETTINGS: Settings = {
   guiSubagentBaseUrl: 'https://apis.xagent.cn/v1',
   guiSubagentApiKey: '',
   searchApiKey: '',
-  executionMode: ExecutionMode.DEFAULT,
-  approvalMode: ExecutionMode.DEFAULT,
+  executionMode: ExecutionMode.SMART,
+  approvalMode: ExecutionMode.SMART,
   checkpointing: {
     enabled: false,
     autoCreate: true,
@@ -26,7 +26,14 @@ const DEFAULT_SETTINGS: Settings = {
   thinking: {
     enabled: true,
     mode: 'normal',
-    displayMode: 'indicator'
+    displayMode: 'compact'
+  },
+  contextCompression: {
+    enabled: true,
+    maxMessages: 30,
+    maxContextSize: 1500000,
+    preserveRecentMessages: 0,
+    enableSummary: true
   },
   contextFileName: 'XAGENT.md',
   mcpServers: {},
@@ -151,6 +158,14 @@ export class ConfigManager {
 
   setThinkingConfig(config: Partial<ThinkingConfig>): void {
     this.settings.thinking = { ...this.settings.thinking, ...config };
+  }
+
+  getContextCompressionConfig(): CompressionConfig {
+    return this.settings.contextCompression;
+  }
+
+  setContextCompressionConfig(config: Partial<CompressionConfig>): void {
+    this.settings.contextCompression = { ...this.settings.contextCompression, ...config };
   }
 
   getContextFileName(): string | string[] {

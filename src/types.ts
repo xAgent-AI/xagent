@@ -82,6 +82,7 @@ export interface Settings {
   approvalMode?: ExecutionMode;
   checkpointing: CheckpointConfig;
   thinking: ThinkingConfig;
+  contextCompression: CompressionConfig;
   contextFileName: string | string[];
   mcpServers: Record<string, MCPServerConfig>;
   language: 'zh' | 'en';
@@ -156,4 +157,19 @@ export interface Session {
   executionMode?: string;
   totalTokens?: number;
   status: 'active' | 'completed' | 'cancelled';
+}
+
+export interface CompressionConfig {
+  enabled: boolean;
+  maxMessages: number;
+  maxContextSize: number;
+  preserveRecentMessages: number;
+  enableSummary: boolean;
+}
+
+export interface CompressionStats {
+  lastCompressionTime?: number;
+  totalCompressions: number;
+  originalMessagesTotal: number;
+  compressedMessagesTotal: number;
 }

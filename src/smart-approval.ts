@@ -366,7 +366,7 @@ Please return results in JSON format:
 
       const response = await this.aiClient.chatCompletion(messages, {
         temperature: 0.3,
-        maxTokens: 500
+        // maxTokens: 500
       });
 
       const content = typeof response.choices[0].message.content === 'string'

@@ -156,6 +156,9 @@ export class InteractiveSession {
         this.executionMode
       );
 
+      // 同步对话历史到 slashCommandHandler
+      this.slashCommandHandler.setConversationHistory(this.conversation);
+
       const mcpServers = this.configManager.getMcpServers();
       Object.entries(mcpServers).forEach(([name, config]) => {
         this.mcpManager.registerServer(name, config);
@@ -321,6 +324,8 @@ export class InteractiveSession {
       const handled = await this.slashCommandHandler.handleCommand(trimmedInput);
       if (handled) {
         this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
+        // 同步对话历史到 slashCommandHandler
+        this.slashCommandHandler.setConversationHistory(this.conversation);
       }
       return;
     }
@@ -528,6 +533,9 @@ export class InteractiveSession {
         if (lastUserMessage) {
           this.conversation.push(lastUserMessage);
         }
+
+        // 同步压缩后的对话历史到 slashCommandHandler
+        this.slashCommandHandler.setConversationHistory(this.conversation);
       }
     }
   }

@@ -17,10 +17,12 @@ import { SlashCommandHandler, parseInput, detectImageInput } from './slash-comma
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
+import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
 
 export class InteractiveSession {
   private conversationManager: ConversationManager;
   private sessionManager: SessionManager;
+  private contextCompressor: ContextCompressor;
   rl: readline.Interface;
   private aiClient: AIClient | null = null;
   private conversation: ChatMessage[] = [];
@@ -55,6 +57,7 @@ export class InteractiveSession {
     this.cancellationManager = getCancellationManager();
     this.indentLevel = indentLevel;
     this.indentString = '  '.repeat(indentLevel);
+    this.contextCompressor = getContextCompressor();
   }
 
   private getIndent(): string {
@@ -133,6 +136,7 @@ export class InteractiveSession {
       }
 
       this.aiClient = new AIClient(authConfig);
+      this.contextCompressor.setAIClient(this.aiClient);
       this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
 
       await this.agentManager.loadAgents();
@@ -398,8 +402,14 @@ export class InteractiveSession {
       timestamp: Date.now()
     };
 
+    // 保存最后一条用户消息，用于压缩后恢复
+    const lastUserMessage = userMessage;
+
     this.conversation.push(userMessage);
     await this.conversationManager.addMessage(userMessage);
+
+    // 检查是否需要压缩上下文
+    await this.checkAndCompressContext(lastUserMessage);
 
     await this.generateResponse(agent, thinkingTokens);
   }
@@ -449,6 +459,73 @@ export class InteractiveSession {
 
     console.log(`${indent}${colors.border(separator)}`);
     console.log('');
+  }
+
+  /**
+   * 检查并压缩对话上下文
+   */
+  private async checkAndCompressContext(lastUserMessage?: ChatMessage): Promise<void> {
+    const compressionConfig = this.configManager.getContextCompressionConfig();
+
+    if (!compressionConfig.enabled) {
+      return;
+    }
+
+    const { needsCompression, reason } = this.contextCompressor.needsCompression(
+      this.conversation,
+      compressionConfig
+    );
+
+    if (needsCompression) {
+      const indent = this.getIndent();
+      console.log('');
+      console.log(`${indent}${colors.warning(`${icons.brain} Context compression triggered: ${reason}`)}`);
+
+      const toolRegistry = getToolRegistry();
+      const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
+      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+      const enhancedSystemPrompt = systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
+
+      const result: CompressionResult = await this.contextCompressor.compressContext(
+        this.conversation,
+        enhancedSystemPrompt,
+        compressionConfig
+      );
+
+      if (result.wasCompressed) {
+        this.conversation = result.compressedMessages;
+        // console.log(`${indent}${colors.success(`✓ Compressed ${result.originalMessageCount} messages to ${result.compressedMessageCount} messages`)}`);
+        console.log(`${indent}${colors.textMuted(`✓ Size: ${result.originalSize} → ${result.compressedSize} chars (${Math.round((1 - result.compressedSize / result.originalSize) * 100)}% reduction)`)}`);
+
+        // 显示压缩后的摘要内容
+        const summaryMessage = result.compressedMessages.find(m => m.role === 'assistant');
+        if (summaryMessage && summaryMessage.content) {
+          const maxPreviewLength = 800;
+          let summaryContent = summaryMessage.content;
+          const isTruncated = summaryContent.length > maxPreviewLength;
+
+          if (isTruncated) {
+            summaryContent = summaryContent.substring(0, maxPreviewLength) + '\n...';
+          }
+
+          console.log('');
+          console.log(`${indent}${theme.predefinedStyles.title(`${icons.sparkles} Conversation Summary`)}`);
+          const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length * 2);
+          console.log(`${indent}${colors.border(separator)}`);
+          const renderedSummary = renderMarkdown(summaryContent, (process.stdout.columns || 80) - indent.length * 4);
+          console.log(`${indent}${theme.predefinedStyles.dim(renderedSummary).replace(/^/gm, indent)}`);
+          if (isTruncated) {
+            console.log(`${indent}${colors.textMuted(`(... ${summaryMessage.content.length - maxPreviewLength} more chars hidden)`)}`);
+          }
+          console.log(`${indent}${colors.border(separator)}`);
+        }
+
+        // 压缩后恢复用户消息，确保 API 调用时有 user 消息
+        if (lastUserMessage) {
+          this.conversation.push(lastUserMessage);
+        }
+      }
+    }
   }
 
   private async executeShellCommand(command: string): Promise<void> {

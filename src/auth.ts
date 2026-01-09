@@ -18,7 +18,7 @@ interface ThirdPartyProvider {
 const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
   {
     name: 'Zhipu AI (GLM-4)',
-    baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
+    baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/',
     defaultModel: 'glm-4',
     description: 'Zhipu AI GLM-4 series models',
     models: ['glm-4', 'glm-4-plus', 'glm-4-0520', 'glm-4-air', 'glm-4-airx', 'glm-4-flash', 'glm-4.7', 'glm-4.7-plus']

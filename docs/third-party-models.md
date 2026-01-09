@@ -150,7 +150,7 @@ xagent start
 ```json
 {
   "selectedAuthType": "openai-compatible",
-  "baseUrl": "https://open.bigmodel.cn/api/paas/v4/",
+  "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4/",
   "apiKey": "your-glm-api-key-here",
   "modelName": "glm-4"
 }

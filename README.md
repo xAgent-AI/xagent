@@ -199,7 +199,7 @@ Customize xAgent by editing `~/.xagent/settings.json`:
 
 - 📖 [Architecture](docs/architecture/overview.md)
 - 🔧 [Tool System](docs/architecture/tool-system-design.md)
-- 🔌 [MCP Integration](docs/architecture/mcp-integration-guide.md)
+- 🔌 [SKILL, Worflow and MCP Integration](docs/architecture/mcp-integration-guide.md)
 - 💻 [CLI Commands](docs/cli/commands.md)
 - 🤝 [Contributing](CONTRIBUTING.md)
 - 🔑 [Third-Party Models](docs/third-party-models.md)

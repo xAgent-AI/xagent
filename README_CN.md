@@ -199,7 +199,7 @@ npm run typecheck # TypeScript
 
 - 📖 [架构设计](docs/architecture/overview.md)
 - 🔧 [工具系统](docs/architecture/tool-system-design.md)
-- 🔌 [MCP 集成](docs/architecture/mcp-integration-guide.md)
+- 🔌 [SKILL, Worflow和MCP 集成](docs/architecture/mcp-integration-guide.md)
 - 💻 [CLI 命令](docs/cli/commands.md)
 - 🤝 [贡献指南](CONTRIBUTING.md)
 - 🔑 [第三方模型](docs/third-party-models.md)

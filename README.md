@@ -5,8 +5,8 @@
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square&logo=opensourceinitiative)
 ![Node.js](https://img.shields.io/node/v/xagent-cli?logo=node.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue?style=flat-square&logo=typescript)
-![Version](https://img.shields.io/npm/v/xagent-cli?logo=npm)
-![Downloads](https://img.shields.io/npm/dt/xagent-cli)
+![Version](https://img.shields.io/npm/v/%40xagent-ai%2Fcli?logo=npm)
+![Downloads](https://img.shields.io/npm/dt/%40xagent-ai%2Fcli)
 
 </div>
 

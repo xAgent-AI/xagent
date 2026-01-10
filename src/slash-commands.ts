@@ -121,6 +121,15 @@ export class SlashCommandHandler {
     console.log(colors.primaryBright('╚════════════════════════════════════════════════════════════╝'));
     console.log('');
 
+    // Shortcuts
+    console.log(colors.accent('Shortcuts'));
+    console.log(colors.border(separator));
+    console.log('');
+    console.log(colors.textDim(`  ${colors.accent('!')}  - ${colors.textMuted('Enter bash mode')}`));
+    console.log(colors.textDim(`  ${colors.accent('/')}  - ${colors.textMuted('Commands')}`));
+    console.log(colors.textDim(`  ${colors.accent('@')}  - ${colors.textMuted('File paths')}`));
+    console.log('');
+
     // Basic Commands
     this.showHelpCategory('Basic Commands', [
       {

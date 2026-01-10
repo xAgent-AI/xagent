@@ -773,7 +773,17 @@ export class InteractiveSession {
           timestamp: Date.now()
         });
       } else {
-        if (showToolDetails) {
+        // Always show details for todo tools so users can see their task lists
+        const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
+        if (isTodoTool) {
+          console.log('');
+          console.log(`${indent}${colors.success(`${icons.check} Todo List:`)}`);
+          console.log(this.renderTodoList(result.todos || result.todos, indent));
+          // Show summary if available
+          if (result.message) {
+            console.log(`${indent}${colors.textDim(result.message)}`);
+          }
+        } else if (showToolDetails) {
           console.log('');
           console.log(`${indent}${colors.success(`${icons.check} Tool Result:`)}`);
           console.log(`${indent}${colors.textDim(JSON.stringify(result, null, 2))}`);
@@ -859,6 +869,32 @@ export class InteractiveSession {
     if (!command) return '';
     if (command.length <= maxLength) return command;
     return command.slice(0, maxLength - 3) + '...';
+  }
+
+  /**
+   * Render todo list in a user-friendly format
+   */
+  private renderTodoList(todos: any[], indent: string = ''): string {
+    if (!todos || todos.length === 0) {
+      return `${indent}${colors.textMuted('No tasks')}`;
+    }
+
+    const statusConfig: Record<string, { icon: string; color: (text: string) => string; label: string }> = {
+      'pending': { icon: icons.circle, color: colors.textMuted, label: 'Pending' },
+      'in_progress': { icon: icons.loading, color: colors.warning, label: 'In Progress' },
+      'completed': { icon: icons.success, color: colors.success, label: 'Completed' },
+      'failed': { icon: icons.error, color: colors.error, label: 'Failed' }
+    };
+
+    const lines: string[] = [];
+
+    for (const todo of todos) {
+      const config = statusConfig[todo.status] || statusConfig['pending'];
+      const statusPrefix = `${config.color(config.icon)} ${config.color(config.label)}:`;
+      lines.push(`${indent}  ${statusPrefix} ${colors.text(todo.task)}`);
+    }
+
+    return lines.join('\n');
   }
 
   shutdown(): void {

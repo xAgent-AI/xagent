@@ -1,10 +1,10 @@
 # 🤖 xAgent CLI - 你的自主生活智能助手
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/node/v/xagent-cli-reproduction.svg)](https://nodejs.org/)
+[![Node.js Version](https://img.shields.io/node/v/xagent-cli.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
 
-![xAgent CLI Screenshot](./assets/xagent-cli.svg)
+![xAgent CLI Screenshot](./assets/xagent-cli.png)
 
 **[English](README.md)** | 中文 
 
@@ -47,8 +47,8 @@ xAgent 代表了 AI 助手的未来演进方向：
 
 ### 🔧 灵活集成
 
-- **MCP 协议支持**：与各种工具和服务无缝集成
-- **开放市场**：一键安装 SubAgents、MCP 工具和工作流
+- **SubAgent 技能和 MCP 支持**：与各种工具和服务无缝集成
+- **GUI 操作支持**：GUI 代理精确的鼠标和键盘控制
 - **自然语言交互**：告别复杂命令，用日常对话驱动 AI
 - **跨平台支持**：Windows、macOS、Linux 均可使用
 
@@ -65,15 +65,9 @@ xAgent 代表了 AI 助手的未来演进方向：
 | 自定义命令 | ✅ | ✅ | ✅ |
 | 计划模式 | ✅ | ✅ | ❌ |
 | 任务工具集 | ✅ | ✅ | ❌ |
-| VS Code 插件 | ✅ | ✅ | ✅ |
-| JetBrains 插件 | ✅ | ✅ | ❌ |
 | 对话历史恢复 | ✅ | ✅ | ❌ |
-| 内置开放市场 | ✅ | ❌ | ❌ |
 | 上下文自动压缩 | ✅ | ✅ | ✅ |
-| 多模态能力 | ✅ | ⚠️ (国内受限) | ⚠️ (国内受限) |
 | 网络搜索 | ✅ | ❌ | ⚠️ (需 VPN) |
-| **免费使用** | ✅ | ❌ | ⚠️ (限额) |
-| Hook 钩子 | ✅ | ✅ | ❌ |
 | 思考模式 | ✅ | ✅ | ❌ |
 | 工作流系统 | ✅ | ❌ | ❌ |
 
@@ -132,35 +126,19 @@ xAgent 代表了 AI 助手的未来演进方向：
 
 **Mac/Linux/Ubuntu**：
 ```shell
-bash -c "$(curl -fsSL https://cloud.xagent.cn/xagent-cli/install.sh)"
-```
-
-或使用 Node.js 安装：
-```shell
-npm i -g @xagent-ai/xagent-cli
+npm i -g xagent-cli
 ```
 
 **Windows 用户**：
 1. 下载并安装 [Node.js 22+](https://nodejs.org/en/download)
 2. 重启终端（CMD 或 PowerShell）
-3. 运行 `npm install -g @xagent-ai/xagent-cli`
+3. 运行 `npm install -g xagent-cli`
 4. 运行 `xagent` 启动
-
-**中国用户**（使用镜像）：
-```shell
-# 下载 nvm
-curl -o nvm-setup.exe https://cloud.xagent.cn/xagent-cli/nvm-setup.exe
-# 安装并配置 Node.js 22
-nvm node_mirror https://npmmirror.com/mirrors/node/
-nvm npm_mirror https://npmmirror.com/mirrors/npm/
-nvm install 22 && nvm use 22
-npm install -g @xagent-ai/xagent-cli
-```
 
 ### 卸载
 
 ```shell
-npm uninstall -g @xagent-ai/xagent-cli
+npm uninstall -g xagent-cli
 ```
 
 ---
@@ -226,13 +204,13 @@ xagent
 > 根据 PRD 文档分析需求，输出技术方案
 ```
 
-### 使用 SubAgents
+<!-- ### 使用 SubAgents
 
 ```shell
 xagent
 > /agent   # 查看可用代理
 > /agent plan-agent  # 切换到计划专家代理
-```
+``` -->
 
 ---
 
@@ -246,8 +224,7 @@ xagent
 | **DEFAULT** | 默认无权限 | 需要明确授权 |
 | **SMART** | 智能模式 | 推荐日常使用 |
 
----
-
+<!-- 
 ## 📦 开放市场
 
 一键安装强大的扩展功能：
@@ -264,7 +241,7 @@ xagent mcp --list
 
 # 安装工作流
 xagent workflow --add <workflow-id>
-```
+``` -->
 
 ---
 
@@ -286,9 +263,7 @@ xagent workflow --add <workflow-id>
 
 ---
 
-## 🏗️ 技术架构
-
-### 技术栈
+## 🏗️ 技术栈
 
 - **运行时**：Node.js ≥22
 - **语言**：TypeScript（严格模式）
@@ -350,7 +325,7 @@ npm run typecheck
 - **[MCP 集成](docs/architecture/mcp-integration-guide.md)**：Model Context Protocol 服务器集成
 - **[CLI 命令参考](docs/cli/commands.md)**：命令行接口文档
 - **[贡献指南](CONTRIBUTING.md)**：详细贡献说明
-- **[第三方模型配置](docs/third-party-models.md)**：外部模型 API 配置
+- **[第三方模型](docs/third-party-models.md)**：外部模型 API 配置
 
 ---
 
@@ -393,9 +368,9 @@ MIT License - 详见 [LICENSE](./LICENSE)
 - **文档**：https://platform.xagent.cn/docs/
 - **GitHub Issues**：https://github.com/xagent-ai/xagent-cli/issues
 - **讨论区**：https://github.com/xagent-ai/xagent-cli/discussions
-- **微信群**：扫描下方二维码加入社区
+<!-- - **微信群**：扫描下方二维码加入社区 -->
 
-![WeChat group](./assets/xagent-wechat.jpg)
+<!-- ![WeChat group](./assets/xagent-wechat.jpg) -->
 
 ---
 

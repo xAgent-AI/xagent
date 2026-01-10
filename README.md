@@ -1,7 +1,7 @@
 # 🤖 xAgent CLI - Your Autonomous Life AI Assistant
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/node/v/xagent-cli-reproduction.svg)](https://nodejs.org/)
+[![Node.js Version](https://img.shields.io/node/v/xagent-cli.svg)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
 
 ![xAgent CLI Screenshot](./assets/xagent-cli.png)
@@ -47,8 +47,8 @@ xAgent represents the future evolution of AI assistants:
 
 ### 🔧 Flexible Integration
 
-- **MCP Protocol Support**: Seamless integration with various tools and services
-- **Open Market**: One-click installation of SubAgents, MCP tools, and workflows
+- **Subaget SKill and MCP Support**: Seamless integration with various tools and services
+- **GUI Operation support**: GUI agent precise mouse and keyboard control
 - **Natural Language Interaction**: Say goodbye to complex commands, drive AI with everyday conversation
 - **Cross-Platform**: Works on Windows, macOS, and Linux
 
@@ -65,15 +65,9 @@ xAgent represents the future evolution of AI assistants:
 | Custom Commands | ✅ | ✅ | ✅ |
 | Plan Mode | ✅ | ✅ | ❌ |
 | Task Tools | ✅ | ✅ | ❌ |
-| VS Code Plugin | ✅ | ✅ | ✅ |
-| JetBrains Plugin | ✅ | ✅ | ❌ |
 | Conversation Recovery | ✅ | ✅ | ❌ |
-| Built-in Open Market | ✅ | ❌ | ❌ |
 | Context Auto-compression | ✅ | ✅ | ✅ |
-| Multimodal Capability | ✅ | ⚠️ (Limited in China) | ⚠️ (Limited in China) |
 | Web Search | ✅ | ❌ | ⚠️ (Requires VPN) |
-| **Free to Use** | ✅ | ❌ | ⚠️ (Limited Usage) |
-| Hook | ✅ | ✅ | ❌ |
 | Thinking Mode | ✅ | ✅ | ❌ |
 | Workflow System | ✅ | ❌ | ❌ |
 
@@ -132,35 +126,19 @@ xAgent represents the future evolution of AI assistants:
 
 **Mac/Linux/Ubuntu**:
 ```shell
-bash -c "$(curl -fsSL https://cloud.xagent.cn/xagent-cli/install.sh)"
-```
-
-Or using Node.js:
-```shell
-npm i -g @xagent-ai/xagent-cli
+npm i -g xagent-cli
 ```
 
 **Windows Users**:
 1. Download and install [Node.js 22+](https://nodejs.org/en/download)
 2. Restart your terminal (CMD or PowerShell)
-3. Run `npm install -g @xagent-ai/xagent-cli`
+3. Run `npm install -g xagent-cli`
 4. Run `xagent` to start
-
-**China Users** (using mirror):
-```shell
-# Download nvm
-curl -o nvm-setup.exe https://cloud.xagent.cn/xagent-cli/nvm-setup.exe
-# Install and configure Node.js 22
-nvm node_mirror https://npmmirror.com/mirrors/node/
-nvm npm_mirror https://npmmirror.com/mirrors/npm/
-nvm install 22 && nvm use 22
-npm install -g @xagent-ai/xagent-cli
-```
 
 ### Uninstall
 
 ```shell
-npm uninstall -g @xagent-ai/xagent-cli
+npm uninstall -g xagent-cli
 ```
 
 ---
@@ -226,13 +204,13 @@ xagent
 > Analyze requirements according to the PRD and output a technical solution
 ```
 
-### Using SubAgents
+<!-- ### Using SubAgents
 
 ```shell
 xagent
 > /agent   # View available agents
 > /agent plan-agent  # Switch to plan expert agent
-```
+``` -->
 
 ---
 
@@ -247,7 +225,7 @@ xagent
 | **SMART** | Intelligent mode | Recommended for daily use |
 
 ---
-
+<!-- 
 ## 📦 Open Market
 
 Install powerful extensions with one click:
@@ -263,7 +241,7 @@ xagent agent --add <name>
 xagent mcp --list
 
 # Install a workflow
-xagent workflow --add <workflow-id>
+xagent workflow --add <workflow-id> -->
 ```
 
 ---
@@ -391,9 +369,9 @@ MIT License - See [LICENSE](./LICENSE)
 - **Documentation**: https://platform.xagent.cn/docs/
 - **GitHub Issues**: https://github.com/xagent-ai/xagent-cli/issues
 - **Discussions**: https://github.com/xagent-ai/xagent-cli/discussions
-- **WeChat Group**: Scan the QR code below to join
+<!-- - **WeChat Group**: Scan the QR code below to join -->
 
-![WeChat group](./assets/xagent-wechat.png)
+<!-- ![WeChat group](./assets/xagent-wechat.png) -->
 
 ---
 

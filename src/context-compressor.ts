@@ -271,7 +271,7 @@ Please provide the comprehensive summary possible. Do not omit any important inf
   }
 
   /**
-   * 估算 token 数量（粗略估计）
+   * Estimate token count (rough estimate)
    */
   estimateTokens(text: string): number {
     const chineseChars = (text.match(/[\u4e00-\u9fa5]/g) || []).length;

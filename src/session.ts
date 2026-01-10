@@ -413,7 +413,7 @@ export class InteractiveSession {
       timestamp: Date.now()
     };
 
-    // 保存最后一条用户消息，用于压缩后恢复
+    // Save last user message for recovery after compression
     const lastUserMessage = userMessage;
 
     this.conversation.push(userMessage);

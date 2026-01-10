@@ -730,7 +730,7 @@ export class SlashCommandHandler {
       return;
     }
 
-    // 显示当前配置
+    // Display current configuration
     console.log(chalk.cyan('\n📦 Context Compression:\n'));
 
     console.log(`  Status: ${config.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`);

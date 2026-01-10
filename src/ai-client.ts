@@ -1,7 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import { AuthConfig } from './types.js';
 
-// Anthropic 格式的消息内容块类型
+// Message content block type for Anthropic format
 export interface AnthropicContentBlock {
   type: 'text' | 'tool_use' | 'tool_result' | 'thinking';
   text?: string;
@@ -323,7 +323,7 @@ export class AIClient {
     }
 
     if (format === 'anthropic') {
-      // Anthropic 格式的工具
+      // Anthropic format tools
       if (options.tools && options.tools.length > 0) {
         requestBody.tools = options.tools.map(tool => ({
           name: tool.function.name,
@@ -736,7 +736,7 @@ export class AIClient {
     }
 
     try {
-      // MiniMax 使用正确的端点
+      // MiniMax uses correct endpoint
       const response = await this.client.post(endpoint, requestBody, {
         responseType: 'stream'
       });
@@ -828,15 +828,15 @@ export class AIClient {
     const isAnthropic = !isMiniMax && isAnthropicCompatible(authConfig.baseUrl || '');
     
     if (isMiniMax || isAnthropic) {
-      // MiniMax/Anthropic: 使用 x-api-key 认证头
+      // MiniMax/Anthropic: Use x-api-key auth header
       this.client.defaults.headers['x-api-key'] = authConfig.apiKey || '';
       this.client.defaults.headers['anthropic-version'] = '2023-06-01';
-      // 清除 Bearer 头
+      // Clear Bearer header
       delete this.client.defaults.headers['Authorization'];
     } else {
-      // OpenAI 兼容: 使用 Bearer token
+      // OpenAI compatible: Use Bearer token
       this.client.defaults.headers['Authorization'] = `Bearer ${authConfig.apiKey}`;
-      // 清除 x-api-key 头
+      // Clear x-api-key header
       delete this.client.defaults.headers['x-api-key'];
       delete this.client.defaults.headers['anthropic-version'];
     }
@@ -846,7 +846,7 @@ export class AIClient {
     return { ...this.authConfig };
   }
 
-  // 检测消息中是否包含工具调用
+  // Check if messages contain tool calls
   hasToolCalls(messages: Message[]): boolean {
     return messages.some(msg => {
       if (msg.tool_calls && msg.tool_calls.length > 0) return true;

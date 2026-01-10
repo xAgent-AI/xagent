@@ -3,10 +3,10 @@
 <div align="center">
 
 ![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square&logo=opensourceinitiative)
-![Node.js](https://img.shields.io/node/v/xagent-cli?style=flat-square&logo=node.js)
+![Node.js](https://img.shields.io/node/v/xagent-cli?logo=node.js)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue?style=flat-square&logo=typescript)
-![Version](https://img.shields.io/npm/v/xagent-cli?style=flat-square&logo=npm)
-![Downloads](https://img.shields.io/npm/dm/xagent-cli?style=flat-square)
+![Version](https://img.shields.io/npm/v/xagent-cli?logo=npm)
+![Downloads](https://img.shields.io/npm/dt/xagent-cli)
 
 </div>
 

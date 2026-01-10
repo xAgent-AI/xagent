@@ -122,11 +122,13 @@ export class InteractiveSession {
 
       await this.configManager.load();
 
-      const authConfig = this.configManager.getAuthConfig();
+      let authConfig = this.configManager.getAuthConfig();
 
       if (!authConfig.apiKey) {
         spinner.stop();
         await this.setupAuthentication();
+        // Re-fetch authConfig after setup to get the newly saved credentials
+        authConfig = this.configManager.getAuthConfig();
         // inquirer may close stdin, so need to recreate readline interface
         this.rl.close();
         this.rl = readline.createInterface({

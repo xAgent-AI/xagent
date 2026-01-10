@@ -184,12 +184,48 @@ Customize xAgent by editing `~/.xagent/settings.json`:
 ```json
 {
   "theme": "Default",
-  "selectedAuthType": "xagent",
-  "apiKey": "your-xagent-key",
-  "baseUrl": "https://apis.xagent.cn/v1",
-  "modelName": "Qwen3-Coder",
+  "selectedAuthType": "openai_compatible",
+  "apiKey": "your-api-key",
+  "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+  "modelName": "glm-4.7",
+  "guiSubagentModel": "doubao-1-5-ui-tars-250428",
+  "guiSubagentBaseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+  "guiSubagentApiKey": "your-api-key",
+  "searchApiKey": "",
   "executionMode": "smart",
-  "language": "en"
+  "approvalMode": "smart",
+  "checkpointing": {
+    "enabled": false,
+    "autoCreate": true,
+    "maxCheckpoints": 10
+  },
+  "thinking": {
+    "enabled": true,
+    "mode": "normal",
+    "displayMode": "compact"
+  },
+  "contextCompression": {
+    "enabled": true,
+    "maxMessages": 30,
+    "maxContextSize": 1500000,
+    "preserveRecentMessages": 0,
+    "enableSummary": true
+  },
+  "contextFileName": "XAGENT.md",
+  "mcpServers": {},
+  "language": "en",
+  "autoUpdate": true,
+  "telemetryEnabled": true,
+  "showToolDetails": false,
+  "contextCompress": {
+    "enabled": false,
+    "autoTrigger": false,
+    "messageThreshold": 50,
+    "tokenThreshold": 100000,
+    "strategy": "summary",
+    "preserveRecent": 5
+  },
+  "type": "openai_compatible"
 }
 ```
 

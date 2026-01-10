@@ -52,11 +52,11 @@ const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
     models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k']
   },
   {
-    name: 'MiniMax-M2',
+    name: 'MiniMax',
     baseUrl: 'https://api.minimax.chat/anthropic',
-    defaultModel: 'MiniMax-M2',
-    description: 'MiniMax-M2 (Anthropic-compatible format)',
-    models: ['MiniMax-M2', 'MiniMax-M2-Stable']
+    defaultModel: 'MiniMax-M2.1',
+    description: 'MiniMax (Anthropic-compatible format)',
+    models: ['MiniMax-M2.1', 'MiniMax-M2.1-lightning', 'MiniMax-M2', 'MiniMax-M2-Stable']
   },
   {
     name: '01.AI (Yi)',

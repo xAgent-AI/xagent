@@ -2062,7 +2062,7 @@ export class ImageReadTool implements Tool {
               text: textContent
             },
             {
-              type: 'image_url',
+              type: 'image_url' as const,
               image_url: {
                 url: `data:${mime_type || 'image/jpeg'};base64,${imageData}`
               }

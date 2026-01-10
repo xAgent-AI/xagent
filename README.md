@@ -1,298 +1,166 @@
 # 🤖 xAgent CLI - Your Autonomous Life AI Assistant
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/node/v/xagent-cli.svg)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
+<div align="center">
+
+![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square&logo=opensourceinitiative)
+![Node.js](https://img.shields.io/node/v/xagent-cli?style=flat-square&logo=node.js)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue?style=flat-square&logo=typescript)
+![Version](https://img.shields.io/npm/v/xagent-cli?style=flat-square&logo=npm)
+![Downloads](https://img.shields.io/npm/dm/xagent-cli?style=flat-square)
+
+</div>
+
+<div align="center">
 
 ![xAgent CLI Screenshot](./assets/xagent-cli.png)
 
-**[English](README.md)** | [中文](README_CN.md) 
+**[English](README.md)** | **[中文](README_CN.md)**
+
+</div>
 
 ---
 
-## 🚀 X Future Agent - Built for Your Digital Life
+<div align="center">
 
-**xAgent CLI** is more than an AI coding assistant—it's an **intelligent agent for personal PCs and autonomous living**. It understands your daily needs, from code development to life management, enhancing every aspect of your digital life.
+### 🚀 The Future of AI Assistants is Here
 
-🎯 **Vision**: To become the most helpful AI companion on everyone's PC, making life smarter and easier.
+**xAgent CLI** is not just another AI coding assistant — it's an **intelligent agent for personal PCs and autonomous living** that transforms how you interact with your digital life.
+
+</div>
 
 ---
 
-## ✨ Key Features
+## ✨ Why xAgent CLI?
 
-### 🤖 X Future Agent - Autonomous Life Intelligence
+| 🎯 | Universal AI Companion |
+|------|------------------------|
+| 🏠 | **Life Automation** - From file organization to smart scheduling |
+| 💻 | **Professional Development** - Code, debug, and deploy with AI |
+| 🌐 | **Multi-Model Support** - Free access to Kimi K2, Qwen3 Coder, DeepSeek v3 |
+| 🔧 | **GUI Automation** - Precise mouse/keyboard control for any task |
+| 🔒 | **Flexible Security** - 5 execution modes from YOLO to DEFAULT |
 
-xAgent represents the future evolution of AI assistants:
+---
 
-- **Life Automation**: Automatically handle daily tasks like file organization, data backup, and schedule management
-- **Smart Device Management**: Deep integration with your personal PC for truly intelligent interactions
-- **Context Awareness**: Remembers your preferences and habits for personalized service
-- **Proactive Assistance**: Offers help at the right moment, not just passive responses
+## ⚡ Quick Start
 
-### 🖥️ Smart Use of Your Personal PC
+```bash
+# Install
+npm i -g xagent-cli
 
-```text
-> Organize files on my desktop, categorize them by type into different folders
-> Set up a script to automatically backup important files to cloud storage daily
-> Monitor my computer resources and alert me when CPU usage is too high
-> Batch process these images, resize them, and rename them by date
+# Launch
+xagent
 ```
 
-### 💻 Professional Development Capabilities
-
-- **Smart Coding Assistant**: Code writing, debugging, and optimization
-- **Multi-Model Support**: Free access to powerful models like Kimi K2, Qwen3 Coder, DeepSeek v3
-- **SubAgent Team**: Specialized AI agents for different scenarios
-- **Workflow Automation**: Install workflows from the market for complex tasks
-
-### 🔧 Flexible Integration
-
-- **Subaget SKill and MCP Support**: Seamless integration with various tools and services
-- **GUI Operation support**: GUI agent precise mouse and keyboard control
-- **Natural Language Interaction**: Say goodbye to complex commands, drive AI with everyday conversation
-- **Cross-Platform**: Works on Windows, macOS, and Linux
+**That's it!** Start automating your digital life in seconds.
 
 ---
 
 ## 📊 Feature Comparison
 
 | Feature | xAgent CLI | Claude Code | Gemini CLI |
-|---------|-----------|-------------|------------|
+|:--------|:----------:|:-----------:|:----------:|
 | **Life Automation** | ✅ | ❌ | ❌ |
-| **Personal PC Smart Management** | ✅ | ❌ | ❌ |
+| **PC Smart Management** | ✅ | ❌ | ❌ |
 | Todo Planning | ✅ | ✅ | ❌ |
-| SubAgent | ✅ | ✅ | ❌ |
-| Custom Commands | ✅ | ✅ | ✅ |
+| SubAgent System | ✅ | ✅ | ❌ |
 | Plan Mode | ✅ | ✅ | ❌ |
 | Task Tools | ✅ | ✅ | ❌ |
 | Conversation Recovery | ✅ | ✅ | ❌ |
 | Context Auto-compression | ✅ | ✅ | ✅ |
-| Web Search | ✅ | ❌ | ⚠️ (Requires VPN) |
+| Web Search | ✅ | ❌ | ⚠️ |
 | Thinking Mode | ✅ | ✅ | ❌ |
 | Workflow System | ✅ | ❌ | ❌ |
 
 ---
 
-## 🎯 Typical Use Cases
+## 🎯 What Can xAgent Do?
 
-### 🏠 Life Assistant Scenarios
-
+### 🏠 Life Assistant
 ```text
-> Organize my desktop, move images to Pictures and documents to Documents
-> Set up weekly automatic backup of my work files to cloud storage
-> Remind me of an important meeting at 3 PM today
-> Analyze my spending records and generate a monthly expense report
-> Find the 10 largest files taking up disk space on my computer
+> Organize my desktop, categorize files by type
+> Set up daily backup to cloud storage
+> Remind me of meetings at 3 PM
+> Find largest files eating disk space
 ```
 
-### 💼 Productivity Scenarios
-
+### 💼 Productivity Booster
 ```text
-> Batch rename these files with date + project name format
-> Download all PDF documents from this webpage and organize them into folders
-> Analyze this Excel data and generate a visualization chart
-> Translate this document while preserving the original format
+> Batch rename files with date format
+> Download all PDFs from a webpage
+> Analyze Excel data, generate charts
+> Translate documents preserving format
 ```
 
-### 👨‍💻 Development Scenarios
-
+### 👨‍💻 Developer Companion
 ```text
-> Analyze the architecture and module dependencies of this project
-> Find the root cause of this bug and fix it
-> Create a RESTful API with user authentication and database connection
-> Code review this PR and check for potential issues
+> Analyze project architecture
+> Find and fix bug root causes
+> Create RESTful APIs with auth
+> Code review PRs automatically
 ```
 
-### 🔄 Automation Workflows
-
+### 🔄 Automation Expert
 ```text
-> Create a script that downloads stock prices daily and sends email notifications
-> Set up automatic dependency updates for my projects every morning
-> Monitor website status and send alerts when it's down
+> Download stock prices, send email alerts
+> Auto-update project dependencies
+> Monitor websites, alert on downtime
 ```
-
----
-
-## 📥 Installation
-
-### System Requirements
-
-- **Operating Systems**: macOS 10.15+, Ubuntu 20.04+/Debian 10+, Windows 10+
-- **Hardware**: 4GB+ RAM
-- **Software**: Node.js 22+
-- **Network**: Internet connection required for authentication and AI processing
-
-### Installation Commands
-
-**Mac/Linux/Ubuntu**:
-```shell
-npm i -g xagent-cli
-```
-
-**Windows Users**:
-1. Download and install [Node.js 22+](https://nodejs.org/en/download)
-2. Restart your terminal (CMD or PowerShell)
-3. Run `npm install -g xagent-cli`
-4. Run `xagent` to start
-
-### Uninstall
-
-```shell
-npm uninstall -g xagent-cli
-```
-
----
-
-## 🔑 Authentication
-
-xAgent offers three authentication options:
-
-### Option 1: xAgent Native Authentication (Recommended)
-
-Select option 1 to log in directly, which opens the authentication page in your browser. After completion, you can use it for free.
-
-### Option 2: xAgent API Key
-
-For server environments where you cannot open a web browser.
-
-1. Register for an xAgent account
-2. Visit [Account Settings](https://xagent.cn/?open=setting)
-3. Click "Reset" to generate a new API Key
-4. Paste the key in the terminal to complete setup
-
-### Option 3: Third-Party Model APIs
-
-Connect to GLM-4, DeepSeek, Qwen, Ernie Bot, Kimi, and more:
-
-```bash
-xagent auth
-# Select third-party model API
-# Select provider and enter API Key
-```
-
-Supported providers:
-- **Zhipu AI (GLM-4)**: https://open.bigmodel.cn/usercenter/apikeys
-- **DeepSeek**: https://platform.deepseek.com/api_keys
-- **Alibaba Cloud**: https://dashscope.console.aliyun.com/apiKey
-- **Baidu**: https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application
-- **Moonshot (Kimi)**: https://platform.moonshot.cn/console/api-keys
-
----
-
-## 🚀 Getting Started
-
-### Launch xAgent
-
-```shell
-xagent
-```
-
-### New Project Development
-
-```shell
-cd new-project/
-xagent
-> Create a personal blog website using React
-```
-
-### Existing Projects
-
-```shell
-cd existing-project/
-xagent
-> /init  # Scan project structure and create documentation
-> Analyze requirements according to the PRD and output a technical solution
-```
-
-<!-- ### Using SubAgents
-
-```shell
-xagent
-> /agent   # View available agents
-> /agent plan-agent  # Switch to plan expert agent
-``` -->
 
 ---
 
 ## 🛠️ Execution Modes
 
-| Mode | Description | Use Case |
+| Mode | Permissions | Best For |
 |------|-------------|----------|
-| **YOLO** | Maximum permissions, can perform any operation | Fully trust AI |
-| **ACCEPT_EDITS** | File modification only | Safe coding scenarios |
-| **PLAN** | Plan first, then execute | Complex task planning |
-| **DEFAULT** | No permissions by default | Requires explicit approval |
-| **SMART** | Intelligent mode | Recommended for daily use |
-
----
-<!-- 
-## 📦 Open Market
-
-Install powerful extensions with one click:
-
-```bash
-# View SubAgents in the market
-xagent agent --list
-
-# Install a SubAgent
-xagent agent --add <name>
-
-# View MCP servers
-xagent mcp --list
-
-# Install a workflow
-xagent workflow --add <workflow-id> -->
-```
+| 🟢 **YOLO** | Full control | Complete AI autonomy |
+| 🟡 **ACCEPT_EDITS** | File only | Safe coding |
+| 🔵 **PLAN** | Plan → Execute | Complex tasks |
+| ⚪ **DEFAULT** | Approval required | Security-first |
+| 🟣 **SMART** | Intelligent | Daily use (recommended) |
 
 ---
 
-## 🔧 Custom Configuration
+## 🔑 Free to Use
 
-Edit `~/.xagent/settings.json` to customize:
+xAgent offers **completely free** access with multiple authentication options:
 
-```json
-{
-    "theme": "Default",
-    "selectedAuthType": "xagent",
-    "apiKey": "your xagent key",
-    "baseUrl": "https://apis.xagent.cn/v1",
-    "modelName": "Qwen3-Coder",
-    "executionMode": "smart",
-    "language": "en"
-}
-```
+| Method | Description |
+|--------|-------------|
+| 🔐 **xAgent Account** | Browser-based login (recommended) |
+| 🔑 **API Key** | Server environments |
+| 🌐 **Third-Party APIs** | GLM-4, DeepSeek, Qwen, Kimi, and more |
 
 ---
 
 ## 🏗️ Technology Stack
 
-- **Runtime**: Node.js ≥22
-- **Language**: TypeScript (strict mode)
-- **UI Framework**: React via Ink (terminal rendering)
-- **Build Tools**: esbuild + tsc
-- **Package Manager**: npm
-- **Testing Framework**: Vitest
-- **Code Quality**: ESLint + Prettier
+<div align="center">
 
-### Core Components
+![Node.js](https://img.shields.io/badge/Node.js-22+-green?style=for-the-badge&logo=node.js)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue?style=for-the-badge&logo=typescript)
+![React](https://img.shields.io/badge/React-Ink-purple?style=for-the-badge&logo=react)
+![esbuild](https://img.shields.io/badge/esbuild-orange?style=for-the-badge)
+![Vitest](https://img.shields.io/badge/Vitest-testing?style=for-the-badge&logo=vitest)
+
+</div>
+
+---
+
+## 📦 Project Structure
 
 ```
 xagent-cli/
 ├── src/
-│   ├── tools/              # Tool implementations (file ops, search, exec)
-│   ├── agents/             # Agent management (specialized AI team)
-│   ├── config/             # Configuration management
-│   ├── auth/               # Authentication service
-│   ├── session/            # Interactive session
-│   ├── memory/             # Memory management
-│   ├── workflow/           # Workflow system
-│   ├── checkpoint/         # Checkpoint system
-│   ├── slash-commands/     # Slash commands
-│   ├── gui-subagent/       # GUI automation agent
-│   └── tests/              # Unit tests
+│   ├── tools/              # 12+ built-in tools
+│   ├── agents/             # SubAgent system
+│   ├── gui-subagent/       # GUI automation
+│   ├── workflow/           # Workflow engine
+│   ├── checkpoint/         # State persistence
+│   └── mcp/                # MCP integration
 ├── dist/                   # Compiled output
 ├── docs/                   # Documentation
-├── assets/                 # Static assets
+├── test/                   # Test suite
 └── package.json
 ```
 
@@ -301,51 +169,33 @@ xagent-cli/
 ## 🧪 Testing & Quality
 
 ```bash
-# Unit tests
-npm test
-
-# ESLint check
-npm run lint
-
-# ESLint auto-fix
-npm run lint:fix
-
-# Code formatting
-npm run format
-
-# Type checking
-npm run typecheck
+npm test          # Unit tests
+npm run lint      # ESLint
+npm run format    # Prettier
+npm run typecheck # TypeScript
 ```
 
 ---
 
 ## 📚 Documentation
 
-- **[Architecture](docs/architecture/overview.md)**: High-level design and component interactions
-- **[Tool System](docs/architecture/tool-system-design.md)**: Tool implementation and scheduling
-- **[MCP Integration](docs/architecture/mcp-integration-guide.md)**: Model Context Protocol server integration
-- **[CLI Commands](docs/cli/commands.md)**: Command reference
-- **[Contributing Guide](CONTRIBUTING.md)**: Detailed contribution instructions
-- **[Third-Party Models](docs/third-party-models.md)**: External model API configuration
+- 📖 [Architecture](docs/architecture/overview.md)
+- 🔧 [Tool System](docs/architecture/tool-system-design.md)
+- 🔌 [MCP Integration](docs/architecture/mcp-integration-guide.md)
+- 💻 [CLI Commands](docs/cli/commands.md)
+- 🤝 [Contributing](CONTRIBUTING.md)
+- 🔑 [Third-Party Models](docs/third-party-models.md)
 
 ---
 
 ## 🤝 Contributing
 
-We welcome contributions! Please follow these steps:
+We welcome contributions! Here's how to get started:
 
-1. Fork the repository and create a feature branch
-2. Ensure changes pass existing tests and linting
-3. Add tests for new functionality
-4. Update documentation if needed
-5. Submit a PR with a clear description
-
-### Code Standards
-
-- Use TypeScript strict mode
-- Follow ESLint and Prettier configurations
-- Write meaningful commit messages
-- Consider bundle size when adding dependencies
+1. 🍴 Fork the repository
+2. 🌿 Create a feature branch
+3. ✅ Ensure tests pass
+4. 📝 Submit a PR
 
 ---
 
@@ -357,28 +207,18 @@ MIT License - See [LICENSE](./LICENSE)
 
 ## 🙏 Acknowledgments
 
-- Built with [Ink](https://github.com/vadimdemedes/ink) for terminal UI
-- Powered by [xAgent Platform](https://platform.xagent.cn/)
-- Uses [Vitest](https://vitest.dev/) for testing
-- Icons from [Heroicons](https://heroicons.com/)
+<div align="center">
 
----
+Built with ❤️ using [Ink](https://github.com/vadimdemedes/ink) • Powered by [xAgent Platform](https://platform.xagent.cn/)
 
-## 📞 Support
-
-- **Documentation**: https://platform.xagent.cn/docs/
-- **GitHub Issues**: https://github.com/xagent-ai/xagent-cli/issues
-- **Discussions**: https://github.com/xagent-ai/xagent-cli/discussions
-<!-- - **WeChat Group**: Scan the QR code below to join -->
-
-<!-- ![WeChat group](./assets/xagent-wechat.png) -->
+</div>
 
 ---
 
 <div align="center">
 
-**Empowering Your Digital Life with AI**
+### 🌟 Star us on GitHub!
 
-Made with ❤️ by the xAgent Team
+**Empowering Your Digital Life with AI**
 
 </div>

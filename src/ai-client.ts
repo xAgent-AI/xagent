@@ -57,12 +57,31 @@ export interface ChatCompletionResponse {
   };
 }
 
-// 检测是否为 Anthropic 兼容 API
-// 包括: Anthropic 官方 API 和 MiniMax-M2 (使用标准端点支持 Anthropic 格式)
+// 检测是否为 Anthropic 兼容 API（使用 x-api-key 认证头）
 function isAnthropicCompatible(baseUrl: string): boolean {
   return baseUrl.includes('anthropic') || 
          baseUrl.includes('minimaxi.com') ||
          baseUrl.includes('minimax.chat');
+}
+
+// MiniMax API 路径检测
+function detectMiniMaxAPI(baseUrl: string): boolean {
+  return baseUrl.includes('minimax.chat') || 
+         baseUrl.includes('minimaxi.com');
+}
+
+// 获取 MiniMax 的正确端点路径
+function getMiniMaxEndpoint(baseUrl: string): { endpoint: string; format: 'anthropic' | 'openai' } {
+  // MiniMax Anthropic 格式: https://api.minimax.chat/anthropic + /v1/messages
+  if (baseUrl.includes('/anthropic')) {
+    return { endpoint: '/v1/messages', format: 'anthropic' };
+  }
+  // MiniMax OpenAI 格式: https://api.minimaxi.com/v1 + /chat/completions
+  if (baseUrl.includes('/v1') && !baseUrl.includes('/anthropic')) {
+    return { endpoint: '/chat/completions', format: 'openai' };
+  }
+  // 默认使用 Anthropic 格式
+  return { endpoint: '/v1/messages', format: 'anthropic' };
 }
 
 export class AIClient {
@@ -71,12 +90,30 @@ export class AIClient {
 
   constructor(authConfig: AuthConfig) {
     this.authConfig = authConfig;
+    const isMiniMax = detectMiniMaxAPI(authConfig.baseUrl || '');
+    const isAnthropicOfficial = !isMiniMax && isAnthropicCompatible(authConfig.baseUrl || '');
+    
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    
+    if (isMiniMax) {
+      // MiniMax: 使用 x-api-key 认证头
+      headers['x-api-key'] = authConfig.apiKey || '';
+      headers['anthropic-version'] = '2023-06-01';
+    } else if (isAnthropicOfficial) {
+      // Anthropic 官方: 使用 x-api-key 认证头
+      headers['x-api-key'] = authConfig.apiKey || '';
+      headers['anthropic-version'] = '2023-06-01';
+      headers['anthropic-dangerous-direct-browser-access'] = 'true';
+    } else {
+      // 其他 OpenAI 兼容: 使用 Bearer token
+      headers['Authorization'] = `Bearer ${authConfig.apiKey}`;
+    }
+    
     this.client = axios.create({
       baseURL: authConfig.baseUrl,
-      headers: {
-        'Authorization': `Bearer ${authConfig.apiKey}`,
-        'Content-Type': 'application/json'
-      },
+      headers,
       timeout: 120000
     });
   }
@@ -147,90 +184,20 @@ export class AIClient {
     return { system, messages: anthropicMessages };
   }
 
-  // 将 Anthropic 响应转换为 OpenAI 格式
-  private convertFromAnthropicResponse(anthropicResponse: any): ChatCompletionResponse {
-    // MiniMax 返回的响应中，content 在 choices[0].message.content
-    const message = anthropicResponse.choices?.[0]?.message;
-    const content = message?.content;
-    // console.error('[CONVERT DEBUG] raw content:', JSON.stringify(content));
-    let textContent = '';
-    let reasoningContent = '';
-    const toolCalls: any[] = [];
-
-    // MiniMax 可能返回字符串或数组
-    if (typeof content === 'string') {
-      
-      const trimmedContent = content.trim();
-      // console.error('[CONVERT DEBUG] trimmedContent:', JSON.stringify(trimmedContent));
-      
-      if (trimmedContent.length === 0) {
-        textContent = '';
-      } else {
-        const lines = trimmedContent.split('\n').filter(line => line.trim().length > 0);
-        // console.error('[CONVERT DEBUG] lines:', lines);
-        
-        if (lines.length >= 2) {
-          const lastLine = lines[lines.length - 1].trim();
-          // console.error('[CONVERT DEBUG] lastLine:', JSON.stringify(lastLine));
-          if (lastLine.length < 50 && /^[0-9+\-*/=.\s]+$/.test(lastLine)) {
-            textContent = lastLine;
-          } else {
-            textContent = trimmedContent;
-          }
-        } else {
-          textContent = trimmedContent;
-        }
-      }
-    } else if (Array.isArray(content)) {
-      for (const block of content) {
-        if (block.type === 'text') {
-          textContent += block.text || '';
-        } else if (block.type === 'thinking') {
-          reasoningContent += block.thinking || '';
-        } else if (block.type === 'tool_use') {
-          toolCalls.push({
-            id: block.id,
-            type: 'function',
-            function: {
-              name: block.name,
-              arguments: JSON.stringify(block.input || {})
-            }
-          });
-        }
-      }
-    }
-
-    console.error('[CONVERT DEBUG] final textContent:', JSON.stringify(textContent));
-
-    return {
-      id: anthropicResponse.id || `anthropic-${Date.now()}`,
-      object: 'chat.completion',
-      created: Math.floor(Date.now() / 1000),
-      model: anthropicResponse.model || this.authConfig.modelName || 'minimax-m2.1',
-      choices: [{
-        index: 0,
-        message: {
-          role: 'assistant',
-          content: textContent,
-          reasoning_content: reasoningContent || undefined,
-          tool_calls: toolCalls.length > 0 ? toolCalls : undefined
-        },
-        finish_reason: anthropicResponse.stop_reason === 'end_turn' ? 'stop' : 
-                       anthropicResponse.stop_reason === 'max_tokens' ? 'length' : 'stop'
-      }],
-      usage: anthropicResponse.usage
-    };
-  }
-
   async chatCompletion(
     messages: Message[],
     options: ChatCompletionOptions = {}
   ): Promise<ChatCompletionResponse> {
     const model = options.model || this.authConfig.modelName || 'gpt-4';
-    const isAnthropic = isAnthropicCompatible(this.authConfig.baseUrl || '');
+    const isMiniMax = detectMiniMaxAPI(this.authConfig.baseUrl || '');
 
+    if (isMiniMax) {
+      return this.minimaxChatCompletion(messages, options);
+    }
+
+    const isAnthropic = isAnthropicCompatible(this.authConfig.baseUrl || '');
     if (isAnthropic) {
-      return this.anthropicChatCompletion(messages, options);
+      return this.anthropicNativeChatCompletion(messages, options);
     }
 
     // OpenAI 格式请求
@@ -270,20 +237,18 @@ export class AIClient {
     }
   }
 
-  // Anthropic 兼容 API 请求
-  private async anthropicChatCompletion(
+  // Anthropic 官方原生 API（使用 /v1/messages 端点）
+  private async anthropicNativeChatCompletion(
     messages: Message[],
     options: ChatCompletionOptions = {}
   ): Promise<ChatCompletionResponse> {
     const { system, messages: anthropicMessages } = this.convertToAnthropicFormat(messages);
-    const isMiniMax = this.authConfig.baseUrl?.includes('minimaxi.com') || 
-                      this.authConfig.baseUrl?.includes('minimax.chat');
 
     const requestBody: any = {
-      model: options.model || this.authConfig.modelName || 'MiniMax-M2',
+      model: options.model || this.authConfig.modelName || 'claude-sonnet-4-20250514',
       messages: anthropicMessages,
       temperature: options.temperature ?? 1.0,
-      stream: options.stream ?? false,
+      stream: false,
       max_tokens: options.maxTokens || 4096
     };
 
@@ -291,48 +256,39 @@ export class AIClient {
       requestBody.system = system;
     }
 
-    // MiniMax 使用 OpenAI 格式的工具，其他 Anthropic 兼容使用 Anthropic 格式
+    // Anthropic 原生工具格式
     if (options.tools && options.tools.length > 0) {
-      if (isMiniMax) {
-        // MiniMax: 使用 OpenAI 格式
-        requestBody.tools = options.tools;
-        requestBody.tool_choice = options.toolChoice || 'auto';
-      } else {
-        // Anthropic 官方/其他兼容: 使用 Anthropic 格式
-        requestBody.tools = options.tools.map(tool => ({
-          name: tool.function.name,
-          description: tool.function.description,
-          input_schema: tool.function.parameters || { type: 'object', properties: {} }
-        }));
-        
-        // 转换 tool_choice 从 OpenAI 格式到 Anthropic 格式
-        const toolChoice = options.toolChoice;
-        if (toolChoice === 'none') {
-          requestBody.tool_choice = { type: 'auto' };
-        } else if (toolChoice && typeof toolChoice === 'object') {
-          if (toolChoice.type === 'function' && toolChoice.function) {
-            requestBody.tool_choice = { type: 'tool', tool: { name: toolChoice.function.name } };
-          } else {
-            requestBody.tool_choice = { type: 'auto' };
-          }
+      requestBody.tools = options.tools.map(tool => ({
+        name: tool.function.name,
+        description: tool.function.description,
+        input_schema: tool.function.parameters || { type: 'object', properties: {} }
+      }));
+      
+      // 转换 tool_choice 从 OpenAI 格式到 Anthropic 格式
+      const toolChoice = options.toolChoice;
+      if (toolChoice === 'none') {
+        requestBody.tool_choice = { type: 'auto' };
+      } else if (toolChoice && typeof toolChoice === 'object') {
+        if (toolChoice.type === 'function' && toolChoice.function) {
+          requestBody.tool_choice = { type: 'tool', tool: { name: toolChoice.function.name } };
         } else {
           requestBody.tool_choice = { type: 'auto' };
         }
+      } else {
+        requestBody.tool_choice = { type: 'auto' };
       }
     }
 
-    // MiniMax 不支持 thinking 模式，跳过
-    if (options.thinkingTokens && options.thinkingTokens > 0 && !isMiniMax) {
+    // Anthropic thinking 模式
+    if (options.thinkingTokens && options.thinkingTokens > 0) {
       requestBody.thinking = { type: 'enabled', budget_tokens: options.thinkingTokens };
     }
 
     try {
-      // MiniMax-M2 使用标准端点
+      // 使用 Anthropic 原生端点 /v1/messages
+      const response = await this.client.post('/v1/messages', requestBody);
       
-      const response = await this.client.post('/v1/chat/completions', requestBody);
-      // console.error('[DEBUG] API response status:', response.status);
-      // console.error('[DEBUG] API response data:', JSON.stringify(response.data).substring(0, 300));
-      return this.convertFromAnthropicResponse(response.data);
+      return this.convertFromAnthropicNativeResponse(response.data);
     } catch (error: any) {
       if (error.response) {
         throw new Error(
@@ -346,14 +302,189 @@ export class AIClient {
     }
   }
 
+  // MiniMax API（根据 baseUrl 自动选择 Anthropic 或 OpenAI 格式）
+  private async minimaxChatCompletion(
+    messages: Message[],
+    options: ChatCompletionOptions = {}
+  ): Promise<ChatCompletionResponse> {
+    const { system, messages: anthropicMessages } = this.convertToAnthropicFormat(messages);
+    const { endpoint, format } = getMiniMaxEndpoint(this.authConfig.baseUrl || '');
+
+    const requestBody: any = {
+      model: options.model || this.authConfig.modelName || 'MiniMax-M2',
+      messages: format === 'anthropic' ? anthropicMessages : messages,
+      temperature: options.temperature ?? 1.0,
+      stream: false,
+      max_tokens: options.maxTokens || 4096
+    };
+
+    if (system && format === 'anthropic') {
+      requestBody.system = system;
+    }
+
+    if (format === 'anthropic') {
+      // Anthropic 格式的工具
+      if (options.tools && options.tools.length > 0) {
+        requestBody.tools = options.tools.map(tool => ({
+          name: tool.function.name,
+          description: tool.function.description,
+          input_schema: tool.function.parameters || { type: 'object', properties: {} }
+        }));
+        
+        const toolChoice = options.toolChoice;
+        if (toolChoice === 'none') {
+          requestBody.tool_choice = { type: 'auto' };
+        } else if (toolChoice && typeof toolChoice === 'object') {
+          if (toolChoice.type === 'function' && toolChoice.function) {
+            requestBody.tool_choice = { type: 'tool', tool: { name: toolChoice.function.name } };
+          } else {
+            requestBody.tool_choice = { type: 'auto' };
+          }
+        } else {
+          requestBody.tool_choice = { type: 'auto' };
+        }
+      }
+    } else {
+      // OpenAI 格式的工具
+      if (options.tools && options.tools.length > 0) {
+        requestBody.tools = options.tools;
+        requestBody.tool_choice = options.toolChoice || 'auto';
+      }
+    }
+
+    try {
+      // MiniMax 使用正确的端点
+      const response = await this.client.post(endpoint, requestBody);
+      
+      if (format === 'anthropic') {
+        return this.convertFromAnthropicNativeResponse(response.data);
+      } else {
+        return this.convertFromMiniMaxResponse(response.data);
+      }
+    } catch (error: any) {
+      if (error.response) {
+        throw new Error(
+          `API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`
+        );
+      } else if (error.request) {
+        throw new Error('Network error: No response received from server');
+      } else {
+        throw new Error(`Request error: ${error.message}`);
+      }
+    }
+  }
+
+  // 将 Anthropic 原生响应转换为统一格式
+  private convertFromAnthropicNativeResponse(anthropicResponse: any): ChatCompletionResponse {
+    const content = anthropicResponse.content || [];
+    let textContent = '';
+    let reasoningContent = '';
+    const toolCalls: any[] = [];
+
+    for (const block of content) {
+      if (block.type === 'text') {
+        textContent += block.text || '';
+      } else if (block.type === 'thinking') {
+        reasoningContent += block.thinking || '';
+      } else if (block.type === 'tool_use') {
+        toolCalls.push({
+          id: block.id,
+          type: 'function',
+          function: {
+            name: block.name,
+            arguments: JSON.stringify(block.input || {})
+          }
+        });
+      }
+    }
+
+    return {
+      id: anthropicResponse.id || `anthropic-${Date.now()}`,
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: anthropicResponse.model || this.authConfig.modelName || 'claude-sonnet-4-20250514',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: textContent,
+          reasoning_content: reasoningContent || undefined,
+          tool_calls: toolCalls.length > 0 ? toolCalls : undefined
+        },
+        finish_reason: anthropicResponse.stop_reason === 'end_turn' ? 'stop' : 
+                       anthropicResponse.stop_reason === 'max_tokens' ? 'length' : 'stop'
+      }],
+      usage: anthropicResponse.usage ? {
+        prompt_tokens: anthropicResponse.usage.input_tokens || 0,
+        completion_tokens: anthropicResponse.usage.output_tokens || 0,
+        total_tokens: (anthropicResponse.usage.input_tokens || 0) + (anthropicResponse.usage.output_tokens || 0)
+      } : undefined
+    };
+  }
+
+  // 将 MiniMax 响应转换为统一格式
+  private convertFromMiniMaxResponse(minimaxResponse: any): ChatCompletionResponse {
+    const message = minimaxResponse.choices?.[0]?.message;
+    const content = message?.content;
+    let textContent = '';
+    let reasoningContent = '';
+    const toolCalls: any[] = [];
+
+    if (typeof content === 'string') {
+      textContent = content.trim();
+    } else if (Array.isArray(content)) {
+      for (const block of content) {
+        if (block.type === 'text') {
+          textContent += block.text || '';
+        } else if (block.type === 'thinking') {
+          reasoningContent += block.thinking || '';
+        } else if (block.type === 'tool_use') {
+          toolCalls.push({
+            id: block.id,
+            type: 'function',
+            function: {
+              name: block.name,
+              arguments: JSON.stringify(block.input || {})
+            }
+          });
+        }
+      }
+    }
+
+    return {
+      id: minimaxResponse.id || `minimax-${Date.now()}`,
+      object: 'chat.completion',
+      created: Math.floor(Date.now() / 1000),
+      model: minimaxResponse.model || this.authConfig.modelName || 'MiniMax-M2',
+      choices: [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: textContent,
+          reasoning_content: reasoningContent || undefined,
+          tool_calls: toolCalls.length > 0 ? toolCalls : undefined
+        },
+        finish_reason: minimaxResponse.stop_reason === 'end_turn' ? 'stop' : 
+                       minimaxResponse.stop_reason === 'max_tokens' ? 'length' : 'stop'
+      }],
+      usage: minimaxResponse.usage
+    };
+  }
+
   async *streamChatCompletion(
     messages: Message[],
     options: ChatCompletionOptions = {}
   ): AsyncGenerator<string, void, unknown> {
-    const isAnthropic = isAnthropicCompatible(this.authConfig.baseUrl || '');
+    const isMiniMax = detectMiniMaxAPI(this.authConfig.baseUrl || '');
 
+    if (isMiniMax) {
+      yield* this.minimaxStreamChatCompletion(messages, options);
+      return;
+    }
+
+    const isAnthropic = isAnthropicCompatible(this.authConfig.baseUrl || '');
     if (isAnthropic) {
-      yield* this.anthropicStreamChatCompletion(messages, options);
+      yield* this.anthropicNativeStreamChatCompletion(messages, options);
       return;
     }
 
@@ -453,18 +584,15 @@ export class AIClient {
     }
   }
 
-  // Anthropic 兼容流式响应
-  private async *anthropicStreamChatCompletion(
+  // Anthropic 原生流式响应（/v1/messages 端点）
+  private async *anthropicNativeStreamChatCompletion(
     messages: Message[],
     options: ChatCompletionOptions = {}
   ): AsyncGenerator<string, void, unknown> {
     const { system, messages: anthropicMessages } = this.convertToAnthropicFormat(messages);
 
-    const isMiniMax = this.authConfig.baseUrl?.includes('minimaxi.com') || 
-                      this.authConfig.baseUrl?.includes('minimax.chat');
-
     const requestBody: any = {
-      model: options.model || this.authConfig.modelName || 'MiniMax-M2',
+      model: options.model || this.authConfig.modelName || 'claude-sonnet-4-20250514',
       messages: anthropicMessages,
       temperature: options.temperature ?? 1.0,
       stream: true,
@@ -475,21 +603,117 @@ export class AIClient {
       requestBody.system = system;
     }
 
-    // MiniMax 使用 OpenAI 格式的工具，其他 Anthropic 兼容使用 Anthropic 格式
+    // Anthropic 原生工具格式
     if (options.tools && options.tools.length > 0) {
-      if (isMiniMax) {
-        // MiniMax: 使用 OpenAI 格式
-        requestBody.tools = options.tools;
-        requestBody.tool_choice = options.toolChoice || 'auto';
+      requestBody.tools = options.tools.map(tool => ({
+        name: tool.function.name,
+        description: tool.function.description,
+        input_schema: tool.function.parameters || { type: 'object', properties: {} }
+      }));
+      
+      const toolChoice = options.toolChoice;
+      if (toolChoice === 'none') {
+        requestBody.tool_choice = { type: 'auto' };
+      } else if (toolChoice && typeof toolChoice === 'object') {
+        if (toolChoice.type === 'function' && toolChoice.function) {
+          requestBody.tool_choice = { type: 'tool', tool: { name: toolChoice.function.name } };
+        } else {
+          requestBody.tool_choice = { type: 'auto' };
+        }
       } else {
-        // Anthropic 官方/其他兼容: 使用 Anthropic 格式
+        requestBody.tool_choice = { type: 'auto' };
+      }
+    }
+
+    if (options.thinkingTokens && options.thinkingTokens > 0) {
+      requestBody.thinking = { type: 'enabled', budget_tokens: options.thinkingTokens };
+    }
+
+    try {
+      // Anthropic 原生流式端点 /v1/messages
+      const response = await this.client.post('/v1/messages', requestBody, {
+        responseType: 'stream'
+      });
+
+      let buffer = '';
+
+      for await (const chunk of response.data) {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmedLine = line.trim();
+          if (!trimmedLine) continue;
+
+          // Anthropic 流式格式: data: {"type":"content_block_delta",...}
+          if (trimmedLine.startsWith('data: ')) {
+            const data = trimmedLine.slice(6);
+
+            try {
+              const parsed = JSON.parse(data);
+
+              // Anthropic 事件类型
+              if (parsed.type === 'content_block_delta') {
+                if (parsed.delta?.type === 'text_delta' && parsed.delta.text) {
+                  yield parsed.delta.text;
+                } else if (parsed.delta?.type === 'thinking_delta' && parsed.delta.thinking) {
+                  yield parsed.delta.thinking;
+                }
+              } else if (parsed.type === 'message_delta') {
+                if (parsed.delta?.stop_reason) {
+                  // 消息结束
+                  return;
+                }
+              }
+            } catch (e) {
+              // 忽略解析错误
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      if (error.response) {
+        throw new Error(
+          `API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`
+        );
+      } else if (error.request) {
+        throw new Error('Network error: No response received from server');
+      } else {
+        throw new Error(`Request error: ${error.message}`);
+      }
+    }
+  }
+
+  // MiniMax 流式响应（根据 baseUrl 自动选择格式）
+  private async *minimaxStreamChatCompletion(
+    messages: Message[],
+    options: ChatCompletionOptions = {}
+  ): AsyncGenerator<string, void, unknown> {
+    const { system, messages: anthropicMessages } = this.convertToAnthropicFormat(messages);
+    const { endpoint, format } = getMiniMaxEndpoint(this.authConfig.baseUrl || '');
+
+    const requestBody: any = {
+      model: options.model || this.authConfig.modelName || 'MiniMax-M2',
+      messages: format === 'anthropic' ? anthropicMessages : messages,
+      temperature: options.temperature ?? 1.0,
+      stream: true,
+      max_tokens: options.maxTokens || 4096
+    };
+
+    if (system && format === 'anthropic') {
+      requestBody.system = system;
+    }
+
+    if (format === 'anthropic') {
+      // Anthropic 格式的工具
+      if (options.tools && options.tools.length > 0) {
         requestBody.tools = options.tools.map(tool => ({
           name: tool.function.name,
           description: tool.function.description,
           input_schema: tool.function.parameters || { type: 'object', properties: {} }
         }));
         
-        // 转换 tool_choice 从 OpenAI 格式到 Anthropic 格式
         const toolChoice = options.toolChoice;
         if (toolChoice === 'none') {
           requestBody.tool_choice = { type: 'auto' };
@@ -503,16 +727,17 @@ export class AIClient {
           requestBody.tool_choice = { type: 'auto' };
         }
       }
-    }
-
-    // MiniMax 不支持 thinking 模式，跳过
-    if (options.thinkingTokens && options.thinkingTokens > 0 && !isMiniMax) {
-      requestBody.thinking = { type: 'enabled', budget_tokens: options.thinkingTokens };
+    } else {
+      // OpenAI 格式的工具
+      if (options.tools && options.tools.length > 0) {
+        requestBody.tools = options.tools;
+        requestBody.tool_choice = options.toolChoice || 'auto';
+      }
     }
 
     try {
-      // MiniMax-M2 使用标准端点
-      const response = await this.client.post('/v1/chat/completions', requestBody, {
+      // MiniMax 使用正确的端点
+      const response = await this.client.post(endpoint, requestBody, {
         responseType: 'stream'
       });
 
@@ -525,36 +750,49 @@ export class AIClient {
 
         for (const line of lines) {
           const trimmedLine = line.trim();
-          if (!trimmedLine || trimmedLine === 'data: [DONE]') continue;
+          if (!trimmedLine) continue;
 
-          if (trimmedLine.startsWith('data: ')) {
-            const data = trimmedLine.slice(5);
+          // 根据格式解析不同的流式响应
+          if (format === 'anthropic') {
+            // Anthropic SSE 格式: data: {"type":"content_block_delta",...}
+            if (trimmedLine.startsWith('data: ')) {
+              const data = trimmedLine.slice(6);
 
-            try {
-              const parsed = JSON.parse(data);
+              try {
+                const parsed = JSON.parse(data);
 
-              if (isMiniMax) {
-                // MiniMax 使用 OpenAI 格式的流式响应
-                // {"id":"...","choices":[{"index":0,"delta":{"content":"...","role":"assistant"}}],"created":...}
-                const delta = parsed.choices?.[0]?.delta;
-                if (delta?.content) {
-                  yield delta.content;
-                } else if (delta?.reasoning_content) {
-                  yield delta.reasoning_content;
-                }
-              } else {
-                // Anthropic 官方格式
-                // {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}
                 if (parsed.type === 'content_block_delta') {
                   if (parsed.delta?.type === 'text_delta' && parsed.delta.text) {
                     yield parsed.delta.text;
                   } else if (parsed.delta?.type === 'thinking_delta' && parsed.delta.thinking) {
                     yield parsed.delta.thinking;
                   }
+                } else if (parsed.type === 'message_delta') {
+                  if (parsed.delta?.stop_reason) {
+                    return;
+                  }
                 }
+              } catch (e) {
+                // 忽略解析错误
               }
-            } catch (e) {
-              // 忽略解析错误
+            }
+          } else {
+            // OpenAI SSE 格式: data: {...}
+            if (trimmedLine.startsWith('data: ')) {
+              const data = trimmedLine.slice(6);
+              if (data === '[DONE]') continue;
+
+              try {
+                const parsed = JSON.parse(data);
+                const delta = parsed.choices?.[0]?.delta;
+                if (delta?.content) {
+                  yield delta.content;
+                } else if (delta?.reasoning_content) {
+                  yield delta.reasoning_content;
+                }
+              } catch (e) {
+                // 忽略解析错误
+              }
             }
           }
         }
@@ -585,7 +823,23 @@ export class AIClient {
   updateAuthConfig(authConfig: AuthConfig): void {
     this.authConfig = authConfig;
     this.client.defaults.baseURL = authConfig.baseUrl;
-    this.client.defaults.headers['Authorization'] = `Bearer ${authConfig.apiKey}`;
+    
+    const isMiniMax = detectMiniMaxAPI(authConfig.baseUrl || '');
+    const isAnthropic = !isMiniMax && isAnthropicCompatible(authConfig.baseUrl || '');
+    
+    if (isMiniMax || isAnthropic) {
+      // MiniMax/Anthropic: 使用 x-api-key 认证头
+      this.client.defaults.headers['x-api-key'] = authConfig.apiKey || '';
+      this.client.defaults.headers['anthropic-version'] = '2023-06-01';
+      // 清除 Bearer 头
+      delete this.client.defaults.headers['Authorization'];
+    } else {
+      // OpenAI 兼容: 使用 Bearer token
+      this.client.defaults.headers['Authorization'] = `Bearer ${authConfig.apiKey}`;
+      // 清除 x-api-key 头
+      delete this.client.defaults.headers['x-api-key'];
+      delete this.client.defaults.headers['anthropic-version'];
+    }
   }
 
   getAuthConfig(): AuthConfig {

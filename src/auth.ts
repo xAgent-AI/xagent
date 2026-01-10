@@ -53,7 +53,7 @@ const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
   },
   {
     name: 'MiniMax-M2',
-    baseUrl: 'https://api.minimaxi.com',
+    baseUrl: 'https://api.minimax.chat/anthropic',
     defaultModel: 'MiniMax-M2',
     description: 'MiniMax-M2 (Anthropic-compatible format)',
     models: ['MiniMax-M2', 'MiniMax-M2-Stable']
@@ -308,19 +308,22 @@ export class AuthService {
 
   private async validateApiKey(): Promise<boolean> {
     try {
-      // Check if it's MiniMax-M2 (uses Anthropic format with standard endpoint)
-      if (this.authConfig.baseUrl?.includes('minimaxi.com')) {
-        // MiniMax-M2 uses standard endpoint with Anthropic format
+      // Check if it's MiniMax-M2 (uses Anthropic format)
+      if ((this.authConfig.baseUrl?.includes('minimax.chat') || 
+           this.authConfig.baseUrl?.includes('minimaxi.com')) &&
+          this.authConfig.baseUrl?.includes('anthropic')) {
+        // MiniMax-M2 uses Anthropic format with x-api-key header
         const response = await axios.post(
-          `${this.authConfig.baseUrl}/v1/chat/completions`,
+          `${this.authConfig.baseUrl}/v1/messages`,
           {
             model: 'MiniMax-M2',
             max_tokens: 1,
-            messages: [{ role: 'user', content: [{ type: 'text', text: 'test' }] }]
+            messages: [{ role: 'user', content: 'test' }]
           },
           {
             headers: {
-              'Authorization': `Bearer ${this.authConfig.apiKey}`,
+              'x-api-key': this.authConfig.apiKey,
+              'anthropic-version': '2023-06-01',
               'Content-Type': 'application/json'
             },
             timeout: 10000

@@ -654,6 +654,9 @@ export class InteractiveSession {
         : '';
       const reasoningContent = assistantMessage.reasoning_content || '';
 
+      // console.error('[SESSION DEBUG] assistantMessage:', JSON.stringify(assistantMessage).substring(0, 200));
+      // console.error('[SESSION DEBUG] content:', content);
+
       // Display reasoning content if available and thinking mode is enabled
       if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
         this.displayThinkingContent(reasoningContent);

@@ -177,6 +177,24 @@ npm run typecheck # TypeScript
 
 ---
 
+## ⚙️ Configuration
+
+Customize xAgent by editing `~/.xagent/settings.json`:
+
+```json
+{
+  "theme": "Default",
+  "selectedAuthType": "xagent",
+  "apiKey": "your-xagent-key",
+  "baseUrl": "https://apis.xagent.cn/v1",
+  "modelName": "Qwen3-Coder",
+  "executionMode": "smart",
+  "language": "en"
+}
+```
+
+---
+
 ## 📚 Documentation
 
 - 📖 [Architecture](docs/architecture/overview.md)

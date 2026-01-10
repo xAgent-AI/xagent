@@ -177,6 +177,24 @@ npm run typecheck # TypeScript
 
 ---
 
+## ⚙️ 配置说明
+
+通过编辑 `~/.xagent/settings.json` 自定义 xAgent：
+
+```json
+{
+  "theme": "Default",
+  "selectedAuthType": "xagent",
+  "apiKey": "your-xagent-key",
+  "baseUrl": "https://apis.xagent.cn/v1",
+  "modelName": "Qwen3-Coder",
+  "executionMode": "smart",
+  "language": "zh"
+}
+```
+
+---
+
 ## 📚 文档
 
 - 📖 [架构设计](docs/architecture/overview.md)

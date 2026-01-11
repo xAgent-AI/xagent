@@ -224,7 +224,6 @@ export class AgentManager {
     if (agent.agentType === 'general-purpose') {
       return allTools
         .filter(tool => tool.allowedModes.includes(executionMode))
-        .filter(tool => !['gui_operate', 'gui_screenshot', 'gui_cleanup'].includes(tool.name))
         .map(tool => tool.name);
     }
 
@@ -479,7 +478,7 @@ Normalized coordinates are relative to the screen size, so x=0.5 means 50% of th
 ## User Instruction
 {instruction}`,
     whenToUse: 'Use for browser automation tasks, web scraping, form filling, and visual web interactions',
-    allowedTools: ['gui_operate', 'gui_screenshot', 'gui_cleanup'],
+    allowedTools: [],
     isInheritMcps: false,
     proactive: false,
     color: '#9B59B6',

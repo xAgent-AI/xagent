@@ -18,6 +18,7 @@ import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
+import { Logger, LogLevel } from './logger.js';
 
 export class InteractiveSession {
   private conversationManager: ConversationManager;
@@ -422,7 +423,7 @@ export class InteractiveSession {
     // 检查是否需要压缩上下文
     await this.checkAndCompressContext(lastUserMessage);
 
-    await this.generateResponse(agent, thinkingTokens);
+    await this.generateResponse(thinkingTokens);
   }
 
   private displayThinkingContent(reasoningContent: string): void {
@@ -593,7 +594,7 @@ export class InteractiveSession {
     }
   }
 
-  private async generateResponse(agent?: any, thinkingTokens: number = 0): Promise<void> {
+  private async generateResponse(thinkingTokens: number = 0): Promise<void> {
     if (!this.aiClient) {
       console.log(colors.error('AI client not initialized'));
       return;
@@ -617,11 +618,15 @@ export class InteractiveSession {
     try {
       const memory = await this.memoryManager.loadMemory();
       const toolRegistry = getToolRegistry();
-      const availableTools = this.executionMode !== ExecutionMode.DEFAULT
-        ? toolRegistry.getToolDefinitions()
+      const allowedToolNames = this.currentAgent
+        ? this.agentManager.getAvailableToolsForAgent(this.currentAgent, this.executionMode)
+        : [];
+      const allToolDefinitions = toolRegistry.getToolDefinitions();
+      const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
+        ? allToolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
         : [];
 
-      const baseSystemPrompt = agent?.systemPrompt || 'You are a helpful AI assistant.';
+      const baseSystemPrompt = this.currentAgent?.systemPrompt;
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
       const enhancedSystemPrompt = systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
@@ -632,6 +637,27 @@ export class InteractiveSession {
           content: msg.content
         }))
       ];
+
+      // Debug: 打印完整的 prompt 信息
+      // const logger = new Logger({ minLevel: LogLevel.DEBUG });
+      // logger.debug('[DEBUG] 即将发送给 AI 的完整 Prompt:');
+      // console.log('\n' + '='.repeat(60));
+      // console.log('【SYSTEM PROMPT】');
+      // console.log('-'.repeat(60));
+      // console.log(messages[0]?.content || '(无)');
+      // console.log('='.repeat(60));
+      // console.log('【CONVERSATION】');
+      // console.log('-'.repeat(60));
+      // messages.slice(1).forEach((msg, idx) => {
+      //   const contentStr = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      //   console.log(`[${idx + 1}] [${msg.role}]: ${contentStr.substring(0, 200)}${contentStr.length > 200 ? '...' : ''}`);
+      // });
+      // console.log('='.repeat(60));
+      // console.log(`【AVAILABLE TOOLS】: ${availableTools.length} 个工具`);
+      // availableTools.forEach((tool: any) => {
+      //   console.log(`  - ${tool.function.name}`);
+      // });
+      // console.log('='.repeat(60) + '\n');
 
       const operationId = `ai-response-${Date.now()}`;
       const responsePromise = this.aiClient.chatCompletion(messages, {
@@ -823,7 +849,7 @@ export class InteractiveSession {
       }
     }
 
-    await this.generateResponse(this.currentAgent);
+    await this.generateResponse();
   }
 
   /**

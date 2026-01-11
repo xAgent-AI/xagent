@@ -368,7 +368,7 @@ program
 
       if (options.url) {
         console.log(colors.textMuted(`Navigating to: ${options.url}`));
-        await guiAgent.execute({
+        await guiAgent.executeSingleAction({
           thought: 'Navigate to the specified URL',
           action: `navigate(url='${options.url}')`
         });

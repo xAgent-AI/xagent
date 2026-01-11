@@ -73,3 +73,4 @@ docs/generated/
 *.pid.lock
 IFLOW*
 XAGENT*
+UI-TARS-desktop-main/

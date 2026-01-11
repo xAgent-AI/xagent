@@ -1,22 +1,23 @@
 /**
  * Browser Operator using Puppeteer
  * Provides browser automation capabilities for gui-subagent
+ * Updated to match UI-TARS ExecuteParams format
  */
 
 import puppeteer, { type Browser, type Page, type LaunchOptions } from 'puppeteer';
-import { 
-  type OperatorConfig, 
-  type ScreenContext, 
-  type ScreenshotOutput, 
-  type ExecuteParams, 
-  type ExecuteOutput 
+import {
+  type OperatorConfig,
+  type ScreenContext,
+  type ScreenshotOutput,
+  type ExecuteParams,
+  type ExecuteOutput,
+  type PredictionParsed,
 } from '../types/operator.js';
-import { 
-  type Coordinates, 
-  type GUIAction, 
-  type SupportedActionType 
+import {
+  type Coordinates,
+  type SupportedActionType,
 } from '../types/actions.js';
-import { Operator } from './base-operator.js';
+import { Operator, type OperatorManual } from './base-operator.js';
 
 export interface BrowserOperatorOptions {
   config?: OperatorConfig;
@@ -41,7 +42,7 @@ export class BrowserOperator extends Operator {
 
   protected async initialize(): Promise<void> {
     this.logger.info('Initializing browser...');
-    
+
     try {
       const launchOptions: LaunchOptions = {
         headless: this.config.headless ?? false,
@@ -58,7 +59,7 @@ export class BrowserOperator extends Operator {
       }
 
       this.browser = await puppeteer.launch(launchOptions);
-      
+
       const pages = await this.browser.pages();
       this.page = pages[0] || await this.browser.newPage();
 
@@ -69,10 +70,9 @@ export class BrowserOperator extends Operator {
       });
 
       this.screenCtx = {
-        screenWidth: this.config.viewport?.width || 1280,
-        screenHeight: this.config.viewport?.height || 800,
-        scaleX: this.config.deviceScaleFactor || 1,
-        scaleY: this.config.deviceScaleFactor || 1,
+        width: this.config.viewport?.width || 1280,
+        height: this.config.viewport?.height || 800,
+        scaleFactor: this.config.deviceScaleFactor || 1,
       };
 
       this.logger.info('Browser initialized successfully');
@@ -122,6 +122,7 @@ export class BrowserOperator extends Operator {
         status: 'success',
         base64: base64 as string,
         url,
+        scaleFactor: this.screenCtx?.scaleFactor || 1,
       };
     } catch (error) {
       this.logger.error('Screenshot failed:', error);
@@ -133,25 +134,32 @@ export class BrowserOperator extends Operator {
   }
 
   protected async execute(params: ExecuteParams): Promise<ExecuteOutput> {
-    const { actions } = params;
+    const { parsedPrediction } = params;
+    const { action_type, action_inputs } = parsedPrediction;
 
-    for (const action of actions) {
-      await this.executeAction(action);
+    try {
+      await this.executeAction(action_type, action_inputs);
+      return { status: 'success' };
+    } catch (error) {
+      this.logger.error(`Failed to execute action ${action_type}:`, error);
+      return {
+        status: 'failed',
+        errorMessage: (error as Error).message,
+      };
     }
-
-    return { status: 'success' };
   }
 
-  private async executeAction(action: GUIAction): Promise<void> {
-    const { type, inputs } = action;
-
-    switch (type) {
+  private async executeAction(actionType: string, inputs: Record<string, any>): Promise<void> {
+    switch (actionType) {
       case 'click':
+      case 'left_single':
         await this.handleClick(inputs);
         break;
+      case 'left_double':
       case 'double_click':
         await this.handleDoubleClick(inputs);
         break;
+      case 'right_single':
       case 'right_click':
         await this.handleRightClick(inputs);
         break;
@@ -180,7 +188,7 @@ export class BrowserOperator extends Operator {
         this.logger.info('User interaction requested');
         break;
       default:
-        this.logger.warn(`Unsupported action: ${type}`);
+        this.logger.warn(`Unsupported action: ${actionType}`);
     }
   }
 
@@ -191,12 +199,12 @@ export class BrowserOperator extends Operator {
     return this.page;
   }
 
-  private async calculateRealCoords(coords: Coordinates): Promise<{ realX: number; realY: number }> {
+  private async calculateRealCoords(coords: Coordinates): Promise<{ x: number; y: number }> {
     if (!coords.normalized) {
       if (!coords.raw) {
         throw new Error('Invalid coordinates');
       }
-      return { realX: coords.raw.x, realY: coords.raw.y };
+      return { x: coords.raw.x, y: coords.raw.y };
     }
 
     const ctx = this.screenCtx;
@@ -205,50 +213,41 @@ export class BrowserOperator extends Operator {
     }
 
     return {
-      realX: coords.normalized.x * ctx.screenWidth,
-      realY: coords.normalized.y * ctx.screenHeight,
+      x: coords.normalized.x * ctx.width,
+      y: coords.normalized.y * ctx.height,
     };
   }
 
   private async handleClick(inputs: Record<string, any>): Promise<void> {
-    if (!inputs.point) {
-      throw new Error('Missing point for click');
-    }
+    const point = await this.parsePointFromInput(inputs);
+    if (!point) throw new Error('Missing point for click');
 
     const page = await this.getActivePage();
-    const { realX, realY } = await this.calculateRealCoords(inputs.point);
-
-    this.logger.info(`Clicking at (${realX}, ${realY})`);
-    await page.mouse.move(realX, realY);
-    await page.mouse.click(realX, realY);
+    this.logger.info(`Clicking at (${point.x}, ${point.y})`);
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.click(point.x, point.y);
     await new Promise(resolve => setTimeout(resolve, 300));
   }
 
   private async handleDoubleClick(inputs: Record<string, any>): Promise<void> {
-    if (!inputs.point) {
-      throw new Error('Missing point for double click');
-    }
+    const point = await this.parsePointFromInput(inputs);
+    if (!point) throw new Error('Missing point for double click');
 
     const page = await this.getActivePage();
-    const { realX, realY } = await this.calculateRealCoords(inputs.point);
-
-    this.logger.info(`Double clicking at (${realX}, ${realY})`);
-    await page.mouse.move(realX, realY);
-    await page.mouse.click(realX, realY, { clickCount: 2 });
+    this.logger.info(`Double clicking at (${point.x}, ${point.y})`);
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.click(point.x, point.y, { clickCount: 2 });
     await new Promise(resolve => setTimeout(resolve, 300));
   }
 
   private async handleRightClick(inputs: Record<string, any>): Promise<void> {
-    if (!inputs.point) {
-      throw new Error('Missing point for right click');
-    }
+    const point = await this.parsePointFromInput(inputs);
+    if (!point) throw new Error('Missing point for right click');
 
     const page = await this.getActivePage();
-    const { realX, realY } = await this.calculateRealCoords(inputs.point);
-
-    this.logger.info(`Right clicking at (${realX}, ${realY})`);
-    await page.mouse.move(realX, realY);
-    await page.mouse.click(realX, realY, { button: 'right' });
+    this.logger.info(`Right clicking at (${point.x}, ${point.y})`);
+    await page.mouse.move(point.x, point.y);
+    await page.mouse.click(point.x, point.y, { button: 'right' });
     await new Promise(resolve => setTimeout(resolve, 300));
   }
 
@@ -261,8 +260,14 @@ export class BrowserOperator extends Operator {
       return;
     }
 
-    this.logger.info(`Typing: ${content}`);
-    await page.keyboard.type(content, { delay: 50 });
+    // Handle special characters
+    const processedContent = content
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+      .replace(/\\r/g, '\r');
+
+    this.logger.info(`Typing: ${processedContent}`);
+    await page.keyboard.type(processedContent, { delay: 50 });
   }
 
   private async handleHotkey(inputs: Record<string, any>): Promise<void> {
@@ -274,14 +279,15 @@ export class BrowserOperator extends Operator {
     }
 
     this.logger.info(`Pressing hotkey: ${key}`);
-    const keys = key.toLowerCase().split('+');
-    
+    const keys = key.toLowerCase().split('+').map((k: string) => k.trim());
+
     for (const k of keys) {
       await page.keyboard.down(k);
     }
-    
+
     for (let i = keys.length - 1; i >= 0; i--) {
-      await page.keyboard.up(keys[i]);
+      const keyItem = keys[i];
+      await page.keyboard.up(keyItem);
     }
   }
 
@@ -294,8 +300,8 @@ export class BrowserOperator extends Operator {
     }
 
     const ctx = this.screenCtx;
-    const scrollAmount = ctx 
-      ? (direction === 'up' || direction === 'down' ? ctx.screenHeight * 0.8 : ctx.screenWidth * 0.8)
+    const scrollAmount = ctx
+      ? (direction === 'up' || direction === 'down' ? ctx.height * 0.8 : ctx.width * 0.8)
       : 500;
 
     this.logger.info(`Scrolling ${direction} by ${scrollAmount}px`);
@@ -345,7 +351,37 @@ export class BrowserOperator extends Operator {
   private async handleWait(inputs: Record<string, any>): Promise<void> {
     const time = inputs.time || 1;
     this.logger.info(`Waiting for ${time} seconds`);
-    await new Promise(resolve => setTimeout(resolve, time * 1000));
+    await new Promise((resolve) => setTimeout(resolve, time * 1000));
+  }
+
+  private async parsePointFromInput(inputs: Record<string, any>): Promise<{ x: number; y: number } | null> {
+    // Check for point format
+    if (inputs.point) {
+      return this.calculateRealCoords(inputs.point);
+    }
+
+    // Check for box format
+    const boxStr = inputs.start_box || inputs.start_coords;
+    if (boxStr) {
+      const box = this.parseBox(boxStr);
+      if (box) {
+        return { x: (box.x1 + box.x2) / 2, y: (box.y1 + box.y2) / 2 };
+      }
+    }
+
+    return null;
+  }
+
+  private parseBox(boxStr: string): { x1: number; y1: number; x2: number; y2: number } | null {
+    const match = boxStr.match(/[\[\(]?\s*([\d.]+)\s*,\s*([\d.]+)\s*[,]?\s*([\d.]+)?\s*[,]?\s*([\d.]+)?\s*[\]\)]?/);
+    if (!match) return null;
+
+    const x1 = parseFloat(match[1]);
+    const y1 = parseFloat(match[2]);
+    const x2 = match[3] ? parseFloat(match[3]) : x1;
+    const y2 = match[4] ? parseFloat(match[4]) : y1;
+
+    return { x1, y1, x2, y2 };
   }
 
   async cleanup(): Promise<void> {
@@ -371,5 +407,28 @@ export class BrowserOperator extends Operator {
 
   getPage(): Page | null {
     return this.page;
+  }
+
+  static override get MANUAL(): OperatorManual {
+    return {
+      ACTION_SPACES: [
+        `click(start_box='[x1, y1, x2, y2]') # Click on an element`,
+        `left_double(start_box='[x1, y1, x2, y2]') # Double click`,
+        `right_single(start_box='[x1, y1, x2, y2]') # Right click`,
+        `type(content='text to type') # Type text, use "\\n" at end to submit`,
+        `hotkey(key='ctrl c') # Press hotkey combination`,
+        `scroll(start_box='[x1, y1, x2, y2]', direction='down') # Scroll direction: up/down/left/right`,
+        `navigate(url='https://example.com') # Navigate to URL`,
+        `navigate_back() # Go back`,
+        `wait() # Wait 5 seconds`,
+        `finished() # Task completed`,
+        `call_user() # Request user help`,
+      ],
+      EXAMPLES: [
+        `click(start_box='[100, 100, 200, 200]')`,
+        `type(content='Hello World\\n')`,
+        `navigate(url='https://google.com')`,
+      ],
+    };
   }
 }

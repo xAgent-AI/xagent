@@ -33,6 +33,7 @@
   "author": "xAgent CLI Team",
   "license": "MIT",
   "dependencies": {
+    "@nut-tree-fork/nut-js": "^4.2.6",
     "ansi-escapes": "^6.2.0",
     "archiver": "^7.0.0",
     "axios": "^1.6.0",

@@ -969,7 +969,158 @@ export class TaskTool implements Tool {
       throw new Error(`Task execution failed: ${error.message}`);
     }
   }
-  
+
+  /**
+   * Execute GUI subagent by directly calling GUIAgent.run()
+   * This bypasses the normal subagent message loop for better GUI control
+   */
+  private async executeGUIAgent(
+    prompt: string,
+    description: string,
+    agent: any,
+    mode: ExecutionMode,
+    config: any,
+    indentLevel: number = 1
+  ): Promise<{ success: boolean; message: string; result?: any }> {
+    const indent = '  '.repeat(indentLevel);
+    const cancellationManager = getCancellationManager();
+    const logger = getLogger();
+
+    console.log(`${indent}${colors.primaryBright(`${icons.robot} GUI Agent`)}: ${description}`);
+    console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
+    console.log('');
+
+    // Get model config for GUI agent
+    let modelName = config.get('guiSubagentModel') || config.get('modelName') || 'gpt-4o';
+    let baseUrl = config.get('guiSubagentBaseUrl') || config.get('baseUrl') || '';
+    let apiKey = config.get('guiSubagentApiKey') || config.get('apiKey') || '';
+
+    // Set up stdin polling for ESC cancellation
+    let rawModeEnabled = false;
+    let stdinPollingInterval: NodeJS.Timeout | null = null;
+
+    const setupStdinPolling = () => {
+      if (process.stdin.isTTY) {
+        try {
+          process.stdin.setRawMode(true);
+          rawModeEnabled = true;
+          process.stdin.resume();
+          readline.emitKeypressEvents(process.stdin);
+        } catch (e) {
+          logger.debug(`[GUIAgent] Could not set raw mode: ${e}`);
+        }
+
+        stdinPollingInterval = setInterval(() => {
+          try {
+            if (rawModeEnabled) {
+              const chunk = process.stdin.read(1);
+              if (chunk && chunk.length > 0) {
+                const code = chunk[0];
+                if (code === 0x1B) { // ESC
+                  logger.debug('[GUIAgent] ESC detected!');
+                  cancellationManager.cancel();
+                }
+              }
+            }
+          } catch (e) {
+            // Ignore polling errors
+          }
+        }, 10);
+      }
+    };
+
+    const cleanupStdinPolling = () => {
+      if (stdinPollingInterval) {
+        clearInterval(stdinPollingInterval);
+        stdinPollingInterval = null;
+      }
+    };
+
+    // Set up cancellation
+    let cancelled = false;
+    const cancelHandler = () => {
+      cancelled = true;
+    };
+    cancellationManager.on('cancelled', cancelHandler);
+
+    // Start polling for ESC
+    setupStdinPolling();
+
+    try {
+      // Import and create GUIAgent
+      const { createGUISubAgent } = await import('./gui-subagent/index.js');
+
+      const guiAgent = await createGUISubAgent({
+        model: modelName,
+        modelBaseUrl: baseUrl || undefined,
+        modelApiKey: apiKey || undefined,
+        maxLoopCount: 25,
+        loopIntervalInMs: 500,
+      });
+
+      // Add constraints to prompt if any
+      const fullPrompt = prompt;
+
+      // Execute GUI task - this will run autonomously until completion
+      const result = await guiAgent.run(fullPrompt);
+
+      // Cleanup
+      await guiAgent.cleanup();
+
+      // Check cancellation
+      if (cancelled || cancellationManager.isOperationCancelled()) {
+        cleanupStdinPolling();
+        cancellationManager.off('cancelled', cancelHandler);
+        return {
+          success: true,
+          message: `GUI task "${description}" cancelled by user`,
+          result: 'Task cancelled'
+        };
+      }
+
+      cleanupStdinPolling();
+      cancellationManager.off('cancelled', cancelHandler);
+
+      // Return result based on GUIAgent status
+      if (result.status === 'end') {
+        const iterations = result.conversations.filter(c => c.from === 'human' && c.screenshotBase64).length;
+        console.log(`${indent}${colors.success(`${icons.check} GUI task completed in ${iterations} iterations`)}`);
+        return {
+          success: true,
+          message: `GUI task "${description}" completed`,
+          result: `Completed in ${iterations} iterations`
+        };
+      } else if (result.status === 'user_stopped') {
+        return {
+          success: true,
+          message: `GUI task "${description}" stopped by user`,
+          result: 'User stopped'
+        };
+      } else {
+        return {
+          success: false,
+          message: `GUI task "${description}" failed: ${result.status} - ${result.error || 'Unknown error'}`
+        };
+      }
+    } catch (error: any) {
+      cleanupStdinPolling();
+      cancellationManager.off('cancelled', cancelHandler);
+
+      if (error.message === 'Operation cancelled by user') {
+        return {
+          success: true,
+          message: `GUI task "${description}" cancelled by user`,
+          result: 'Task cancelled'
+        };
+      }
+
+      return {
+        success: false,
+        message: `GUI task "${description}" failed: ${error.message}`
+      };
+    }
+  }
+
   private async executeSingleAgent(
     subagent_type: string,
     prompt: string,
@@ -984,9 +1135,21 @@ export class TaskTool implements Tool {
     indentLevel: number = 1
   ): Promise<{ success: boolean; message: string; result?: any }> {
     const agent = agentManager.getAgent(subagent_type);
-    
+
     if (!agent) {
       throw new Error(`Agent ${subagent_type} not found`);
+    }
+
+    // Special handling for gui-subagent: directly call GUIAgent.run() instead of subagent message loop
+    if (subagent_type === 'gui-subagent') {
+      return this.executeGUIAgent(
+        prompt,
+        description,
+        agent,
+        mode,
+        config,
+        indentLevel
+      );
     }
 
     // Determine the model to use for this subagent
@@ -1951,19 +2114,19 @@ export class SkillTool implements Tool {
 
   async execute(params: { skill: string }): Promise<{ success: boolean; message: string; result?: any }> {
     const { skill } = params;
-    
+
     try {
       const { getWorkflowManager } = await import('./workflow.js');
       const workflowManager = getWorkflowManager(process.cwd());
-      
+
       const workflow = workflowManager.getWorkflow(skill);
-      
+
       if (!workflow) {
         throw new Error(`Skill ${skill} not found`);
       }
-      
+
       await workflowManager.executeWorkflow(skill, 'Execute skill');
-      
+
       return {
         success: true,
         message: `Successfully executed skill: ${skill}`,
@@ -2479,6 +2642,48 @@ export class ToolRegistry {
               }
             },
             required: ['skill']
+          };
+          break;
+
+        case 'gui_operate':
+          parameters = {
+            type: 'object',
+            properties: {
+              operatorType: {
+                type: 'string',
+                enum: ['browser', 'computer'],
+                description: 'Operator type: browser (Puppeteer) or computer (Nut.js desktop control)'
+              },
+              action: {
+                type: 'string',
+                description: 'Action to perform in UI-TARS format (e.g., "click(start_box=\'[100, 100, 200, 200]\')")'
+              },
+              headless: {
+                type: 'boolean',
+                description: 'Run browser in headless mode (browser only)'
+              },
+              model: {
+                type: 'string',
+                description: 'AI model for action generation (e.g., gpt-4o)'
+              },
+              modelBaseUrl: {
+                type: 'string',
+                description: 'Base URL for the model API'
+              },
+              modelApiKey: {
+                type: 'string',
+                description: 'API key for the model'
+              },
+              maxLoopCount: {
+                type: 'number',
+                description: 'Maximum loop iterations'
+              },
+              thought: {
+                type: 'string',
+                description: 'Thought process describing the action'
+              }
+            },
+            required: ['action']
           };
           break;
 

@@ -18,10 +18,10 @@ interface ThirdPartyProvider {
 const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
   {
     name: 'Zhipu AI (GLM-4)',
-    baseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
-    defaultModel: 'glm-4',
+    baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/',
+    defaultModel: 'glm-4.7',
     description: 'Zhipu AI GLM-4 series models',
-    models: ['glm-4', 'glm-4-plus', 'glm-4-0520', 'glm-4-air', 'glm-4-airx', 'glm-4-flash', 'glm-4.7', 'glm-4.7-plus']
+    models: ['glm-4.7', 'glm-4', 'glm-4-plus', 'glm-4-0520', 'glm-4-air', 'glm-4-airx', 'glm-4-flash', 'glm-4.7-plus']
   },
   {
     name: 'DeepSeek',
@@ -53,10 +53,10 @@ const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
   },
   {
     name: 'MiniMax',
-    baseUrl: 'https://api.minimax.chat/v1',
-    defaultModel: 'abab6.5s-chat',
-    description: 'MiniMax series models',
-    models: ['abab6.5s-chat', 'abab6.5-chat', 'abab5.5-chat', 'm2.1-chat']
+    baseUrl: 'https://api.minimax.chat/anthropic',
+    defaultModel: 'MiniMax-M2.1',
+    description: 'MiniMax (Anthropic-compatible format)',
+    models: ['MiniMax-M2.1', 'MiniMax-M2.1-lightning', 'MiniMax-M2', 'MiniMax-M2-Stable']
   },
   {
     name: '01.AI (Yi)',
@@ -308,6 +308,31 @@ export class AuthService {
 
   private async validateApiKey(): Promise<boolean> {
     try {
+      // Check if it's MiniMax-M2 (uses Anthropic format)
+      if ((this.authConfig.baseUrl?.includes('minimax.chat') || 
+           this.authConfig.baseUrl?.includes('minimaxi.com')) &&
+          this.authConfig.baseUrl?.includes('anthropic')) {
+        // MiniMax-M2 uses Anthropic format with x-api-key header
+        const response = await axios.post(
+          `${this.authConfig.baseUrl}/v1/messages`,
+          {
+            model: 'MiniMax-M2',
+            max_tokens: 1,
+            messages: [{ role: 'user', content: 'test' }]
+          },
+          {
+            headers: {
+              'x-api-key': this.authConfig.apiKey,
+              'anthropic-version': '2023-06-01',
+              'Content-Type': 'application/json'
+            },
+            timeout: 10000
+          }
+        );
+        return response.status === 200;
+      }
+
+      // Standard OpenAI compatible API
       const response = await axios.get(
         `${this.authConfig.baseUrl}/models`,
         {

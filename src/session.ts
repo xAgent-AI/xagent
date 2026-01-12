@@ -18,6 +18,7 @@ import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
+import { Logger, LogLevel } from './logger.js';
 
 export class InteractiveSession {
   private conversationManager: ConversationManager;
@@ -91,12 +92,16 @@ export class InteractiveSession {
     await this.initialize();
     this.showWelcomeMessage();
 
-    // Listen for ESC cancellation to stop main session
+    // Track if an operation is in progress
+    (this as any)._isOperationInProgress = false;
+
+    // Listen for ESC cancellation - only cancel operations, don't exit the program
     const cancelHandler = () => {
-      (this as any)._isShuttingDown = true;
-      this.rl?.close();
-      this.cancellationManager.cleanup();
-      process.exit(0);
+      if ((this as any)._isOperationInProgress) {
+        // An operation is running, let it be cancelled
+        return;
+      }
+      // No operation running, ignore ESC or show a message
     };
     this.cancellationManager.on('cancelled', cancelHandler);
 
@@ -118,11 +123,13 @@ export class InteractiveSession {
 
       await this.configManager.load();
 
-      const authConfig = this.configManager.getAuthConfig();
+      let authConfig = this.configManager.getAuthConfig();
 
       if (!authConfig.apiKey) {
         spinner.stop();
         await this.setupAuthentication();
+        // Re-fetch authConfig after setup to get the newly saved credentials
+        authConfig = this.configManager.getAuthConfig();
         // inquirer may close stdin, so need to recreate readline interface
         this.rl.close();
         this.rl = readline.createInterface({
@@ -151,6 +158,9 @@ export class InteractiveSession {
         this.currentAgent?.name || 'general-purpose',
         this.executionMode
       );
+
+      // 同步对话历史到 slashCommandHandler
+      this.slashCommandHandler.setConversationHistory(this.conversation);
 
       const mcpServers = this.configManager.getMcpServers();
       Object.entries(mcpServers).forEach(([name, config]) => {
@@ -317,6 +327,8 @@ export class InteractiveSession {
       const handled = await this.slashCommandHandler.handleCommand(trimmedInput);
       if (handled) {
         this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
+        // 同步对话历史到 slashCommandHandler
+        this.slashCommandHandler.setConversationHistory(this.conversation);
       }
       return;
     }
@@ -402,7 +414,7 @@ export class InteractiveSession {
       timestamp: Date.now()
     };
 
-    // 保存最后一条用户消息，用于压缩后恢复
+    // Save last user message for recovery after compression
     const lastUserMessage = userMessage;
 
     this.conversation.push(userMessage);
@@ -411,7 +423,7 @@ export class InteractiveSession {
     // 检查是否需要压缩上下文
     await this.checkAndCompressContext(lastUserMessage);
 
-    await this.generateResponse(agent, thinkingTokens);
+    await this.generateResponse(thinkingTokens);
   }
 
   private displayThinkingContent(reasoningContent: string): void {
@@ -524,6 +536,9 @@ export class InteractiveSession {
         if (lastUserMessage) {
           this.conversation.push(lastUserMessage);
         }
+
+        // 同步压缩后的对话历史到 slashCommandHandler
+        this.slashCommandHandler.setConversationHistory(this.conversation);
       }
     }
   }
@@ -579,11 +594,14 @@ export class InteractiveSession {
     }
   }
 
-  private async generateResponse(agent?: any, thinkingTokens: number = 0): Promise<void> {
+  private async generateResponse(thinkingTokens: number = 0): Promise<void> {
     if (!this.aiClient) {
       console.log(colors.error('AI client not initialized'));
       return;
     }
+
+    // Mark that an operation is in progress
+    (this as any)._isOperationInProgress = true;
 
     const indent = this.getIndent();
     const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
@@ -600,11 +618,15 @@ export class InteractiveSession {
     try {
       const memory = await this.memoryManager.loadMemory();
       const toolRegistry = getToolRegistry();
-      const availableTools = this.executionMode !== ExecutionMode.DEFAULT
-        ? toolRegistry.getToolDefinitions()
+      const allowedToolNames = this.currentAgent
+        ? this.agentManager.getAvailableToolsForAgent(this.currentAgent, this.executionMode)
+        : [];
+      const allToolDefinitions = toolRegistry.getToolDefinitions();
+      const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
+        ? allToolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
         : [];
 
-      const baseSystemPrompt = agent?.systemPrompt || 'You are a helpful AI assistant.';
+      const baseSystemPrompt = this.currentAgent?.systemPrompt;
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
       const enhancedSystemPrompt = systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
@@ -615,6 +637,27 @@ export class InteractiveSession {
           content: msg.content
         }))
       ];
+
+      // Debug: 打印完整的 prompt 信息
+      // const logger = new Logger({ minLevel: LogLevel.DEBUG });
+      // logger.debug('[DEBUG] 即将发送给 AI 的完整 Prompt:');
+      // console.log('\n' + '='.repeat(60));
+      // console.log('【SYSTEM PROMPT】');
+      // console.log('-'.repeat(60));
+      // console.log(messages[0]?.content || '(无)');
+      // console.log('='.repeat(60));
+      // console.log('【CONVERSATION】');
+      // console.log('-'.repeat(60));
+      // messages.slice(1).forEach((msg, idx) => {
+      //   const contentStr = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+      //   console.log(`[${idx + 1}] [${msg.role}]: ${contentStr.substring(0, 200)}${contentStr.length > 200 ? '...' : ''}`);
+      // });
+      // console.log('='.repeat(60));
+      // console.log(`【AVAILABLE TOOLS】: ${availableTools.length} 个工具`);
+      // availableTools.forEach((tool: any) => {
+      //   console.log(`  - ${tool.function.name}`);
+      // });
+      // console.log('='.repeat(60) + '\n');
 
       const operationId = `ai-response-${Date.now()}`;
       const responsePromise = this.aiClient.chatCompletion(messages, {
@@ -636,6 +679,9 @@ export class InteractiveSession {
         ? assistantMessage.content
         : '';
       const reasoningContent = assistantMessage.reasoning_content || '';
+
+      // console.error('[SESSION DEBUG] assistantMessage:', JSON.stringify(assistantMessage).substring(0, 200));
+      // console.error('[SESSION DEBUG] content:', content);
 
       // Display reasoning content if available and thinking mode is enabled
       if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
@@ -674,9 +720,15 @@ export class InteractiveSession {
           [...this.toolCalls]
         );
       }
+
+      // Operation completed successfully, clear the flag
+      (this as any)._isOperationInProgress = false;
     } catch (error: any) {
       clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
+
+      // Clear the operation flag
+      (this as any)._isOperationInProgress = false;
 
       if (error.message === 'Operation cancelled by user') {
         // Message is already logged by CancellationManager
@@ -688,6 +740,9 @@ export class InteractiveSession {
   }
 
   private async handleToolCalls(toolCalls: any[]): Promise<void> {
+    // Mark that tool execution is in progress
+    (this as any)._isOperationInProgress = true;
+
     const toolRegistry = getToolRegistry();
     const showToolDetails = this.configManager.get('showToolDetails') || false;
     const indent = this.getIndent();
@@ -733,6 +788,9 @@ export class InteractiveSession {
       const { params } = toolCall;
 
       if (error) {
+        // Clear the operation flag
+        (this as any)._isOperationInProgress = false;
+
         if (error === 'Operation cancelled by user') {
           return;
         }
@@ -746,7 +804,17 @@ export class InteractiveSession {
           timestamp: Date.now()
         });
       } else {
-        if (showToolDetails) {
+        // Always show details for todo tools so users can see their task lists
+        const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
+        if (isTodoTool) {
+          console.log('');
+          console.log(`${indent}${colors.success(`${icons.check} Todo List:`)}`);
+          console.log(this.renderTodoList(result.todos || result.todos, indent));
+          // Show summary if available
+          if (result.message) {
+            console.log(`${indent}${colors.textDim(result.message)}`);
+          }
+        } else if (showToolDetails) {
           console.log('');
           console.log(`${indent}${colors.success(`${icons.check} Tool Result:`)}`);
           console.log(`${indent}${colors.textDim(JSON.stringify(result, null, 2))}`);
@@ -781,7 +849,7 @@ export class InteractiveSession {
       }
     }
 
-    await this.generateResponse(this.currentAgent);
+    await this.generateResponse();
   }
 
   /**
@@ -834,6 +902,32 @@ export class InteractiveSession {
     if (!command) return '';
     if (command.length <= maxLength) return command;
     return command.slice(0, maxLength - 3) + '...';
+  }
+
+  /**
+   * Render todo list in a user-friendly format
+   */
+  private renderTodoList(todos: any[], indent: string = ''): string {
+    if (!todos || todos.length === 0) {
+      return `${indent}${colors.textMuted('No tasks')}`;
+    }
+
+    const statusConfig: Record<string, { icon: string; color: (text: string) => string; label: string }> = {
+      'pending': { icon: icons.circle, color: colors.textMuted, label: 'Pending' },
+      'in_progress': { icon: icons.loading, color: colors.warning, label: 'In Progress' },
+      'completed': { icon: icons.success, color: colors.success, label: 'Completed' },
+      'failed': { icon: icons.error, color: colors.error, label: 'Failed' }
+    };
+
+    const lines: string[] = [];
+
+    for (const todo of todos) {
+      const config = statusConfig[todo.status] || statusConfig['pending'];
+      const statusPrefix = `${config.color(config.icon)} ${config.color(config.label)}:`;
+      lines.push(`${indent}  ${statusPrefix} ${colors.text(todo.task)}`);
+    }
+
+    return lines.join('\n');
   }
 
   shutdown(): void {

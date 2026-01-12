@@ -369,7 +369,7 @@ program
       if (options.url) {
         console.log(colors.textMuted(`Navigating to: ${options.url}`));
         await guiAgent.execute({
-          thought: '导航到指定的URL',
+          thought: 'Navigate to the specified URL',
           action: `navigate(url='${options.url}')`
         });
       }

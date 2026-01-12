@@ -1,7 +1,7 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
-import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig } from './types.js';
+import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { getToolRegistry } from './tools.js';
 import { getAgentManager } from './agents.js';
@@ -10,6 +10,8 @@ import { getMCPManager, MCPServer } from './mcp.js';
 import { getCheckpointManager } from './checkpoint.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { getLogger } from './logger.js';
+import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
+import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
 
 const logger = getLogger();
@@ -20,6 +22,9 @@ export class SlashCommandHandler {
   private memoryManager: any;
   private mcpManager: any;
   private checkpointManager: any;
+  private contextCompressor: ContextCompressor;
+  private conversationManager: ConversationManager;
+  private conversationHistory: ChatMessage[] = [];
 
   constructor() {
     this.configManager = getConfigManager(process.cwd());
@@ -27,6 +32,15 @@ export class SlashCommandHandler {
     this.memoryManager = getMemoryManager(process.cwd());
     this.mcpManager = getMCPManager();
     this.checkpointManager = getCheckpointManager(process.cwd());
+    this.contextCompressor = getContextCompressor();
+    this.conversationManager = getConversationManager();
+  }
+
+  /**
+   * 设置当前对话历史（包含所有 user/assistant/tool 消息）
+   */
+  setConversationHistory(messages: ChatMessage[]): void {
+    this.conversationHistory = messages;
   }
 
   async handleCommand(input: string): Promise<boolean> {
@@ -86,6 +100,9 @@ export class SlashCommandHandler {
       case 'about':
         await this.handleAbout();
         break;
+      case 'compress':
+        await this.handleCompress(args);
+        break;
       default:
         logger.warn(`Unknown command: /${command}`, 'Type /help for available commands');
     }
@@ -102,6 +119,15 @@ export class SlashCommandHandler {
     console.log(' '.repeat(14) + colors.gradient('📚 XAGENT CLI Help') + ' '.repeat(31) + colors.primaryBright('║'));
     console.log(colors.primaryBright('║') + ' '.repeat(56) + colors.primaryBright('║'));
     console.log(colors.primaryBright('╚════════════════════════════════════════════════════════════╝'));
+    console.log('');
+
+    // Shortcuts
+    console.log(colors.accent('Shortcuts'));
+    console.log(colors.border(separator));
+    console.log('');
+    console.log(colors.textDim(`  ${colors.accent('!')}  - ${colors.textMuted('Enter bash mode')}`));
+    console.log(colors.textDim(`  ${colors.accent('/')}  - ${colors.textMuted('Commands')}`));
+    console.log(colors.textDim(`  ${colors.accent('@')}  - ${colors.textMuted('File paths')}`));
     console.log('');
 
     // Basic Commands
@@ -212,6 +238,12 @@ export class SlashCommandHandler {
         desc: 'Restore from checkpoint',
         detail: 'Restore conversation state from historical checkpoints',
         example: '/restore'
+      },
+      {
+        cmd: '/compress [on|off|max_message|max_token|exec]',
+        desc: 'Manage context compression',
+        detail: 'Configure compression settings or execute compression manually',
+        example: '/compress\n/compress exec\n/compress on\n/compress max_message 50\n/compress max_token 1500000'
       },
       {
         cmd: '/stats',
@@ -680,6 +712,147 @@ export class SlashCommandHandler {
     logger.blank();
     logger.link('Documentation', 'https://platform.xagent.cn/');
     logger.link('GitHub', 'https://github.com/xagent-ai/xagent-cli');
+  }
+
+  private async handleCompress(args: string[]): Promise<void> {
+    const config = this.configManager.getContextCompressionConfig();
+
+    // 如果有参数，则处理配置或执行
+    if (args.length > 0) {
+      const action = args[0].toLowerCase();
+      
+      if (action === 'exec' || action === 'run' || action === 'now') {
+        await this.executeCompression(config);
+        return;
+      }
+      
+      await this.setCompressConfig(args);
+      return;
+    }
+
+    // Display current configuration
+    console.log(chalk.cyan('\n📦 Context Compression:\n'));
+
+    console.log(`  Status: ${config.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`);
+    console.log(`  Max Messages: ${chalk.yellow(config.maxMessages.toString())}`);
+    console.log(`  Max Tokens: ${chalk.yellow(config.maxContextSize.toString())}`);
+
+    console.log('');
+    console.log(chalk.gray('Usage:'));
+    console.log(chalk.gray('  /compress                 - Show current configuration'));
+    console.log(chalk.gray('  /compress exec            - Execute compression now'));
+    console.log(chalk.gray('  /compress on|off          - Enable/disable compression'));
+    console.log(chalk.gray('  /compress max_message <n> - Set max messages before compression'));
+    console.log(chalk.gray('  /compress max_token <n>   - Set max tokens before compression'));
+    console.log('');
+  }
+
+  private async executeCompression(config: CompressionConfig): Promise<void> {
+    const messages = this.conversationHistory;
+
+    if (!messages || messages.length === 0) {
+      console.log(chalk.yellow('⚠️  No conversation to compress'));
+      return;
+    }
+
+    const { needsCompression, reason } = this.contextCompressor.needsCompression(
+      messages,
+      config
+    );
+
+    if (!needsCompression) {
+      console.log(chalk.green('✅ No compression needed'));
+      console.log(chalk.gray(`  ${reason}`));
+      return;
+    }
+
+    console.log(chalk.cyan('\n🚀 Executing context compression...\n'));
+
+    const spinner = ora({
+      text: 'Compressing context...',
+      spinner: 'dots',
+      color: 'cyan'
+    }).start();
+
+    try {
+      const result: CompressionResult = await this.contextCompressor.compressContext(
+        messages,
+        'You are a helpful AI assistant.',
+        config
+      );
+
+      spinner.succeed(chalk.green('✅ Compression complete'));
+
+      console.log('');
+      console.log(`  ${chalk.cyan('Original:')} ${chalk.yellow(result.originalMessageCount.toString())} messages (${result.originalSize} chars)`);
+      console.log(`  ${chalk.cyan('Compressed:')} ${chalk.yellow(result.compressedMessageCount.toString())} messages (${result.compressedSize} chars)`);
+      console.log(`  ${chalk.cyan('Reduction:')} ${chalk.green(Math.round((1 - result.compressedSize / result.originalSize) * 100) + '%')}`);
+      console.log(`  ${chalk.cyan('Method:')} ${chalk.yellow(result.compressionMethod)}`);
+
+      console.log('');
+      console.log(chalk.gray('Use /clear to start a new conversation, or continue chatting to see the compressed summary.'));
+      console.log('');
+    } catch (error: any) {
+      spinner.fail(chalk.red('Compression failed'));
+      console.log(chalk.red(`  ${error.message}`));
+    }
+  }
+
+  private async setCompressConfig(args: string[]): Promise<void> {
+    const config = this.configManager.getContextCompressionConfig();
+    const action = args[0].toLowerCase();
+
+    switch (action) {
+      case 'on':
+        config.enabled = true;
+        this.configManager.setContextCompressionConfig(config);
+        await this.configManager.save('global');
+        console.log(chalk.green('✅ Context compression enabled'));
+        break;
+
+      case 'off':
+        config.enabled = false;
+        this.configManager.setContextCompressionConfig(config);
+        await this.configManager.save('global');
+        console.log(chalk.green('✅ Context compression disabled'));
+        break;
+
+      case 'max_message':
+        if (args[1]) {
+          const maxMessages = parseInt(args[1], 10);
+          if (isNaN(maxMessages) || maxMessages < 1) {
+            console.log(chalk.red('❌ Invalid value for max_message. Must be a positive number.'));
+            return;
+          }
+          config.maxMessages = maxMessages;
+          this.configManager.setContextCompressionConfig(config);
+          await this.configManager.save('global');
+          console.log(chalk.green(`✅ Max messages set to: ${maxMessages}`));
+        } else {
+          console.log(chalk.gray('Usage: /compress max_message <number>'));
+        }
+        break;
+
+      case 'max_token':
+        if (args[1]) {
+          const maxContextSize = parseInt(args[1], 10);
+          if (isNaN(maxContextSize) || maxContextSize < 1000) {
+            console.log(chalk.red('❌ Invalid value for max_token. Must be at least 1000.'));
+            return;
+          }
+          config.maxContextSize = maxContextSize;
+          this.configManager.setContextCompressionConfig(config);
+          await this.configManager.save('global');
+          console.log(chalk.green(`✅ Max tokens set to: ${maxContextSize}`));
+        } else {
+          console.log(chalk.gray('Usage: /compress max_token <number>'));
+        }
+        break;
+
+      default:
+        console.log(chalk.red(`❌ Unknown action: ${action}`));
+        console.log(chalk.gray('Available actions: on, off, max_message, max_token, exec'));
+    }
   }
 }
 

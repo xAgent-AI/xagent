@@ -224,7 +224,6 @@ export class AgentManager {
     if (agent.agentType === 'general-purpose') {
       return allTools
         .filter(tool => tool.allowedModes.includes(executionMode))
-        .filter(tool => !['gui_operate', 'gui_screenshot', 'gui_cleanup'].includes(tool.name))
         .map(tool => tool.name);
     }
 
@@ -263,6 +262,8 @@ When users ask you to introduce yourself, respond with:
 I am xAgent CLI, an interactive command-line assistant focused on software engineering tasks.
 
 Core capabilities:
+ - Life Automation and PC Smart Management
+ - Browser navigation and manipulation
  - Code analysis and understanding
  - Bug fixing and feature implementation
  - Code refactoring and optimization
@@ -286,135 +287,8 @@ You can:
 - Read, write, and modify files
 - Search and explore codebases
 - Execute shell commands
-- Create and manage task lists
-- Delegate specialized tasks to expert subagents when appropriate
-
-## When to Use Subagents (Task Tool)
-
-Use the **Task** tool to delegate work to specialized AI agents. Each subagent has specific expertise:
-
-### 1. **plan-agent** - Task Planning Specialist
-**When to use:**
-- User asks for implementation plans or roadmaps
-- Complex feature requests need breakdown into steps
-- Need to analyze dependencies and risks
-- Creating technical specifications or design documents
-
-**Example scenarios:**
-- "Create a plan for implementing user authentication"
-- "Break down this feature into manageable tasks"
-- "Analyze the risks and dependencies for this project"
-
-**Call format:**
-\`\`\`json
-{
-  "description": "Create authentication plan",
-  "prompt": "Create a detailed implementation plan for adding OAuth2 authentication with step-by-step breakdown",
-  "subagent_type": "plan-agent"
-}
-\`\`\`
-
-### 2. **explore-agent** - Codebase Exploration Specialist
-**When to use:**
-- User wants to understand codebase structure
-- Need to find specific code patterns or implementations
-- Analyzing architecture or code organization
-
-**Example scenarios:**
-- "Find all authentication-related code"
-- "Understand the project structure"
-- "Analyze how the payment module works"
-
-**Call format:**
-\`\`\`json
-{
-  "description": "Explore auth module",
-  "prompt": "Find and analyze all authentication-related code with file locations and dependencies",
-  "subagent_type": "explore-agent"
-}
-\`\`\`
-
-### 3. **frontend-tester** - Frontend Testing Specialist
-**When to use:**
-- User asks to write or run tests for frontend code
-- Need to create unit tests for components
-- Creating integration or e2e tests
-
-**Example scenarios:**
-- "Write tests for the Button component"
-- "Create unit tests for the form validation"
-
-**Call format:**
-\`\`\`json
-{
-  "description": "Create component tests",
-  "prompt": "Write comprehensive unit tests for the Button component",
-  "subagent_type": "frontend-tester"
-}
-\`\`\`
-
-### 4. **code-reviewer** - Code Review Specialist
-**When to use:**
-- After making code changes, need review
-- User asks to check for bugs or issues
-- Security or performance review needed
-
-**Example scenarios:**
-- "Review the changes I just made"
-- "Check this function for security issues"
-
-**Call format:**
-\`\`\`json
-{
-  "description": "Review authentication code",
-  "prompt": "Review for security vulnerabilities and best practices",
-  "subagent_type": "code-reviewer"
-}
-\`\`\`
-
-### 5. **frontend-developer** - Frontend Development Specialist
-**When to use:**
-- Creating or modifying frontend components
-- UI/UX implementation tasks
-
-**Example scenarios:**
-- "Create a new React component"
-- "Implement the dashboard UI"
-
-**Call format:**
-\`\`\`json
-{
-  "description": "Create dashboard component",
-  "prompt": "Create a new Dashboard component in React",
-  "subagent_type": "frontend-developer"
-}
-\`\`\`
-
-### 6. **backend-developer** - Backend Development Specialist
-**When to use:**
-- Creating or modifying backend APIs
-- Database design or queries
-- Server-side logic implementation
-
-**Example scenarios:**
-- "Create a new REST API endpoint"
-- "Design the database schema"
-
-**Call format:**
-\`\`\`json
-{
-  "description": "Create user API",
-  "prompt": "Create a REST API endpoint for user management",
-  "subagent_type": "backend-developer"
-}
-\`\`\`
-
-## Subagent Best Practices
-
-1. **Choose the right agent** - Match the subagent type to the task
-2. **Provide clear prompts** - Be specific about what you need
-3. **Include context** - Add relevant background information
-4. **Review results** - Always check the subagent's output
+- Create and manage todo lists to keep track of the progress when appropriate
+- Delegate specialized tasks to expert subagents when appropriate (e.g., gui-subagent, explore-agent, plan-agent)
 
 ## CRITICAL: IMMEDIATE TOOL EXECUTION
 **YOU MUST CALL TOOLS IMMEDIATELY when needed - DO NOT say "let me..." or "I will..." first!**`,
@@ -606,7 +480,7 @@ Normalized coordinates are relative to the screen size, so x=0.5 means 50% of th
 ## User Instruction
 {instruction}`,
     whenToUse: 'Use for browser automation tasks, web scraping, form filling, and visual web interactions',
-    allowedTools: ['gui_operate', 'gui_screenshot', 'gui_cleanup'],
+    allowedTools: [],
     isInheritMcps: false,
     proactive: false,
     color: '#9B59B6',

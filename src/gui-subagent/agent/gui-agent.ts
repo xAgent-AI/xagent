@@ -167,7 +167,7 @@ Example:
           },
           action: {
             type: 'string',
-            description: 'Action to perform in format: click(point=\'<point>x y</point>\'), type(content=\'text\'), scroll(point=\'<point>x y</point>\', direction=\'down\'), hotkey(key=\'ctrl c\'), finished(content=\'完成\'), etc.',
+            description: 'Action to perform in format: click(point=\'<point>x y</point>\'), type(content=\'text\'), scroll(point=\'<point>x y</point>\', direction=\'down\'), hotkey(key=\'ctrl c\'), finished(content=\'done\'), etc.',
           },
           errorMessage: {
             type: 'string',

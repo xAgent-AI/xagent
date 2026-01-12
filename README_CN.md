@@ -1,322 +1,166 @@
 # 🤖 xAgent CLI - 你的自主生活智能助手
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/node/v/xagent-cli-reproduction.svg)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue.svg)](https://www.typescriptlang.org/)
+<div align="center">
 
-![xAgent CLI Screenshot](./assets/xagent-cli.svg)
+![许可](https://img.shields.io/badge/License-MIT-yellow?style=flat-square&logo=opensourceinitiative)
+![Node.js](https://img.shields.io/node/v/%40xagent-ai%2Fcli?logo=node.js)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue?style=flat-square&logo=typescript)
+![版本](https://img.shields.io/npm/v/%40xagent-ai%2Fcli?logo=npm)
+![下载量](https://img.shields.io/npm/dt/%40xagent-ai%2Fcli)
 
-**[English](README.md)** | 中文 
+</div>
+
+<div align="center">
+
+![xAgent CLI 截图](./assets/xagent-cli.png)
+
+**[English](README.md)** | **[中文](README_CN.md)**
+
+</div>
 
 ---
 
-## 🚀 X Future Agent - 为你的数字生活而生
+<div align="center">
 
-**xAgent CLI** 不仅仅是一个 AI 编程助手，更是一个**面向个人 PC 和自主生活的智能代理**。它能理解你的日常需求，从代码开发到生活管理，全方位提升你的数字生活效率。
+### 🚀 AI 助手的未来已经到来
 
-🎯 **愿景**：成为每个人 PC 上最懂你的 AI 伙伴，让生活更智能、更轻松。
+**xAgent CLI** 不仅仅是一个 AI 编程助手 — 它是一个**面向个人 PC 和自主生活的智能代理**，彻底改变你与数字生活的互动方式。
+
+</div>
 
 ---
 
-## ✨ 核心特性
+## ✨ 为什么选择 xAgent CLI?
 
-### 🤖 X Future Agent - 自主生活智能体
+| 🎯 | 全能 AI 助手 |
+|------|------------------------|
+| 🏠 | **生活自动化** - 从文件整理到智能日程管理 |
+| 💻 | **专业开发** - 代码编写、调试、部署一体化 |
+| 🌐 | **多模型支持** - 免费使用 Kimi K2、Qwen3 Coder、DeepSeek v3 |
+| 🔧 | **GUI 自动化** - 精确的鼠标键盘控制 |
+| 🔒 | **灵活安全** - 5 种执行模式，从 YOLO 到 DEFAULT |
 
-xAgent 代表了 AI 助手的未来演进方向：
+---
 
-- **生活自动化**：自动处理文件整理、数据备份、日程管理等日常任务
-- **智能设备管理**：深度集成你的个人 PC，实现真正的智能交互
-- **上下文理解**：记住你的偏好和习惯，提供个性化服务
-- **主动协助**：在合适的时机主动提供帮助，而不只是被动响应
+## ⚡ 快速开始
 
-### 🖥️ 个人 PC 智能使用
+```bash
+# 安装
+npm i -g xagent-cli
 
-```text
-> 帮我整理桌面，按类型自动分类到不同文件夹
-> 设置一个每天自动备份重要文件到云端的脚本
-> 监控我的电脑资源，当 CPU 使用率过高时提醒我
-> 批量处理这些图片，调整尺寸并按日期重命名
+# 启动
+xagent
 ```
 
-### 💻 专业开发能力
-
-- **智能编程助手**：代码编写、调试、优化一应俱全
-- **多模型支持**：免费使用 Kimi K2、Qwen3 Coder、DeepSeek v3 等强大模型
-- **SubAgent 团队**：专业化的 AI 代理团队，应对不同场景需求
-- **工作流自动化**：从市场安装工作流，快速实现复杂任务
-
-### 🔧 灵活集成
-
-- **MCP 协议支持**：与各种工具和服务无缝集成
-- **开放市场**：一键安装 SubAgents、MCP 工具和工作流
-- **自然语言交互**：告别复杂命令，用日常对话驱动 AI
-- **跨平台支持**：Windows、macOS、Linux 均可使用
+**就这么简单！** 几秒钟内开始自动化你的数字生活。
 
 ---
 
 ## 📊 功能对比
 
 | 功能特性 | xAgent CLI | Claude Code | Gemini CLI |
-|---------|-----------|-------------|------------|
+|:--------|:----------:|:-----------:|:----------:|
 | **生活自动化** | ✅ | ❌ | ❌ |
-| **个人 PC 智能管理** | ✅ | ❌ | ❌ |
+| **PC 智能管理** | ✅ | ❌ | ❌ |
 | Todo 任务规划 | ✅ | ✅ | ❌ |
-| SubAgent 专业代理 | ✅ | ✅ | ❌ |
-| 自定义命令 | ✅ | ✅ | ✅ |
+| SubAgent 系统 | ✅ | ✅ | ❌ |
 | 计划模式 | ✅ | ✅ | ❌ |
 | 任务工具集 | ✅ | ✅ | ❌ |
-| VS Code 插件 | ✅ | ✅ | ✅ |
-| JetBrains 插件 | ✅ | ✅ | ❌ |
 | 对话历史恢复 | ✅ | ✅ | ❌ |
-| 内置开放市场 | ✅ | ❌ | ❌ |
 | 上下文自动压缩 | ✅ | ✅ | ✅ |
-| 多模态能力 | ✅ | ⚠️ (国内受限) | ⚠️ (国内受限) |
-| 网络搜索 | ✅ | ❌ | ⚠️ (需 VPN) |
-| **免费使用** | ✅ | ❌ | ⚠️ (限额) |
-| Hook 钩子 | ✅ | ✅ | ❌ |
+| 网络搜索 | ✅ | ❌ | ⚠️ |
 | 思考模式 | ✅ | ✅ | ❌ |
 | 工作流系统 | ✅ | ❌ | ❌ |
 
 ---
 
-## 🎯 典型使用场景
+## 🎯 xAgent 能做什么？
 
-### 🏠 生活助手场景
-
+### 🏠 生活助手
 ```text
-> 帮我整理桌面，把图片放到 Pictures，文档放到 Documents
-> 设置每周自动备份我的工作文件到云盘
-> 提醒我今天下午3点有一个重要会议
-> 分析我的支出记录，生成月度消费报告
-> 找出占用磁盘空间最大的10个文件
+> 整理桌面，按类型自动分类
+> 设置每日云端备份
+> 下午3点提醒开会
+> 找出占用磁盘空间的大文件
 ```
 
-### 💼 效率办公场景
-
+### 💼 效率办公
 ```text
-> 批量重命名这些文件，按日期+项目名格式
-> 从这个网页下载所有 PDF 文档并整理到文件夹
-> 分析这份 Excel 数据，生成可视化图表
-> 翻译这份文档并保持原有格式
+> 批量重命名文件（日期格式）
+> 下载网页所有 PDF
+> 分析 Excel 数据，生成图表
+> 翻译文档，保留原格式
 ```
 
-### 👨‍💻 开发工作场景
-
+### 👨‍💻 开发助手
 ```text
-> 分析这个项目的架构和模块依赖关系
-> 找出这个 bug 的根源并修复它
-> 创建一个包含用户认证和数据库连接的 RESTful API
-> 代码审查这个 PR，检查潜在问题
+> 分析项目架构
+> 找出并修复 bug
+> 创建带认证的 RESTful API
+> 自动审查 PR
 ```
 
-### 🔄 自动化工作流
-
+### 🔄 自动化专家
 ```text
-> 创建一个自动下载股票行情并发送邮件通知的脚本
-> 设置每天早上自动检查并更新项目依赖
-> 监控网站状态，当宕机时发送告警
+> 下载股票行情，发送邮件提醒
+> 自动更新项目依赖
+> 监控网站，宕机时告警
 ```
 
 ---
 
-## 📥 安装指南
+## 🛠️ 执行模式
 
-### 系统要求
-
-- **操作系统**：macOS 10.15+、Ubuntu 20.04+/Debian 10+、Windows 10+
-- **硬件**：4GB+ RAM
-- **软件**：Node.js 22+
-- **网络**：需要互联网连接进行认证和 AI 处理
-
-### 安装命令
-
-**Mac/Linux/Ubuntu**：
-```shell
-bash -c "$(curl -fsSL https://cloud.xagent.cn/xagent-cli/install.sh)"
-```
-
-或使用 Node.js 安装：
-```shell
-npm i -g @xagent-ai/xagent-cli
-```
-
-**Windows 用户**：
-1. 下载并安装 [Node.js 22+](https://nodejs.org/en/download)
-2. 重启终端（CMD 或 PowerShell）
-3. 运行 `npm install -g @xagent-ai/xagent-cli`
-4. 运行 `xagent` 启动
-
-**中国用户**（使用镜像）：
-```shell
-# 下载 nvm
-curl -o nvm-setup.exe https://cloud.xagent.cn/xagent-cli/nvm-setup.exe
-# 安装并配置 Node.js 22
-nvm node_mirror https://npmmirror.com/mirrors/node/
-nvm npm_mirror https://npmmirror.com/mirrors/npm/
-nvm install 22 && nvm use 22
-npm install -g @xagent-ai/xagent-cli
-```
-
-### 卸载
-
-```shell
-npm uninstall -g @xagent-ai/xagent-cli
-```
+| 模式 | 权限 | 适用场景 |
+|------|-------------|----------|
+| 🟢 **YOLO** | 完全控制 | AI 完全自主 |
+| 🟡 **ACCEPT_EDITS** | 仅文件 | 安全编码 |
+| 🔵 **PLAN** | 先计划后执行 | 复杂任务 |
+| ⚪ **DEFAULT** | 需授权确认 | 安全优先 |
+| 🟣 **SMART** | 智能模式 | 日常使用（推荐） |
 
 ---
 
-## 🔑 认证方式
+## 🔑 免费使用
 
-xAgent 提供三种认证选项：
+xAgent 提供**完全免费**的多种认证方式：
 
-### 方式一：xAgent 原生认证（推荐）
-
-选择方式 1 直接登录，浏览器打开认证页面，完成后即可免费使用。
-
-### 方式二：xAgent API Key
-
-适用于无法打开网页的服务器环境。
-
-1. 注册 xAgent 账号
-2. 访问[账号设置](https://xagent.cn/?open=setting)
-3. 点击"重置"生成新的 API Key
-4. 在终端粘贴密钥完成配置
-
-### 方式三：第三方模型 API
-
-支持连接智谱 GLM-4、DeepSeek、通义千问、文心一言、Kimi 等：
-
-```bash
-xagent auth
-# 选择第三方模型 API
-# 选择提供商并输入 API Key
-```
-
-支持的提供商：
-- **智谱AI (GLM-4)**：https://open.bigmodel.cn/usercenter/apikeys
-- **DeepSeek**：https://platform.deepseek.com/api_keys
-- **阿里云**：https://dashscope.console.aliyun.com/apiKey
-- **百度智能云**：https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application
-- **月之暗面 (Kimi)**：https://platform.moonshot.cn/console/api-keys
+| 方式 | 说明 |
+|--------|-------------|
+| 🔐 **xAgent 账号** | 浏览器登录（推荐） |
+| 🔑 **API Key** | 服务器环境 |
+| 🌐 **第三方 API** | GLM-4、DeepSeek、通义千问、月之暗面等 |
 
 ---
 
-## 🚀 快速开始
+## 🏗️ 技术栈
 
-### 启动 xAgent
+<div align="center">
 
-```shell
-xagent
-```
+![Node.js](https://img.shields.io/badge/Node.js-22+-green?style=for-the-badge&logo=node.js)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue?style=for-the-badge&logo=typescript)
+![React](https://img.shields.io/badge/React-Ink-purple?style=for-the-badge&logo=react)
+![esbuild](https://img.shields.io/badge/esbuild-orange?style=for-the-badge)
+![Vitest](https://img.shields.io/badge/Vitest-测试?style=for-the-badge&logo=vitest)
 
-### 新项目开发
-
-```shell
-cd new-project/
-xagent
-> 创建一个基于 React 的个人博客网站
-```
-
-### 现有项目
-
-```shell
-cd existing-project/
-xagent
-> /init  # 扫描项目结构，创建文档
-> 根据 PRD 文档分析需求，输出技术方案
-```
-
-### 使用 SubAgents
-
-```shell
-xagent
-> /agent   # 查看可用代理
-> /agent plan-agent  # 切换到计划专家代理
-```
+</div>
 
 ---
 
-## 🛠️ 运行模式
-
-| 模式 | 说明 | 适用场景 |
-|------|------|---------|
-| **YOLO** | 最大权限，可执行任何操作 | 完全信任 AI |
-| **ACCEPT_EDITS** | 仅文件修改权限 | 安全编码场景 |
-| **PLAN** | 先计划后执行 | 复杂任务规划 |
-| **DEFAULT** | 默认无权限 | 需要明确授权 |
-| **SMART** | 智能模式 | 推荐日常使用 |
-
----
-
-## 📦 开放市场
-
-一键安装强大的扩展功能：
-
-```bash
-# 查看市场中的 SubAgents
-xagent agent --list
-
-# 安装 SubAgent
-xagent agent --add <name>
-
-# 查看 MCP 服务器
-xagent mcp --list
-
-# 安装工作流
-xagent workflow --add <workflow-id>
-```
-
----
-
-## 🔧 自定义配置
-
-编辑 `~/.xagent/settings.json` 自定义配置：
-
-```json
-{
-    "theme": "Default",
-    "selectedAuthType": "xagent",
-    "apiKey": "your xagent key",
-    "baseUrl": "https://apis.xagent.cn/v1",
-    "modelName": "Qwen3-Coder",
-    "executionMode": "smart",
-    "language": "zh"
-}
-```
-
----
-
-## 🏗️ 技术架构
-
-### 技术栈
-
-- **运行时**：Node.js ≥22
-- **语言**：TypeScript（严格模式）
-- **UI 框架**：React via Ink（终端渲染）
-- **构建工具**：esbuild + tsc
-- **包管理器**：npm
-- **测试框架**：Vitest
-- **代码规范**：ESLint + Prettier
-
-### 核心组件
+## 📦 项目结构
 
 ```
-xagent-cli/
+@xagent-ai/cli/
 ├── src/
-│   ├── tools/              # 工具实现（文件操作、搜索、执行等）
-│   ├── agents/             # 代理管理（专业 AI 代理团队）
-│   ├── config/             # 配置管理
-│   ├── auth/               # 认证服务
-│   ├── session/            # 交互式会话
-│   ├── memory/             # 内存管理
-│   ├── workflow/           # 工作流系统
-│   ├── checkpoint/         # 检查点系统
-│   ├── slash-commands/     # 斜杠命令
-│   ├── gui-subagent/       # GUI 自动化代理
-│   └── tests/              # 单元测试
+│   ├── tools/              # 12+ 内置工具
+│   ├── agents/             # SubAgent 系统
+│   ├── gui-subagent/       # GUI 自动化
+│   ├── workflow/           # 工作流引擎
+│   ├── checkpoint/         # 状态持久化
+│   └── mcp/                # MCP 集成
 ├── dist/                   # 编译输出
 ├── docs/                   # 文档
-├── assets/                 # 静态资源
+├── test/                   # 测试套件
 └── package.json
 ```
 
@@ -325,51 +169,87 @@ xagent-cli/
 ## 🧪 测试与质量
 
 ```bash
-# 单元测试
-npm test
+npm test          # 单元测试
+npm run lint      # ESLint
+npm run format    # Prettier
+npm run typecheck # TypeScript
+```
 
-# ESLint 检查
-npm run lint
+---
 
-# ESLint 自动修复
-npm run lint:fix
+## ⚙️ 配置说明
 
-# 代码格式化
-npm run format
+通过编辑 `~/.xagent/settings.json` 自定义 xAgent：
 
-# 类型检查
-npm run typecheck
+```json
+{
+  "theme": "Default",
+  "selectedAuthType": "openai_compatible",
+  "apiKey": "your-api-key",
+  "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+  "modelName": "glm-4.7",
+  "guiSubagentModel": "doubao-1-5-ui-tars-250428",
+  "guiSubagentBaseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+  "guiSubagentApiKey": "your-api-key",
+  "searchApiKey": "",
+  "executionMode": "smart",
+  "approvalMode": "smart",
+  "checkpointing": {
+    "enabled": false,
+    "autoCreate": true,
+    "maxCheckpoints": 10
+  },
+  "thinking": {
+    "enabled": true,
+    "mode": "normal",
+    "displayMode": "compact"
+  },
+  "contextCompression": {
+    "enabled": true,
+    "maxMessages": 30,
+    "maxContextSize": 1500000,
+    "preserveRecentMessages": 0,
+    "enableSummary": true
+  },
+  "contextFileName": "XAGENT.md",
+  "mcpServers": {},
+  "language": "zh",
+  "autoUpdate": true,
+  "telemetryEnabled": true,
+  "showToolDetails": false,
+  "contextCompress": {
+    "enabled": false,
+    "autoTrigger": false,
+    "messageThreshold": 50,
+    "tokenThreshold": 100000,
+    "strategy": "summary",
+    "preserveRecent": 5
+  },
+  "type": "openai_compatible"
+}
 ```
 
 ---
 
 ## 📚 文档
 
-- **[架构设计](docs/architecture/overview.md)**：高层设计和组件交互
-- **[工具系统](docs/architecture/tool-system-design.md)**：工具实现和调度机制
-- **[MCP 集成](docs/architecture/mcp-integration-guide.md)**：Model Context Protocol 服务器集成
-- **[CLI 命令参考](docs/cli/commands.md)**：命令行接口文档
-- **[贡献指南](CONTRIBUTING.md)**：详细贡献说明
-- **[第三方模型配置](docs/third-party-models.md)**：外部模型 API 配置
+- 📖 [架构设计](docs/architecture/overview.md)
+- 🔧 [工具系统](docs/architecture/tool-system-design.md)
+- 🔌 [SKILL, Worflow和MCP 集成](docs/architecture/mcp-integration-guide.md)
+- 💻 [CLI 命令](docs/cli/commands.md)
+- 🤝 [贡献指南](CONTRIBUTING.md)
+- 🔑 [第三方模型](docs/third-party-models.md)
 
 ---
 
-## 🤝 贡献指南
+## 🤝 贡献
 
-欢迎贡献代码！请遵循以下步骤：
+欢迎贡献代码！参与方式：
 
-1. Fork 仓库并创建功能分支
-2. 确保通过现有测试和 linting 检查
-3. 为新功能添加测试
-4. 必要时更新文档
-5. 提交清晰的 PR 描述
-
-### 代码规范
-
-- 使用 TypeScript 严格模式
-- 遵循 ESLint 和 Prettier 配置
-- 编写有意义的提交信息
-- 添加依赖时考虑包体积
+1. 🍴 Fork 本仓库
+2. 🌿 创建特性分支
+3. ✅ 确保测试通过
+4. 📝 提交 PR
 
 ---
 
@@ -381,28 +261,18 @@ MIT License - 详见 [LICENSE](./LICENSE)
 
 ## 🙏 致谢
 
-- 基于 [Ink](https://github.com/vadimdemedes/ink) 构建终端 UI
-- 由 [xAgent 平台](https://platform.xagent.cn/) 提供支持
-- 使用 [Vitest](https://vitest.dev/) 进行测试
-- 图标来自 [Heroicons](https://heroicons.com/)
+<div align="center">
 
----
+❤️ 基于 [Ink](https://github.com/vadimdemedes/ink) 构建 • 由 [xAgent 平台](https://platform.xagent.cn/) 支持
 
-## 📞 支持与联系
-
-- **文档**：https://platform.xagent.cn/docs/
-- **GitHub Issues**：https://github.com/xagent-ai/xagent-cli/issues
-- **讨论区**：https://github.com/xagent-ai/xagent-cli/discussions
-- **微信群**：扫描下方二维码加入社区
-
-![WeChat group](./assets/xagent-wechat.jpg)
+</div>
 
 ---
 
 <div align="center">
 
-**用 AI 点亮你的数字生活**
+### 🌟 给我们点个 Star！
 
-Made with ❤️ by the xAgent Team
+**用 AI 点亮你的数字生活**
 
 </div>

@@ -1182,7 +1182,8 @@ export class TaskTool implements Tool {
       type: AuthType.API_KEY,
       apiKey: apiKey,
       baseUrl: baseUrl,
-      modelName: modelName
+      modelName: modelName,
+      showAIDebugInfo: config.get('showAIDebugInfo') || false
     });
     
     const indent = '  '.repeat(indentLevel);

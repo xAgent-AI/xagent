@@ -656,10 +656,14 @@ export class InteractiveSession {
       // console.log(`【AVAILABLE TOOLS】: ${availableTools.length} 个工具`);
       // availableTools.forEach((tool: any) => {
       //   console.log(`  - ${tool.function.name}`);
-      // });
-      // console.log('='.repeat(60) + '\n');
-
-      const operationId = `ai-response-${Date.now()}`;
+            // });      // console.log('='.repeat(60) + '\n');
+      
+            // Debug: 打印AI输入信息
+            if (this.configManager.get('showAIDebugInfo')) {
+              this.displayAIDebugInfo('INPUT', messages, availableTools);
+            }
+      
+            const operationId = `ai-response-${Date.now()}`;
       const responsePromise = this.aiClient.chatCompletion(messages, {
         tools: availableTools,
         toolChoice: availableTools.length > 0 ? 'auto' : 'none',
@@ -675,6 +679,12 @@ export class InteractiveSession {
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r'); // Clear spinner line
 
       const assistantMessage = response.choices[0].message;
+
+      // Debug: 打印AI输出信息
+      if (this.configManager.get('showAIDebugInfo')) {
+        this.displayAIDebugInfo('OUTPUT', response, assistantMessage);
+      }
+
       const content = typeof assistantMessage.content === 'string'
         ? assistantMessage.content
         : '';
@@ -926,6 +936,82 @@ export class InteractiveSession {
     }
 
     return lines.join('\n');
+  }
+
+  /**
+   * Display AI debug information (input or output)
+   */
+  private displayAIDebugInfo(type: 'INPUT' | 'OUTPUT', data: any, extra?: any): void {
+    const indent = this.getIndent();
+    const boxChar = {
+      topLeft: '╔', topRight: '╗', bottomLeft: '╚', bottomRight: '╝',
+      horizontal: '═', vertical: '║'
+    };
+
+    console.log('\n' + colors.border(
+      `${boxChar.topLeft}${boxChar.horizontal.repeat(58)}${boxChar.topRight}`
+    ));
+    console.log(colors.border(`${boxChar.vertical}`) + ' ' +
+      colors.primaryBright(type === 'INPUT' ? '🤖 AI INPUT DEBUG' : '📤 AI OUTPUT DEBUG') +
+      ' '.repeat(36) + colors.border(boxChar.vertical));
+    console.log(colors.border(
+      `${boxChar.vertical}${boxChar.horizontal.repeat(58)}${boxChar.vertical}`
+    ));
+
+    if (type === 'INPUT') {
+      const messages = data as any[];
+      const tools = extra as any[];
+
+      // System prompt
+      const systemMsg = messages.find((m: any) => m.role === 'system');
+      console.log(colors.border(`${boxChar.vertical}`) + ' 🟫 SYSTEM: ' +
+        colors.textMuted(systemMsg?.content?.toString().substring(0, 50) || '(无)') + ' '.repeat(3) + colors.border(boxChar.vertical));
+
+      // Messages count
+      console.log(colors.border(`${boxChar.vertical}`) + ' 💬 MESSAGES: ' +
+        colors.text(messages.length.toString()) + ' 条' + ' '.repeat(40) + colors.border(boxChar.vertical));
+
+      // Tools count
+      console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOLS: ' +
+        colors.text((tools?.length || 0).toString()) + ' 个' + ' '.repeat(43) + colors.border(boxChar.vertical));
+
+      // Show last 2 messages
+      const recentMessages = messages.slice(-2);
+      for (const msg of recentMessages) {
+        const roleLabel: Record<string, string> = { user: '👤 USER', assistant: '🤖 ASSISTANT', tool: '🔧 TOOL' };
+        const label = roleLabel[msg.role] || msg.role;
+        const contentStr = typeof msg.content === 'string'
+          ? msg.content.substring(0, 100)
+          : JSON.stringify(msg.content).substring(0, 100);
+        console.log(colors.border(`${boxChar.vertical}`) + ` ${label}: ` +
+          colors.textDim(contentStr + '...') + ' '.repeat(Math.max(0, 50 - contentStr.length)) + colors.border(boxChar.vertical));
+      }
+    } else {
+      // OUTPUT
+      const response = data;
+      const message = extra;
+
+      console.log(colors.border(`${boxChar.vertical}`) + ' 📋 MODEL: ' +
+        colors.text(response.model || 'unknown') + ' '.repeat(45) + colors.border(boxChar.vertical));
+
+      console.log(colors.border(`${boxChar.vertical}`) + ' ⏱️  TOKENS: ' +
+        colors.text(`Prompt: ${response.usage?.prompt_tokens || '?'}, Completion: ${response.usage?.completion_tokens || '?'}`) +
+        ' '.repeat(15) + colors.border(boxChar.vertical));
+
+      console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOL_CALLS: ' +
+        colors.text((message.tool_calls?.length || 0).toString()) + ' 个' + ' '.repeat(37) + colors.border(boxChar.vertical));
+
+      // Content preview
+      const contentStr = typeof message.content === 'string'
+        ? message.content.substring(0, 100)
+        : JSON.stringify(message.content).substring(0, 100);
+      console.log(colors.border(`${boxChar.vertical}`) + ' 📝 CONTENT: ' +
+        colors.textDim(contentStr + '...') + ' '.repeat(Math.max(0, 40 - contentStr.length)) + colors.border(boxChar.vertical));
+    }
+
+    console.log(colors.border(
+      `${boxChar.bottomLeft}${boxChar.horizontal.repeat(58)}${boxChar.bottomRight}`
+    ));
   }
 
   shutdown(): void {

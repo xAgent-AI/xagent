@@ -13,6 +13,157 @@ export interface AnthropicContentBlock {
   thinking?: string;
 }
 
+// Markdown渲染辅助函数
+function renderMarkdown(text: string): string {
+  // 代码块渲染
+  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    return `\n┌─[${lang || 'code'}]\n${code.trim().split('\n').map((l: string) => '│ ' + l).join('\n')}\n└─\n`;
+  });
+  
+  // 行内代码渲染
+  text = text.replace(/`([^`]+)`/g, '`$1`');
+  
+  // 粗体渲染
+  text = text.replace(/\*\*([^*]+)\*\*/g, '●$1○');
+  
+  // 斜体渲染
+  text = text.replace(/\*([^*]+)\*/g, '/$1/');
+  
+  // 列表渲染
+  text = text.replace(/^- (.*$)/gm, '○ $1');
+  text = text.replace(/^\d+\. (.*$)/gm, '• $1');
+  
+  // 标题渲染
+  text = text.replace(/^### (.*$)/gm, '\n━━━ $1 ━━━\n');
+  text = text.replace(/^## (.*$)/gm, '\n━━━━━ $1 ━━━━━\n');
+  text = text.replace(/^# (.*$)/gm, '\n━━━━━━━ $1 ━━━━━━━\n');
+  
+  // 引用渲染
+  text = text.replace(/^> (.*$)/gm, '│ │ $1');
+  
+  // 链接渲染
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '[$1]($2)');
+  
+  return text;
+}
+
+// 格式化消息内容
+function formatMessageContent(content: string | Array<any>): string {
+  if (typeof content === 'string') {
+    return renderMarkdown(content);
+  }
+  
+  const parts: string[] = [];
+  let hasToolUse = false;
+  
+  for (const block of content) {
+    if (block.type === 'text') {
+      parts.push(renderMarkdown(block.text || ''));
+    } else if (block.type === 'tool_use') {
+      hasToolUse = true;
+      parts.push(`[🔧 TOOL CALL PENDING: ${block.name}]`);
+    } else if (block.type === 'tool_result') {
+      const result = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+      parts.push(`[✅ TOOL RESULT]\n${result}`);
+    } else if (block.type === 'thinking') {
+      parts.push(`[🧠 THINKING]\n${block.thinking || ''}`);
+    }
+  }
+  
+  if (hasToolUse) {
+    parts.push('\n[⚠️  Note: Tool calls are executed by the framework, not displayed here]');
+  }
+  
+  return parts.join('\n');
+}
+
+// 分类展示消息
+function displayMessages(messages: any[], systemPrompt?: string): void {
+  const roleColors: Record<string, string> = {
+    system: '🟫 SYSTEM',
+    user: '👤 USER',
+    assistant: '🤖 ASSISTANT',
+    tool: '🔧 TOOL'
+  };
+  
+  // 先显示system消息（如果有单独的systemPrompt参数）
+  if (systemPrompt) {
+    console.log('\n┌─────────────────────────────────────────────────────────────┐');
+    console.log('│ 🟫 SYSTEM                                                     │');
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log(renderMarkdown(systemPrompt).split('\n').map((l: string) => '│ ' + l).join('\n'));
+    console.log('└─────────────────────────────────────────────────────────────┘');
+  }
+  
+  // 遍历所有消息
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const role = msg.role as string;
+    const roleLabel = roleColors[role] || `● ${role.toUpperCase()}`;
+    
+    console.log(`\n┌─────────────────────────────────────────────────────────────┐`);
+    console.log(`│ ${roleLabel} (${i + 1}/${messages.length})                                          │`);
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    
+    // 显示reasoning_content（如果有）
+    if ((msg as any).reasoning_content) {
+      console.log('│ 🧠 REASONING:');
+      console.log('│ ───────────────────────────────────────────────────────────');
+      const reasoningLines = renderMarkdown((msg as any).reasoning_content).split('\n');
+      for (const line of reasoningLines.slice(0, 20)) {
+        console.log('│ ' + line.slice(0, 62));
+      }
+      if ((msg as any).reasoning_content.length > 1000) console.log('│ ... (truncated)');
+      console.log('│ ───────────────────────────────────────────────────────────');
+    }
+    
+    // 显示主要内容
+    const content = formatMessageContent(msg.content);
+    const lines = content.split('\n');
+    
+    for (const line of lines.slice(0, 50)) {
+      console.log('│ ' + line.slice(0, 62));
+    }
+    if (lines.length > 50) {
+      console.log('│ ... (' + (lines.length - 50) + ' more lines)');
+    }
+    
+    console.log('└─────────────────────────────────────────────────────────────┘');
+  }
+}
+
+// 格式化响应内容
+function formatResponseContent(content: string | Array<any>): string {
+  if (typeof content === 'string') {
+    return renderMarkdown(content);
+  }
+  
+  const parts: string[] = [];
+  let hasToolUse = false;
+  
+  for (const block of content) {
+    if (block.type === 'text') {
+      parts.push(renderMarkdown(block.text || ''));
+    } else if (block.type === 'tool_use') {
+      hasToolUse = true;
+      // 工具调用通过 tool_calls 字段处理，不在此显示
+    } else if (block.type === 'tool_result') {
+      const result = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
+      parts.push(`[✅ TOOL RESULT]\n${result}`);
+    } else if (block.type === 'thinking') {
+      parts.push(`[🧠 THINKING]\n${block.thinking || ''}`);
+    } else if (block.type === 'image') {
+      parts.push('[IMAGE]');
+    }
+  }
+  
+  if (hasToolUse) {
+    parts.push('\n[⚠️  Note: Tool calls are executed via tool_calls field, not shown here]');
+  }
+  
+  return parts.join('\n');
+}
+
 export interface Message {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | Array<AnthropicContentBlock | { type: string; text?: string; image_url?: { url: string } }>;
@@ -221,8 +372,93 @@ export class AIClient {
       requestBody.max_completion_tokens = options.thinkingTokens;
     }
 
+    // 调试输出（受showAIDebugInfo配置控制）
+    const showDebug = this.authConfig.showAIDebugInfo ?? false;
+    
+    if (showDebug) {
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║                    AI REQUEST DEBUG                      ║');
+      console.log('╚══════════════════════════════════════════════════════════╝');
+      console.log(`📦 Model: ${model}`);
+      console.log(`🌐 Base URL: ${this.authConfig.baseUrl}`);
+      console.log(`💬 Total Messages: ${messages.length} 条`);
+      if (options.temperature !== undefined) console.log(`🌡️  Temperature: ${options.temperature}`);
+      if (options.maxTokens) console.log(`📏 Max Tokens: ${options.maxTokens}`);
+      if (options.tools?.length) console.log(`🔧 Tools: ${options.tools.length} 个`);
+      if (options.thinkingTokens) console.log(`🧠 Thinking Tokens: ${options.thinkingTokens}`);
+      console.log('─'.repeat(60));
+      
+      // 分离system消息
+      const systemMsgs = messages.filter(m => m.role === 'system');
+      const otherMsgs = messages.filter(m => m.role !== 'system');
+      
+      if (systemMsgs.length > 0) {
+        const systemContent = typeof systemMsgs[0].content === 'string' 
+          ? systemMsgs[0].content 
+          : formatMessageContent(systemMsgs[0].content);
+        console.log('\n┌─────────────────────────────────────────────────────────────┐');
+        console.log('│ 🟫 SYSTEM                                                     │');
+        console.log('├─────────────────────────────────────────────────────────────┤');
+        console.log(renderMarkdown(systemContent).split('\n').map(l => '│ ' + l).join('\n'));
+        console.log('└─────────────────────────────────────────────────────────────┘');
+      }
+      
+      displayMessages(otherMsgs);
+      
+      console.log('\n📤 Sending request to API...\n');
+    }
+
     try {
       const response = await this.client.post('/chat/completions', requestBody);
+      
+      if (showDebug) {
+        console.log('\n╔══════════════════════════════════════════════════════════╗');
+        console.log('║                   AI RESPONSE DEBUG                      ║');
+        console.log('╚══════════════════════════════════════════════════════════╝');
+        console.log(`🆔 ID: ${response.data.id}`);
+        console.log(`🤖 Model: ${response.data.model}`);
+        const usage = response.data.usage;
+        if (usage) {
+          console.log(`📊 Tokens: ${usage.prompt_tokens} (prompt) + ${usage.completion_tokens} (completion) = ${usage.total_tokens} (total)`);
+        }
+        const choice = response.data.choices?.[0];
+        if (choice) {
+          console.log(`🏁 Finish Reason: ${choice.finish_reason}`);
+          
+          console.log('\n┌─────────────────────────────────────────────────────────────┐');
+          console.log('│ 🤖 ASSISTANT                                                 │');
+          console.log('├─────────────────────────────────────────────────────────────┤');
+          
+          // 显示reasoning_content（如果有）
+          if (choice.message.reasoning_content) {
+            console.log('│ 🧠 REASONING:');
+            console.log('│ ───────────────────────────────────────────────────────────');
+            const reasoningLines = renderMarkdown(choice.message.reasoning_content).split('\n');
+            for (const line of reasoningLines.slice(0, 15)) {
+              console.log('│ ' + line.slice(0, 62));
+            }
+            if (choice.message.reasoning_content.length > 800) console.log('│ ... (truncated)');
+            console.log('│ ───────────────────────────────────────────────────────────');
+          }
+          
+          // 显示主要内容
+          const content = formatResponseContent(choice.message.content);
+          const lines = content.split('\n');
+          console.log('│ 💬 CONTENT:');
+          console.log('│ ───────────────────────────────────────────────────────────');
+          for (const line of lines.slice(0, 40)) {
+            console.log('│ ' + line.slice(0, 62));
+          }
+          if (lines.length > 40) {
+            console.log(`│ ... (${lines.length - 40} more lines)`);
+          }
+          console.log('└─────────────────────────────────────────────────────────────┘');
+        }
+        console.log('╔══════════════════════════════════════════════════════════╗');
+        console.log('║                    RESPONSE ENDED                        ║');
+        console.log('╚══════════════════════════════════════════════════════════╝\n');
+      }
+      
       return response.data;
     } catch (error: any) {
       if (error.response) {
@@ -284,9 +520,89 @@ export class AIClient {
       requestBody.thinking = { type: 'enabled', budget_tokens: options.thinkingTokens };
     }
 
+    // 调试输出（受showAIDebugInfo配置控制）
+    const showDebug = this.authConfig.showAIDebugInfo ?? false;
+    
+    if (showDebug) {
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║              AI REQUEST DEBUG (ANTHROPIC)                ║');
+      console.log('╚══════════════════════════════════════════════════════════╝');
+      console.log(`📦 Model: ${requestBody.model}`);
+      console.log(`🌐 Base URL: ${this.authConfig.baseUrl}`);
+      console.log(`💬 Total Messages: ${anthropicMessages.length} 条`);
+      if (requestBody.temperature) console.log(`🌡️  Temperature: ${requestBody.temperature}`);
+      if (requestBody.max_tokens) console.log(`📏 Max Tokens: ${requestBody.max_tokens}`);
+      if (requestBody.tools) console.log(`🔧 Tools: ${requestBody.tools.length} 个`);
+      if (requestBody.thinking) console.log(`🧠 Thinking Budget: ${requestBody.thinking.budget_tokens}`);
+      console.log('─'.repeat(60));
+      
+      // 显示system消息
+      if (system) {
+        console.log('\n┌─────────────────────────────────────────────────────────────┐');
+        console.log('│ 🟫 SYSTEM                                                     │');
+        console.log('├─────────────────────────────────────────────────────────────┤');
+        console.log(renderMarkdown(system).split('\n').map(l => '│ ' + l).join('\n'));
+        console.log('└─────────────────────────────────────────────────────────────┘');
+      }
+      
+      // 显示用户和助手消息
+      displayMessages(anthropicMessages);
+      
+      console.log('\n📤 Sending to Anthropic API (v1/messages)...\n');
+    }
+
     try {
       // 使用 Anthropic 原生端点 /v1/messages
       const response = await this.client.post('/v1/messages', requestBody);
+      
+      if (showDebug) {
+        console.log('\n╔══════════════════════════════════════════════════════════╗');
+        console.log('║             AI RESPONSE DEBUG (ANTHROPIC)                ║');
+        console.log('╚══════════════════════════════════════════════════════════╝');
+        console.log(`🆔 ID: ${response.data.id}`);
+        console.log(`🤖 Model: ${response.data.model}`);
+        const usage = response.data.usage;
+        if (usage) {
+          console.log(`📊 Tokens: ${usage.input_tokens} (input) + ${usage.output_tokens} (output) = ${usage.input_tokens + usage.output_tokens} (total)`);
+        }
+        console.log(`🏁 Stop Reason: ${response.data.stop_reason}`);
+        
+        console.log('\n┌─────────────────────────────────────────────────────────────┐');
+        console.log('│ 🤖 ASSISTANT                                                 │');
+        console.log('├─────────────────────────────────────────────────────────────┤');
+        
+        const content = response.data.content || [];
+        const reasoning = content.filter((c: any) => c.type === 'thinking').map((c: any) => c.thinking).join('');
+        const textContent = content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
+        
+        // 显示thinking
+        if (reasoning) {
+          console.log('│ 🧠 REASONING:');
+          console.log('│ ───────────────────────────────────────────────────────────');
+          const reasoningLines = renderMarkdown(reasoning).split('\n');
+          for (const line of reasoningLines.slice(0, 15)) {
+            console.log('│ ' + line.slice(0, 62));
+          }
+          if (reasoning.length > 800) console.log('│ ... (truncated)');
+          console.log('│ ───────────────────────────────────────────────────────────');
+        }
+        
+        // 显示内容
+        console.log('│ 💬 CONTENT:');
+        console.log('│ ───────────────────────────────────────────────────────────');
+        const lines = renderMarkdown(textContent).split('\n');
+        for (const line of lines.slice(0, 40)) {
+          console.log('│ ' + line.slice(0, 62));
+        }
+        if (lines.length > 40) {
+          console.log(`│ ... (${lines.length - 40} more lines)`);
+        }
+        console.log('└─────────────────────────────────────────────────────────────┘');
+        
+        console.log('\n╔══════════════════════════════════════════════════════════╗');
+        console.log('║                    RESPONSE ENDED                        ║');
+        console.log('╚══════════════════════════════════════════════════════════╝\n');
+      }
       
       return this.convertFromAnthropicNativeResponse(response.data);
     } catch (error: any) {
@@ -352,9 +668,75 @@ export class AIClient {
       }
     }
 
+    // 调试输出（受showAIDebugInfo配置控制）
+    const showDebug = this.authConfig.showAIDebugInfo ?? false;
+    
+    if (showDebug) {
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║               AI REQUEST DEBUG (MINIMAX)                 ║');
+      console.log('╚══════════════════════════════════════════════════════════╝');
+      console.log(`📦 Model: ${requestBody.model}`);
+      console.log(`🔗 Format: ${format.toUpperCase()} | Endpoint: ${endpoint}`);
+      console.log(`🌐 Base URL: ${this.authConfig.baseUrl}`);
+      console.log(`💬 Total Messages: ${requestBody.messages.length} 条`);
+      if (requestBody.temperature) console.log(`🌡️  Temperature: ${requestBody.temperature}`);
+      if (requestBody.max_tokens) console.log(`📏 Max Tokens: ${requestBody.max_tokens}`);
+      if (requestBody.tools) console.log(`🔧 Tools: ${requestBody.tools.length} 个`);
+      console.log('─'.repeat(60));
+      
+      // 显示system消息
+      if (system && format === 'anthropic') {
+        console.log('\n┌─────────────────────────────────────────────────────────────┐');
+        console.log('│ 🟫 SYSTEM                                                     │');
+        console.log('├─────────────────────────────────────────────────────────────┤');
+        console.log(renderMarkdown(system).split('\n').map(l => '│ ' + l).join('\n'));
+        console.log('└─────────────────────────────────────────────────────────────┘');
+      }
+      
+      // 显示其他消息
+      displayMessages(requestBody.messages);
+      
+      console.log('\n📤 Sending to MiniMax API...\n');
+    }
+
     try {
       // MiniMax 使用正确的端点
       const response = await this.client.post(endpoint, requestBody);
+      
+      if (showDebug) {
+        console.log('\n╔══════════════════════════════════════════════════════════╗');
+        console.log('║              AI RESPONSE DEBUG (MINIMAX)                 ║');
+        console.log('╚══════════════════════════════════════════════════════════╝');
+        console.log(`🆔 ID: ${response.data.id}`);
+        console.log(`🤖 Model: ${response.data.model}`);
+        const usage = response.data.usage;
+        if (usage) {
+          console.log(`📊 Tokens: ${usage.prompt_tokens} (prompt) + ${usage.completion_tokens} (completion) = ${usage.total_tokens} (total)`);
+        }
+        console.log(`🏁 Stop Reason: ${response.data.stop_reason}`);
+        
+        console.log('\n┌─────────────────────────────────────────────────────────────┐');
+        console.log('│ 🤖 ASSISTANT                                                 │');
+        console.log('├─────────────────────────────────────────────────────────────┤');
+        
+        const message = response.data.choices?.[0]?.message;
+        const content = typeof message?.content === 'string' ? message.content : JSON.stringify(message?.content);
+        
+        console.log('│ 💬 CONTENT:');
+        console.log('│ ───────────────────────────────────────────────────────────');
+        const lines = renderMarkdown(content).split('\n');
+        for (const line of lines.slice(0, 40)) {
+          console.log('│ ' + line.slice(0, 62));
+        }
+        if (lines.length > 40) {
+          console.log(`│ ... (${lines.length - 40} more lines)`);
+        }
+        console.log('└─────────────────────────────────────────────────────────────┘');
+        
+        console.log('\n╔══════════════════════════════════════════════════════════╗');
+        console.log('║                    RESPONSE ENDED                        ║');
+        console.log('╚══════════════════════════════════════════════════════════╝\n');
+      }
       
       if (format === 'anthropic') {
         return this.convertFromAnthropicNativeResponse(response.data);
@@ -511,13 +893,51 @@ export class AIClient {
       requestBody.max_completion_tokens = options.thinkingTokens;
     }
 
+    // 调试输出（受showAIDebugInfo配置控制）
+    const showDebug = this.authConfig.showAIDebugInfo ?? false;
+    
+    if (showDebug) {
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║              AI REQUEST DEBUG (STREAM)                   ║');
+      console.log('╚══════════════════════════════════════════════════════════╝');
+      console.log(`📦 Model: ${model}`);
+      console.log(`🌐 Base URL: ${this.authConfig.baseUrl}`);
+      console.log(`💬 Total Messages: ${messages.length} 条`);
+      if (options.temperature) console.log(`🌡️  Temperature: ${options.temperature}`);
+      if (options.maxTokens) console.log(`📏 Max Tokens: ${options.maxTokens}`);
+      if (options.tools?.length) console.log(`🔧 Tools: ${options.tools.length} 个`);
+      console.log('─'.repeat(60));
+      
+      // 分离并显示消息
+      const systemMsgs = messages.filter(m => m.role === 'system');
+      const otherMsgs = messages.filter(m => m.role !== 'system');
+      
+      if (systemMsgs.length > 0) {
+        const systemContent = typeof systemMsgs[0].content === 'string' 
+          ? systemMsgs[0].content 
+          : formatMessageContent(systemMsgs[0].content);
+        console.log('\n┌─────────────────────────────────────────────────────────────┐');
+        console.log('│ 🟫 SYSTEM                                                     │');
+        console.log('├─────────────────────────────────────────────────────────────┤');
+        console.log(renderMarkdown(systemContent).split('\n').map(l => '│ ' + l).join('\n'));
+        console.log('└─────────────────────────────────────────────────────────────┘');
+      }
+      
+      displayMessages(otherMsgs);
+      
+      console.log('\n📤 Starting stream...\n');
+    }
+
     try {
       const response = await this.client.post('/chat/completions', requestBody, {
         responseType: 'stream'
       });
 
+      console.log('📥 Receiving stream chunks...\n');
+
       let buffer = '';
       let chunkCount = 0;
+      let outputBuffer = '';
 
       for await (const chunk of response.data) {
         buffer += chunk.toString();
@@ -532,6 +952,28 @@ export class AIClient {
           if (trimmedLine.startsWith('data: ')) {
             const data = trimmedLine.slice(6);
             if (data === '[DONE]') {
+              if (showDebug) {
+                console.log('\n╔══════════════════════════════════════════════════════════╗');
+                console.log('║              STREAM COMPLETED                            ║');
+                console.log('╚══════════════════════════════════════════════════════════╝');
+                console.log(`📦 Total chunks: ${chunkCount}`);
+                console.log(`📏 Total output: ${outputBuffer.length} chars`);
+                
+                console.log('\n┌─────────────────────────────────────────────────────────────┐');
+                console.log('│ 🤖 ASSISTANT OUTPUT                                        │');
+                console.log('├─────────────────────────────────────────────────────────────┤');
+                console.log('│ 💬 CONTENT:');
+                console.log('│ ───────────────────────────────────────────────────────────');
+                const lines = renderMarkdown(outputBuffer).split('\n');
+                for (const line of lines.slice(0, 30)) {
+                  console.log('│ ' + line.slice(0, 62));
+                }
+                if (lines.length > 30) {
+                  console.log(`│ ... (${lines.length - 30} more lines)`);
+                }
+                console.log('└─────────────────────────────────────────────────────────────┘');
+                console.log('');
+              }
               return;
             }
 
@@ -540,9 +982,11 @@ export class AIClient {
               const delta = parsed.choices?.[0]?.delta;
               if (delta?.content) {
                 chunkCount++;
+                outputBuffer += delta.content;
                 yield delta.content;
               } else if (delta?.reasoning_content) {
                 chunkCount++;
+                outputBuffer += delta.reasoning_content;
                 yield delta.reasoning_content;
               }
             } catch (e) {
@@ -571,6 +1015,10 @@ export class AIClient {
           }
         }
       }
+      
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║              STREAM COMPLETED                            ║');
+      console.log('╚══════════════════════════════════════════════════════════╝\n');
     } catch (error: any) {
       if (error.response) {
         throw new Error(
@@ -629,13 +1077,45 @@ export class AIClient {
       requestBody.thinking = { type: 'enabled', budget_tokens: options.thinkingTokens };
     }
 
+    // 调试输出（受showAIDebugInfo配置控制）
+    const showDebug = this.authConfig.showAIDebugInfo ?? false;
+    
+    if (showDebug) {
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║         AI REQUEST DEBUG (ANTHROPIC STREAM)             ║');
+      console.log('╚══════════════════════════════════════════════════════════╝');
+      console.log(`📦 Model: ${requestBody.model}`);
+      console.log(`🌐 Base URL: ${this.authConfig.baseUrl}`);
+      console.log(`💬 Total Messages: ${anthropicMessages.length} 条`);
+      if (requestBody.temperature) console.log(`🌡️  Temperature: ${requestBody.temperature}`);
+      if (requestBody.max_tokens) console.log(`📏 Max Tokens: ${requestBody.max_tokens}`);
+      if (requestBody.thinking) console.log(`🧠 Thinking Budget: ${requestBody.thinking.budget_tokens}`);
+      console.log('─'.repeat(60));
+      
+      // 显示system消息
+      if (system) {
+        console.log('\n┌─────────────────────────────────────────────────────────────┐');
+        console.log('│ 🟫 SYSTEM                                                     │');
+        console.log('├─────────────────────────────────────────────────────────────┤');
+        console.log(renderMarkdown(system).split('\n').map(l => '│ ' + l).join('\n'));
+        console.log('└─────────────────────────────────────────────────────────────┘');
+      }
+      
+      displayMessages(anthropicMessages);
+      
+      console.log('\n📤 Starting Anthropic stream...\n');
+    }
+
     try {
       // Anthropic 原生流式端点 /v1/messages
       const response = await this.client.post('/v1/messages', requestBody, {
         responseType: 'stream'
       });
 
+      console.log('📥 Receiving Anthropic stream chunks...\n');
+
       let buffer = '';
+      let outputBuffer = '';
 
       for await (const chunk of response.data) {
         buffer += chunk.toString();
@@ -656,13 +1136,36 @@ export class AIClient {
               // Anthropic 事件类型
               if (parsed.type === 'content_block_delta') {
                 if (parsed.delta?.type === 'text_delta' && parsed.delta.text) {
+                  outputBuffer += parsed.delta.text;
                   yield parsed.delta.text;
                 } else if (parsed.delta?.type === 'thinking_delta' && parsed.delta.thinking) {
+                  outputBuffer += parsed.delta.thinking;
                   yield parsed.delta.thinking;
                 }
               } else if (parsed.type === 'message_delta') {
                 if (parsed.delta?.stop_reason) {
                   // 消息结束
+                  if (showDebug) {
+                    console.log('\n╔══════════════════════════════════════════════════════════╗');
+                    console.log('║              STREAM COMPLETED                            ║');
+                    console.log('╚══════════════════════════════════════════════════════════╝');
+                    console.log(`📏 Total output: ${outputBuffer.length} chars`);
+                    
+                    console.log('\n┌─────────────────────────────────────────────────────────────┐');
+                    console.log('│ 🤖 ASSISTANT OUTPUT                                        │');
+                    console.log('├─────────────────────────────────────────────────────────────┤');
+                    console.log('│ 💬 CONTENT:');
+                    console.log('│ ───────────────────────────────────────────────────────────');
+                    const lines = renderMarkdown(outputBuffer).split('\n');
+                    for (const line of lines.slice(0, 30)) {
+                      console.log('│ ' + line.slice(0, 62));
+                    }
+                    if (lines.length > 30) {
+                      console.log(`│ ... (${lines.length - 30} more lines)`);
+                    }
+                    console.log('└─────────────────────────────────────────────────────────────┘');
+                    console.log('');
+                  }
                   return;
                 }
               }
@@ -672,6 +1175,10 @@ export class AIClient {
           }
         }
       }
+      
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║              STREAM COMPLETED                            ║');
+      console.log('╚══════════════════════════════════════════════════════════╝\n');
     } catch (error: any) {
       if (error.response) {
         throw new Error(
@@ -735,13 +1242,40 @@ export class AIClient {
       }
     }
 
+    console.log('\n╔══════════════════════════════════════════════════════════╗');
+    console.log('║            AI REQUEST DEBUG (MINIMAX STREAM)             ║');
+    console.log('╚══════════════════════════════════════════════════════════╝');
+    console.log(`📦 Model: ${requestBody.model}`);
+    console.log(`🔗 Format: ${format.toUpperCase()} | Endpoint: ${endpoint}`);
+    console.log(`🌐 Base URL: ${this.authConfig.baseUrl}`);
+    console.log(`💬 Total Messages: ${requestBody.messages.length} 条`);
+    if (requestBody.temperature) console.log(`🌡️  Temperature: ${requestBody.temperature}`);
+    if (requestBody.max_tokens) console.log(`📏 Max Tokens: ${requestBody.max_tokens}`);
+    console.log('─'.repeat(60));
+    
+    // 显示system消息
+    if (system && format === 'anthropic') {
+      console.log('\n┌─────────────────────────────────────────────────────────────┐');
+      console.log('│ 🟫 SYSTEM                                                     │');
+      console.log('├─────────────────────────────────────────────────────────────┤');
+      console.log(renderMarkdown(system).split('\n').map(l => '│ ' + l).join('\n'));
+      console.log('└─────────────────────────────────────────────────────────────┘');
+    }
+    
+    displayMessages(requestBody.messages);
+    
+    console.log('\n📤 Starting MiniMax stream...\n');
+
     try {
       // MiniMax uses correct endpoint
       const response = await this.client.post(endpoint, requestBody, {
         responseType: 'stream'
       });
 
+      console.log('📥 Receiving MiniMax stream chunks...\n');
+
       let buffer = '';
+      let outputBuffer = '';
 
       for await (const chunk of response.data) {
         buffer += chunk.toString();
@@ -769,6 +1303,25 @@ export class AIClient {
                   }
                 } else if (parsed.type === 'message_delta') {
                   if (parsed.delta?.stop_reason) {
+                    console.log('\n╔══════════════════════════════════════════════════════════╗');
+                    console.log('║              STREAM COMPLETED                            ║');
+                    console.log('╚══════════════════════════════════════════════════════════╝');
+                    console.log(`📏 Total output: ${outputBuffer.length} chars`);
+                    
+                    console.log('\n┌─────────────────────────────────────────────────────────────┐');
+                    console.log('│ 🤖 ASSISTANT OUTPUT                                        │');
+                    console.log('├─────────────────────────────────────────────────────────────┤');
+                    console.log('│ 💬 CONTENT:');
+                    console.log('│ ───────────────────────────────────────────────────────────');
+                    const lines = renderMarkdown(outputBuffer).split('\n');
+                    for (const line of lines.slice(0, 30)) {
+                      console.log('│ ' + line.slice(0, 62));
+                    }
+                    if (lines.length > 30) {
+                      console.log(`│ ... (${lines.length - 30} more lines)`);
+                    }
+                    console.log('└─────────────────────────────────────────────────────────────┘');
+                    console.log('');
                     return;
                   }
                 }
@@ -786,8 +1339,10 @@ export class AIClient {
                 const parsed = JSON.parse(data);
                 const delta = parsed.choices?.[0]?.delta;
                 if (delta?.content) {
+                  outputBuffer += delta.content;
                   yield delta.content;
                 } else if (delta?.reasoning_content) {
+                  outputBuffer += delta.reasoning_content;
                   yield delta.reasoning_content;
                 }
               } catch (e) {
@@ -797,6 +1352,10 @@ export class AIClient {
           }
         }
       }
+      
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║              STREAM COMPLETED                            ║');
+      console.log('╚══════════════════════════════════════════════════════════╝\n');
     } catch (error: any) {
       if (error.response) {
         throw new Error(

@@ -18,6 +18,7 @@ export interface AuthConfig {
   baseUrl?: string;
   modelName?: string;
   searchApiKey?: string;
+  showAIDebugInfo?: boolean;
 }
 
 export interface Tool {
@@ -89,6 +90,7 @@ export interface Settings {
   autoUpdate: boolean;
   telemetryEnabled: boolean;
   showToolDetails: boolean;
+  showAIDebugInfo: boolean;
 }
 
 export interface ChatMessage {

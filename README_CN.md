@@ -217,6 +217,7 @@ npm run typecheck # TypeScript
   "autoUpdate": true,
   "telemetryEnabled": true,
   "showToolDetails": false,
+  "showAIDebugInfo": false,
   "contextCompress": {
     "enabled": false,
     "autoTrigger": false,

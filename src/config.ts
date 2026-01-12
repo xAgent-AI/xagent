@@ -40,7 +40,8 @@ const DEFAULT_SETTINGS: Settings = {
   language: 'zh',
   autoUpdate: true,
   telemetryEnabled: true,
-  showToolDetails: false
+  showToolDetails: false,
+  showAIDebugInfo: false
 };
 
 export class ConfigManager {

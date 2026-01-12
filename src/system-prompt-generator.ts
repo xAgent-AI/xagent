@@ -47,7 +47,7 @@ export class SystemPromptGenerator {
     if (availableTools.length > 0) {
       const toolSchemas = this.getToolSchemas(availableTools);
       const toolUsageGuide = this.generateToolUsageGuide(toolSchemas);
-      const decisionMakingGuide = this.generateDecisionMakingGuide();
+      const decisionMakingGuide = this.generateDecisionMakingGuide(availableTools);
       const executionStrategy = this.generateExecutionStrategy();
 
       enhancedPrompt += `
@@ -554,21 +554,45 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
     return guide;
   }
 
-  private generateDecisionMakingGuide(): string {
+  private generateDecisionMakingGuide(availableTools: any[]): string {
+    // 工具名称到简短描述的映射
+    const toolDescriptions: Record<string, string> = {
+      'Read': 'When you need to understand existing code, configuration, or documentation',
+      'Write': 'When creating new files or completely replacing existing content',
+      'Grep': 'When searching for specific patterns, function names, or text across files',
+      'Bash': 'When running tests, installing dependencies, building projects, or executing terminal commands',
+      'SearchCodebase': 'When finding code by meaning rather than exact text matches',
+      'ListDirectory': 'When exploring project structure or finding files',
+      'Replace': 'When making targeted edits without rewriting entire files',
+      'web_search': 'When you need current information from the internet',
+      'web_fetch': 'When retrieving content from specific URLs',
+      'todo_write': 'When planning and tracking complex multi-step tasks',
+      'task': 'When delegating specialized work to expert agents',
+      'DeleteFile': 'When you need to remove a file from the filesystem',
+      'CreateDirectory': 'When you need to create a new directory or folder structure',
+      'ReadBashOutput': 'When you need to read the output of a background task',
+      'ask_user_question': 'When you need to ask the user for clarification or decisions',
+      'save_memory': 'When you need to remember important information for future sessions',
+      'exit_plan_mode': 'When you have completed planning and are ready to execute',
+      'xml_escape': 'When you need to escape special characters in XML/HTML files',
+      'image_read': 'When you need to analyze or read image files',
+      'Skill': 'When you need to execute specialized skills like PDF, PPTX, or XLSX'
+    };
+
+    // 根据可用工具生成 "When to Use Tools" 部分
+    let toolsSection = '### When to Use Tools\n';
+    if (availableTools.length > 0) {
+      for (const tool of availableTools) {
+        const description = toolDescriptions[tool.name] || `When you need to use ${tool.name}`;
+        toolsSection += `- **${tool.name}**: ${description}\n`;
+      }
+    } else {
+      toolsSection += '- (No tools available in current mode)\n';
+    }
+
     return `## Decision Making Guide
 
-### When to Use Tools
-- **Read**: When you need to understand existing code, configuration, or documentation
-- **Write**: When creating new files or completely replacing existing content
-- **Grep**: When searching for specific patterns, function names, or text across files
-- **Bash**: When running tests, installing dependencies, building projects, or executing terminal commands
-- **SearchCodebase**: When finding code by meaning rather than exact text matches
-- **ListDirectory**: When exploring project structure or finding files
-- **Replace**: When making targeted edits without rewriting entire files
-- **WebSearch**: When you need current information from the internet
-- **WebFetch**: When retrieving content from specific URLs
-- **TodoWrite**: When planning and tracking complex multi-step tasks
-- **Task**: When delegating specialized work to expert agents
+${toolsSection}
 
 ### CRITICAL: IMMEDIATE TOOL EXECUTION
 **YOU MUST CALL TOOLS IMMEDIATELY when needed - DO NOT say "let me..." or "I will..." first!**

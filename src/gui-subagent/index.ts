@@ -7,6 +7,8 @@
  * - Perform clicks, typing, scrolling
  * - Navigate websites
  * - Execute complex automation workflows
+ *
+ * Based on UI-TARS architecture
  */
 
 export * from './types/index.js';
@@ -15,7 +17,7 @@ export * from './agent/index.js';
 
 import { BrowserOperator, type BrowserOperatorOptions } from './operator/browser-operator.js';
 import { ComputerOperator, type ComputerOperatorOptions } from './operator/computer-operator.js';
-import { GUIAgent, type GUIAgentConfig, type GUIAgentData, type Conversation } from './agent/gui-agent.js';
+import { GUIAgent, type GUIAgentConfig, type GUIAgentData, type Conversation, GUIAgentStatus } from './agent/gui-agent.js';
 import type { Operator } from './operator/base-operator.js';
 
 /**
@@ -39,7 +41,7 @@ export interface GUISubAgentConfig {
 }
 
 /**
- * Default configuration values
+ * Default configuration values (aligned with UI-TARS)
  */
 export const DEFAULT_GUI_CONFIG: Required<GUISubAgentConfig> = {
   operatorType: 'browser',
@@ -49,8 +51,8 @@ export const DEFAULT_GUI_CONFIG: Required<GUISubAgentConfig> = {
   headless: false,
   browserPath: '',
   viewport: { width: 1280, height: 800 },
-  loopIntervalInMs: 500,
-  maxLoopCount: 25,
+  loopIntervalInMs: 0,
+  maxLoopCount: 100,
 };
 
 /**
@@ -114,7 +116,7 @@ export async function createGUIAgent<T extends Operator>(
   return agent;
 }
 
-export { BrowserOperator, ComputerOperator, GUIAgent };
+export { BrowserOperator, ComputerOperator, GUIAgent, GUIAgentStatus };
 export type {
   BrowserOperatorOptions,
   ComputerOperatorOptions,

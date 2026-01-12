@@ -173,13 +173,6 @@ export type FinishAction = BaseAction<
   }
 >;
 
-export type CallUserAction = BaseAction<
-  'call_user',
-  {
-    content?: string;
-  }
->;
-
 export type OperationalGUIAction =
   | ClickAction
   | DoubleClickAction
@@ -202,19 +195,23 @@ export type OperationalGUIAction =
   | BackAction
   | OpenAppAction
   | WaitAction
-  | FinishAction
-  | CallUserAction;
+  | FinishAction;
 
 export type GUIAction = ScreenShotAction | OperationalGUIAction;
 
-export type SupportedActionType = 
+export type SupportedActionType =
   | 'click'
+  | 'left_click'
+  | 'left_single'
+  | 'left_double'
   | 'double_click'
   | 'right_click'
+  | 'right_single'
   | 'middle_click'
   | 'mouse_down'
   | 'mouse_up'
   | 'mouse_move'
+  | 'hover'
   | 'drag'
   | 'scroll'
   | 'type'
@@ -230,16 +227,22 @@ export type SupportedActionType =
   | 'open_app'
   | 'wait'
   | 'finished'
-  | 'call_user';
+  | 'user_stop'
+  | 'error_env';
 
 export const ACTION_METADATA: Record<SupportedActionType, { category: string; description: string }> = {
   click: { category: 'mouse', description: 'Click on an element' },
+  left_click: { category: 'mouse', description: 'Left click on an element' },
+  left_single: { category: 'mouse', description: 'Left single click on an element' },
+  left_double: { category: 'mouse', description: 'Left double click on an element' },
   right_click: { category: 'mouse', description: 'Right click on an element' },
+  right_single: { category: 'mouse', description: 'Right single click on an element' },
   double_click: { category: 'mouse', description: 'Double click on an element' },
   middle_click: { category: 'mouse', description: 'Middle click on an element' },
   mouse_down: { category: 'mouse', description: 'Press mouse button down' },
   mouse_up: { category: 'mouse', description: 'Release mouse button' },
   mouse_move: { category: 'mouse', description: 'Move mouse to position' },
+  hover: { category: 'mouse', description: 'Hover on an element' },
   drag: { category: 'mouse', description: 'Drag from one position to another' },
   scroll: { category: 'mouse', description: 'Scroll in a direction' },
   type: { category: 'keyboard', description: 'Type text' },
@@ -255,7 +258,8 @@ export const ACTION_METADATA: Record<SupportedActionType, { category: string; de
   open_app: { category: 'mobile', description: 'Open application' },
   wait: { category: 'wait', description: 'Wait for specified time' },
   finished: { category: 'system', description: 'Mark task as finished' },
-  call_user: { category: 'system', description: 'Request user interaction' },
+  user_stop: { category: 'system', description: 'User stopped the task' },
+  error_env: { category: 'system', description: 'Environment error' },
 };
 
 export function isSupportedActionType(type: string): type is SupportedActionType {

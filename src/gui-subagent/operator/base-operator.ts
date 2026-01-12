@@ -1,7 +1,9 @@
 /**
  * Base Operator for gui-subagent
  * Abstract base class for browser/desktop automation operators
- * Based on UI-TARS architecture
+ * Based on UI-TARS architecture (@ui-tars/sdk/core)
+ *
+ * This implementation is aligned with @ui-tars/sdk/core.ts Operator class
  */
 
 import type {
@@ -9,34 +11,36 @@ import type {
   ScreenshotOutput,
   ExecuteParams,
   ExecuteOutput,
-  SupportedActionType,
-  PredictionParsed,
 } from '../types/operator.js';
-
-export abstract class BaseOperator {
-  abstract doScreenshot(params?: unknown): Promise<unknown>;
-  abstract doExecute(params: unknown): Promise<unknown>;
-}
 
 /**
  * Operator manual configuration for AI agents
+ * Aligned with @ui-tars/sdk/core.ts Operator.MANUAL
  */
 export interface OperatorManual {
   ACTION_SPACES: string[];
-  EXAMPLES?: string[];
+  KEY_SPACE?: {
+    [key: string]: string;
+  };
+  KEY_DESCRIPTION?: {
+    [key: string]: string;
+  };
 }
 
-export abstract class Operator extends BaseOperator {
+/**
+ * Abstract base Operator class
+ * Provides common functionality for all operators (browser, computer, etc.)
+ */
+export abstract class Operator {
   protected _initialized = false;
   protected _initializing = false;
   protected _initPromise: Promise<void> | null = null;
 
-  constructor() {
-    super();
-  }
+  constructor() {}
 
   /**
    * Static manual configuration for AI agents
+   * Override this in subclasses to provide custom action spaces
    */
   static get MANUAL(): OperatorManual {
     return {
@@ -46,15 +50,26 @@ export abstract class Operator extends BaseOperator {
         `right_single(start_box='[x1, y1, x2, y2]')`,
         `drag(start_box='[x1, y1, x2, y2]', end_box='[x3, y3, x4, y4]')`,
         `hotkey(key='')`,
-        `type(content='') # Use "\\n" at the end to submit`,
+        `type(content='')`,
         `scroll(start_box='[x1, y1, x2, y2]', direction='down or up or right or left')`,
-        `wait() # Sleep for 5s and take a screenshot`,
+        `wait()`,
         `finished()`,
-        `call_user() # Request user help for unsolvable tasks`,
+        `call_user()`,
       ],
     };
   }
 
+  /**
+   * Get manual configuration from instance
+   */
+  protected get manual(): OperatorManual {
+    return (this.constructor as typeof Operator).MANUAL;
+  }
+
+  /**
+   * Initialize the operator
+   * Must be called before any other operations
+   */
   async doInitialize(): Promise<void> {
     if (this._initialized) {
       return;
@@ -78,8 +93,14 @@ export abstract class Operator extends BaseOperator {
     return initPromise;
   }
 
+  /**
+   * Internal initialize method - implement in subclass
+   */
   protected abstract initialize(): Promise<void>;
 
+  /**
+   * Ensure operator is initialized
+   */
   protected async ensureInitialized(): Promise<void> {
     if (!this._initialized && !this._initializing) {
       await this.doInitialize();
@@ -88,34 +109,49 @@ export abstract class Operator extends BaseOperator {
     }
   }
 
-  getSupportedActions(): SupportedActionType[] {
-    return this.supportedActions();
-  }
+  /**
+   * Get supported action types
+   */
+  abstract getSupportedActions(): string[];
 
-  protected abstract supportedActions(): SupportedActionType[];
-
+  /**
+   * Get screen context (width, height, scaleFactor)
+   */
   async getScreenContext(): Promise<ScreenContext> {
     await this.ensureInitialized();
     return this.screenContext();
   }
 
+  /**
+   * Internal screen context - implement in subclass
+   */
   protected abstract screenContext(): ScreenContext;
 
+  /**
+   * Take a screenshot
+   * Returns base64 encoded image
+   */
   async doScreenshot(): Promise<ScreenshotOutput> {
     try {
       await this.ensureInitialized();
       return await this.screenshot();
     } catch (error) {
       return {
-        base64: '',
         status: 'failed',
-        errorMessage: (error as Error).message,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
 
+  /**
+   * Internal screenshot method - implement in subclass
+   */
   protected abstract screenshot(): Promise<ScreenshotOutput>;
 
+  /**
+   * Execute an action based on parsed prediction
+   * Aligned with @ui-tars/sdk/core.ts Operator.execute()
+   */
   async doExecute(params: ExecuteParams): Promise<ExecuteOutput> {
     try {
       await this.ensureInitialized();
@@ -123,27 +159,87 @@ export abstract class Operator extends BaseOperator {
     } catch (error) {
       return {
         status: 'failed',
-        errorMessage: (error as Error).message,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
 
+  /**
+   * Internal execute method - implement in subclass
+   */
   protected abstract execute(params: ExecuteParams): Promise<ExecuteOutput>;
 
+  /**
+   * Cleanup resources
+   */
   abstract cleanup(): Promise<void>;
+
+  /**
+   * Destroy operator instance
+   */
   abstract destroyInstance(): Promise<void>;
 
   /**
-   * Execute a single parsed prediction (UI-TARS style)
+   * Check if operator is initialized
    */
-  async executePrediction(prediction: PredictionParsed): Promise<ExecuteOutput> {
-    return this.doExecute({
-      prediction: '',
-      parsedPrediction: prediction,
-      screenWidth: 0,
-      screenHeight: 0,
-      scaleFactor: 1,
-      factors: [1, 1],
-    });
+  isInitialized(): boolean {
+    return this._initialized;
   }
+}
+
+/**
+ * Parse box string to screen coordinates
+ * Aligned with @ui-tars/sdk/core.ts parseBoxToScreenCoords()
+ */
+export function parseBoxToScreenCoords(params: {
+  boxStr: string;
+  screenWidth: number;
+  screenHeight: number;
+}): { x: number; y: number } {
+  const { boxStr, screenWidth, screenHeight } = params;
+
+  if (!boxStr) {
+    return { x: 0, y: 0 };
+  }
+
+  // Support multiple formats:
+  // [x1, y1, x2, y2], (x1,y1,x2,y2), "[x1, y1, x2, y2]", etc.
+  const numbers = boxStr
+    .replace(/[()[\]]/g, '')
+    .split(',')
+    .filter((n) => n.trim())
+    .map((n) => parseFloat(n.trim()));
+
+  if (numbers.length < 2) {
+    return { x: 0, y: 0 };
+  }
+
+  // Calculate center of the box
+  const x1 = numbers[0];
+  const y1 = numbers[1];
+  const x2 = numbers.length > 2 ? numbers[2] : x1;
+  const y2 = numbers.length > 3 ? numbers[3] : y1;
+
+  // Normalize to screen coordinates (0-1 range then multiply by screen size)
+  let normalizedX: number;
+  let normalizedY: number;
+
+  if (x1 >= 0 && x1 <= 1 && y1 >= 0 && y1 <= 1) {
+    // Already normalized coordinates
+    normalizedX = (x1 + x2) / 2;
+    normalizedY = (y1 + y2) / 2;
+  } else if (x1 > 1 || y1 > 1) {
+    // Absolute pixel coordinates
+    normalizedX = x1 / screenWidth;
+    normalizedY = y1 / screenHeight;
+  } else {
+    // Normalized 0-1 with single value
+    normalizedX = x1;
+    normalizedY = y1;
+  }
+
+  return {
+    x: Math.round(normalizedX * screenWidth),
+    y: Math.round(normalizedY * screenHeight),
+  };
 }

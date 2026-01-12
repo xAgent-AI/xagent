@@ -7,6 +7,17 @@ import type { SupportedActionType } from './actions.js';
 
 export type { SupportedActionType };
 
+/**
+ * Status Enum from @ui-tars/sdk/core
+ * Aligned with UI-TARS SDK StatusEnum
+ */
+export enum StatusEnum {
+  SUCCESS = 'success',
+  FAILED = 'failed',
+  END = 'end',
+  CONTINUE = 'continue',
+}
+
 export interface ScreenContext {
   /** Screenshot width */
   width: number;
@@ -38,7 +49,7 @@ export interface ExecuteParams {
 }
 
 export interface ExecuteOutput {
-  status: 'success' | 'failed';
+  status: 'success' | 'failed' | 'end';
   errorMessage?: string;
 }
 

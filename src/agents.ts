@@ -286,7 +286,7 @@ Usage: npm start
 
 Enter /help to view all available commands.
 
-## Your Capabilities
+## Capabilities
 
 I can:
 - **Automate your computer** - Control browsers, desktop apps, mouse, and keyboard

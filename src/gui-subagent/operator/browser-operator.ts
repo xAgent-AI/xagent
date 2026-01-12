@@ -322,11 +322,8 @@ export class BrowserOperator extends Operator {
   }
 
   async cleanup(): Promise<void> {
-    this.logger.info('Cleaning up...');
-    if (this.page) {
-      await this.page.close();
-      this.page = null;
-    }
+    // Don't close browser/page - let user continue using it
+    this.logger.info('GUI Agent cleanup - browser kept open for user');
   }
 
   async destroyInstance(): Promise<void> {

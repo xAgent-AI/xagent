@@ -39,8 +39,6 @@ export class InteractiveSession {
   private cancellationManager: CancellationManager;
   private indentLevel: number;
   private indentString: string;
-  private _consecutiveToolFailures: number = 0;
-  private readonly _maxConsecutiveFailures: number = 3;
 
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
@@ -810,41 +808,32 @@ export class InteractiveSession {
         console.log('');
         console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
 
-        // Track consecutive failures to prevent infinite loops
-        this._consecutiveToolFailures++;
-        if (this._consecutiveToolFailures >= this._maxConsecutiveFailures) {
-          console.log('');
-          console.log(`${indent}${colors.error(`${icons.warning} Too many consecutive failures (${this._consecutiveToolFailures}). Stopping to prevent infinite loop.`)}`);
-          console.log(`${indent}${colors.textMuted('Please check your configuration and try again.')}`);
-          // Clear the conversation to prevent repeated failed attempts
-          this._consecutiveToolFailures = 0;
-          return;
-        }
-
         this.conversation.push({
           role: 'tool',
           content: JSON.stringify({ error }),
           timestamp: Date.now()
         });
       } else {
-        // Reset failure counter on success
-        this._consecutiveToolFailures = 0;
+        // Use correct indent for gui-subagent tasks
+        const isGuiSubagent = tool === 'task' && params?.subagent_type === 'gui-subagent';
+        const displayIndent = isGuiSubagent ? indent + '  ' : indent;
+
         // Always show details for todo tools so users can see their task lists
         const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
         if (isTodoTool) {
           console.log('');
-          console.log(`${indent}${colors.success(`${icons.check} Todo List:`)}`);
-          console.log(this.renderTodoList(result.todos || result.todos, indent));
+          console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
+          console.log(this.renderTodoList(result.todos || result.todos, displayIndent));
           // Show summary if available
           if (result.message) {
-            console.log(`${indent}${colors.textDim(result.message)}`);
+            console.log(`${displayIndent}${colors.textDim(result.message)}`);
           }
         } else if (showToolDetails) {
           console.log('');
-          console.log(`${indent}${colors.success(`${icons.check} Tool Result:`)}`);
-          console.log(`${indent}${colors.textDim(JSON.stringify(result, null, 2))}`);
+          console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
+          console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
         } else {
-          console.log(`${indent}${colors.success(` ${icons.check} Completed`)}`);
+          console.log(`${displayIndent}${colors.success(`${icons.check} Completed`)}`);
         }
 
         const toolCallRecord: ToolCall = {

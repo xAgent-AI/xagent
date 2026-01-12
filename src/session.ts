@@ -39,6 +39,8 @@ export class InteractiveSession {
   private cancellationManager: CancellationManager;
   private indentLevel: number;
   private indentString: string;
+  private _consecutiveToolFailures: number = 0;
+  private readonly _maxConsecutiveFailures: number = 3;
 
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
@@ -808,12 +810,25 @@ export class InteractiveSession {
         console.log('');
         console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
 
+        // Track consecutive failures to prevent infinite loops
+        this._consecutiveToolFailures++;
+        if (this._consecutiveToolFailures >= this._maxConsecutiveFailures) {
+          console.log('');
+          console.log(`${indent}${colors.error(`${icons.warning} Too many consecutive failures (${this._consecutiveToolFailures}). Stopping to prevent infinite loop.`)}`);
+          console.log(`${indent}${colors.textMuted('Please check your configuration and try again.')}`);
+          // Clear the conversation to prevent repeated failed attempts
+          this._consecutiveToolFailures = 0;
+          return;
+        }
+
         this.conversation.push({
           role: 'tool',
           content: JSON.stringify({ error }),
           timestamp: Date.now()
         });
       } else {
+        // Reset failure counter on success
+        this._consecutiveToolFailures = 0;
         // Always show details for todo tools so users can see their task lists
         const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
         if (isTodoTool) {
@@ -859,7 +874,23 @@ export class InteractiveSession {
       }
     }
 
-    await this.generateResponse();
+    // Don't continue generating response if gui-subagent task failed
+    // This prevents infinite loops when browser automation fails
+    const guiSubagentFailed = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent');
+    const hasErrors = results.some(r => r.error);
+    const guiSubagentResultFailed = guiSubagentFailed && results.some(r => r.tool === 'task' && r.result?.success === false);
+
+    if (!guiSubagentFailed && !hasErrors) {
+      await this.generateResponse();
+    } else if (guiSubagentResultFailed) {
+      console.log('');
+      // Show actual error message from the GUI task result
+      const guiResult = results.find(r => r.tool === 'task' && r.result?.success === false);
+      const errorMsg = guiResult?.error || guiResult?.result?.message || 'Unknown error';
+      console.log(`${indent}${colors.textMuted('GUI task failed: ' + errorMsg)}`);
+      // Reset the flag so user can continue with other tasks
+      (this as any)._isOperationInProgress = false;
+    }
   }
 
   /**

@@ -991,9 +991,114 @@ export class TaskTool implements Tool {
     console.log('');
 
     // Get model config for GUI agent
-    let modelName = config.get('guiSubagentModel') || config.get('modelName') || 'gpt-4o';
-    let baseUrl = config.get('guiSubagentBaseUrl') || config.get('baseUrl') || '';
-    let apiKey = config.get('guiSubagentApiKey') || config.get('apiKey') || '';
+    // Priority: guiSubagentBaseUrl (test first) -> baseUrl (fallback)
+    // When falling back to baseUrl, also use the corresponding modelName and apiKey
+    const primaryBaseUrl = config.get('guiSubagentBaseUrl') || '';
+    const fallbackBaseUrl = config.get('baseUrl') || '';
+    const primaryApiKey = config.get('guiSubagentApiKey') || '';
+    const fallbackApiKey = config.get('apiKey') || '';
+    const primaryModelName = config.get('guiSubagentModel') || '';
+    const fallbackModelName = config.get('modelName') || '';
+
+    let baseUrl = primaryBaseUrl;
+    let modelName = primaryModelName;
+    let apiKey = primaryApiKey;
+
+    // Test API availability (like curl) and choose the right baseUrl
+    if (primaryBaseUrl) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const response = await fetch(`${primaryBaseUrl.replace(/\/v1\/?$/, '')}/models`, {
+          method: 'GET',
+          headers: primaryApiKey ? { 'Authorization': `Bearer ${primaryApiKey}` } : {},
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        if (!response.ok) {
+          // Fallback to baseUrl with its corresponding model and API key
+          baseUrl = fallbackBaseUrl;
+          modelName = fallbackModelName;
+          apiKey = fallbackApiKey;
+        }
+      } catch {
+        // Fallback to baseUrl with its corresponding model and API key
+        baseUrl = fallbackBaseUrl;
+        modelName = fallbackModelName;
+        apiKey = fallbackApiKey;
+      }
+    } else {
+      baseUrl = fallbackBaseUrl;
+      modelName = fallbackModelName;
+      apiKey = fallbackApiKey;
+    }
+
+    console.log(`[DEBUG] primaryBaseUrl: "${primaryBaseUrl}"`);
+    console.log(`[DEBUG] fallbackBaseUrl: "${fallbackBaseUrl}"`);
+    console.log(`[DEBUG] final baseUrl: "${baseUrl}"`);
+    console.log(`[DEBUG] final modelName: "${modelName}"`);
+    console.log(`[DEBUG] final apiKey: "${apiKey ? '***' : '(empty)'}"`);
+    if (!baseUrl) {
+      return {
+        success: false,
+        message: `GUI task "${description}" failed: No valid API URL configured`
+      };
+    }
+
+    // Check if this is a simple URL navigation request
+    // For simple URL navigation, we can execute directly without LLM
+    const urlPattern = /(?:https?:\/\/)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9]{1,6}\b(?:[-a-zA-Z0-9@:%_\+.~#?&//=]*)/gi;
+    const urlMatch = prompt.match(urlPattern);
+    const url = urlMatch ? (urlMatch[0].startsWith('http') ? urlMatch[0] : 'https://' + urlMatch[0]) : null;
+    const navKeywords = ['打开', 'open', '访问', 'visit', '浏览', 'browse', '导航', 'navigate', '去', 'go to'];
+    const hasNavKeyword = navKeywords.some(keyword => prompt.toLowerCase().includes(keyword.toLowerCase()));
+    const isSimpleUrlNav = url && hasNavKeyword && prompt.replace(url, '').trim().length < 30;
+
+    if (isSimpleUrlNav) {
+      console.log(`[DEBUG] Simple URL navigation detected: ${url}`);
+
+      try {
+        // Directly use BrowserOperator to navigate
+        const { BrowserOperator } = await import('./gui-subagent/operator/browser-operator.js');
+        const operator = new BrowserOperator({ 
+          config: { 
+            headless: false,
+            viewport: { width: 1280, height: 800 }
+          }
+        });
+
+        await operator.doInitialize();
+        console.log(`${indent}Browser initialized successfully`);
+
+        await operator.doExecute({
+          prediction: `Action: navigate(url='${url}')`,
+          parsedPrediction: {
+            reflection: null,
+            thought: `Navigate to ${url}`,
+            action_type: 'navigate',
+            action_inputs: { url },
+          },
+          screenWidth: 1280,
+          screenHeight: 800,
+          scaleFactor: 1,
+          factors: [1000, 1000],
+        });
+        console.log(`${indent}Navigated to ${url}`);
+
+        // Don't cleanup - let user see the browser
+        // await operator.cleanup();
+
+        console.log(`${indent}${colors.success(`${icons.check} GUI task completed`)}`);
+        return {
+          success: true,
+          message: `GUI task "${description}" completed`,
+          result: `Opened ${url}`
+        };
+      } catch (navError) {
+        console.log(`[DEBUG] Direct navigation failed: ${navError}, falling back to GUI agent`);
+        // Continue with normal GUI agent flow
+      }
+    }
 
     // Set up stdin polling for ESC cancellation
     let rawModeEnabled = false;
@@ -1050,6 +1155,7 @@ export class TaskTool implements Tool {
       // Import and create GUIAgent
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
 
+      console.log(`[DEBUG] Calling createGUISubAgent with model: "${modelName}", baseUrl: "${baseUrl}"`);
       const guiAgent = await createGUISubAgent({
         model: modelName,
         modelBaseUrl: baseUrl || undefined,
@@ -1114,6 +1220,7 @@ export class TaskTool implements Tool {
         };
       }
 
+      // Return failure without throwing - let the main agent handle it
       return {
         success: false,
         message: `GUI task "${description}" failed: ${error.message}`

@@ -90,6 +90,38 @@ const MAX_LOOP_COUNT = 100;
 const MAX_SNAPSHOT_ERR_CNT = 5;
 const IMAGE_PLACEHOLDER = '{{IMG_PLACEHOLDER_0}}';
 
+/**
+ * Extract URL from instruction text
+ * Returns the URL if found, otherwise null
+ */
+function extractUrlFromInstruction(instruction: string): string | null {
+  // URL patterns
+  const urlPatterns = [
+    // Standard URL with protocol
+    /(?:https?:\/\/)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)/gi,
+    // Common website patterns
+    /(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}/gi,
+  ];
+
+  for (const pattern of urlPatterns) {
+    const matches = instruction.match(pattern);
+    if (matches) {
+      for (const match of matches) {
+        // Skip if it looks like a word, not a URL
+        if (match.includes('.') && !/^[a-zA-Z]+$/.test(match)) {
+          let url = match;
+          // Add protocol if missing
+          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            url = 'https://' + url;
+          }
+          return url;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 export class GUIAgent<T extends Operator> {
   private readonly operator: T;
   private readonly model: string;
@@ -112,7 +144,7 @@ export class GUIAgent<T extends Operator> {
 
   constructor(config: GUIAgentConfig<T>) {
     this.operator = config.operator;
-    this.model = config.model || 'gpt-4o';
+    this.model = config.model || '';
     this.modelBaseUrl = config.modelBaseUrl || '';
     this.modelApiKey = config.modelApiKey || '';
     this.loopIntervalInMs = config.loopIntervalInMs || 0;
@@ -142,10 +174,10 @@ left_double(point='<point>x1 y1</point>')
 right_single(point='<point>x1 y1</point>')
 drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')
 hotkey(key='ctrl c') # Split keys with a space and use lowercase. Also, do not use more than 3 keys in one hotkey action.
-type(content='xxx') # Use escape characters \\', \\", and \\n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \\n at the end of content. 
+type(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content. 
 scroll(point='<point>x1 y1</point>', direction='down or up or right or left') # Show more information on the \`direction\` side.
 wait() #Sleep for 5s and take a screenshot to check for any changes.
-finished(content='xxx') # Use escape characters \\', \\", and \\n in content part to ensure we can parse the content in normal python string format.
+finished(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format.
 
 ## Note
 - Use {language} in \`Thought\` part.
@@ -162,15 +194,39 @@ finished(content='xxx') # Use escape characters \\', \\", and \\n in content par
       `right_single(point='<point>x1 y1</point>')`,
       `drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')`,
       `hotkey(key='ctrl c') # Split keys with a space and use lowercase.`,
-      `type(content='xxx') # Use escape characters \\', \\", and \\n. Use \\n at the end to submit.`,
+      `type(content='xxx') # Use escape characters \', \", and \n. Use \n at the end to submit.`,
       `scroll(point='<point>x1 y1</point>', direction='down or up or right or left')`,
       `wait() #Sleep for 5s and take a screenshot.`,
-      `finished(content='xxx') # Use escape characters \\', \\", and \\n.`,
+      `finished(content='xxx') # Use escape characters \', \", and \n.`,
     ].join('\n');
   }
 
   async initialize(): Promise<void> {
     await this.operator.doInitialize();
+  }
+
+  /**
+   * Check if instruction is a simple URL navigation request
+   * and can be handled without LLM
+   */
+  private isSimpleUrlNavigation(instruction: string): { isSimple: boolean; url: string | null } {
+    const url = extractUrlFromInstruction(instruction);
+    if (!url) {
+      return { isSimple: false, url: null };
+    }
+
+    // Check if the instruction is primarily about navigating to a URL
+    const navKeywords = ['打开', 'open', '访问', 'visit', '浏览', 'browse', '导航', 'navigate', '去', 'go to'];
+    const hasNavKeyword = navKeywords.some(keyword => 
+      instruction.toLowerCase().includes(keyword.toLowerCase())
+    );
+
+    // If instruction is just a URL or contains navigation keywords with a URL
+    if (hasNavKeyword || instruction.replace(url, '').trim().length < 20) {
+      return { isSimple: true, url };
+    }
+
+    return { isSimple: false, url: null };
   }
 
   /**
@@ -194,6 +250,36 @@ finished(content='xxx') # Use escape characters \\', \\", and \\n in content par
         },
       ],
     };
+
+    // Check if this is a simple URL navigation request
+    // If so, handle it directly without calling LLM
+    const { isSimple, url } = this.isSimpleUrlNavigation(instruction);
+    if (isSimple && url) {
+      console.log('[DEBUG-GUI] Simple URL navigation detected, executing directly:', url);
+      try {
+        // Directly execute navigate action
+        await this.operator.doExecute({
+          prediction: `Action: navigate(url='${url}')`,
+          parsedPrediction: {
+            reflection: null,
+            thought: `Navigate to ${url}`,
+            action_type: 'navigate',
+            action_inputs: { url },
+          },
+          screenWidth: 1280,
+          screenHeight: 800,
+          scaleFactor: 1,
+          factors: [1000, 1000],
+        });
+        
+        data.status = GUIAgentStatus.END;
+        await this.onData?.({ ...data, conversations: [] });
+        return data;
+      } catch (navError) {
+        console.log('[DEBUG-GUI] Direct navigation failed:', navError);
+        // Continue with normal LLM flow if direct navigation fails
+      }
+    }
 
     if (this.debug) {
       this.logger.info('[GUIAgent] run:', {
@@ -315,6 +401,8 @@ finished(content='xxx') # Use escape characters \\', \\", and \\n in content par
 
         // Build messages for model
         const messages = this.buildModelMessages(data.conversations, data.systemPrompt);
+        console.log('[DEBUG-GUI] Built messages, count:', messages.length);
+        console.log('[DEBUG-GUI] Last message type:', messages[messages.length - 1]?.role);
 
         // Invoke model with retry
         let prediction: string;
@@ -345,10 +433,12 @@ finished(content='xxx') # Use escape characters \\', \\", and \\n in content par
           );
           prediction = modelResult.prediction;
           parsedPredictions = modelResult.parsedPredictions;
+          console.log('[DEBUG-GUI] Model invocation successful, prediction length:', prediction.length);
         } catch (modelError) {
-          this.logger.error('[GUIAgent] model invoke error', modelError);
+          console.log('[DEBUG-GUI] Model invocation failed, error:', modelError);
+          // Silently handle model errors - will be caught by upstream
           data.status = GUIAgentStatus.ERROR;
-          data.error = 'Model invocation failed';
+          data.error = 'Model invocation failed: ' + (modelError instanceof Error ? modelError.message : String(modelError));
           break;
         }
 
@@ -531,8 +621,27 @@ finished(content='xxx') # Use escape characters \\', \\", and \\n in content par
     messages: any[],
     screenContext: ScreenContext
   ): Promise<{ prediction: string; parsedPredictions: PredictionParsed[] }> {
+    console.log('[DEBUG-GUI] this.modelBaseUrl:', this.modelBaseUrl);
+    console.log('[DEBUG-GUI] this.model:', this.model);
+    console.log('[DEBUG-GUI] this.modelApiKey:', this.modelApiKey ? '***' : '(empty)');
     const baseUrl = this.modelBaseUrl || process.env.MODEL_BASE_URL || 'https://api.openai.com/v1';
     const apiKey = this.modelApiKey || process.env.MODEL_API_KEY || '';
+    console.log('[DEBUG-GUI] Calling API:', `${baseUrl}/chat/completions`);
+
+    const requestBody = {
+      model: this.model,
+      messages,
+      max_tokens: 1024,
+      temperature: 0.1,
+    };
+    const lastMessage = messages[messages.length - 1];
+    const imageContent = lastMessage?.content?.find?.((c: any) => c.type === 'image_url');
+    const imageSize = imageContent?.image_url?.url?.length || 0;
+    console.log('[DEBUG-GUI] Image data size:', imageSize, 'chars');
+    console.log('[DEBUG-GUI] Total request body size:', JSON.stringify(requestBody).length, 'chars');
+    console.log('[DEBUG-GUI] model:', this.model);
+    console.log('[DEBUG-GUI] messages count:', messages.length);
+    console.log('[DEBUG-GUI] last message has image:', !!imageContent);
 
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -540,21 +649,20 @@ finished(content='xxx') # Use escape characters \\', \\", and \\n in content par
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model: this.model,
-        messages,
-        max_tokens: 1024,
-        temperature: 0.1,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
+    console.log('[DEBUG-GUI] response.ok:', response.ok, 'status:', response.status);
     if (!response.ok) {
       const error = await response.text();
+      console.log('[DEBUG-GUI] Full API Error response:', error);
       throw new Error(`Model API error: ${error}`);
     }
 
     const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    console.log('[DEBUG-GUI] API result choices:', result.choices?.length);
     const content = result.choices?.[0]?.message?.content || '';
+    console.log('[DEBUG-GUI] content length:', content.length);
 
     const { parsed: parsedPredictions } = actionParser({
       prediction: content,

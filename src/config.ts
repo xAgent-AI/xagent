@@ -108,7 +108,8 @@ export class ConfigManager {
       apiKey: this.settings.apiKey,
       baseUrl: this.settings.baseUrl,
       modelName: this.settings.modelName,
-      searchApiKey: this.settings.searchApiKey
+      searchApiKey: this.settings.searchApiKey,
+      showAIDebugInfo: this.settings.showAIDebugInfo
     };
   }
 

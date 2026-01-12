@@ -422,8 +422,10 @@ export function renderMarkdown(text: string, maxWidth: number = 80): string {
     // Process inline markdown
     let processed = line;
 
-    // Headers (only H1, H2, H3)
-    if (line.startsWith('### ')) {
+    // Headers (H1, H2, H3, H4)
+    if (line.startsWith('#### ')) {
+      processed = colors.primaryBright(line.slice(5));
+    } else if (line.startsWith('### ')) {
       processed = colors.primaryBright(styleHelpers.text.bold(line.slice(4)));
     } else if (line.startsWith('## ')) {
       processed = colors.primaryBright(styleHelpers.text.bold(line.slice(3)));

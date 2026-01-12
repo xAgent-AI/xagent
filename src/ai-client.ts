@@ -265,7 +265,7 @@ export class AIClient {
     this.client = axios.create({
       baseURL: authConfig.baseUrl,
       headers,
-      timeout: 120000
+      timeout: 240000
     });
   }
 

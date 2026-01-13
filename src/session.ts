@@ -879,6 +879,9 @@ export class InteractiveSession {
       console.log(`${indent}${colors.textMuted('GUI task failed: ' + errorMsg)}`);
       // Reset the flag so user can continue with other tasks
       (this as any)._isOperationInProgress = false;
+    } else if (guiSubagentFailed && !hasErrors) {
+      // GUI task completed successfully - call generateResponse to feed results back to main agent
+      await this.generateResponse();
     }
   }
 

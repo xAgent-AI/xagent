@@ -79,6 +79,7 @@ export interface Settings {
   guiSubagentBaseUrl?: string;
   guiSubagentApiKey?: string;
   searchApiKey?: string;
+  skillsPath?: string;  // Path to skills directory
   executionMode: ExecutionMode;
   approvalMode?: ExecutionMode;
   checkpointing: CheckpointConfig;

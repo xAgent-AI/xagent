@@ -907,7 +907,10 @@ export class InteractiveSession {
       'exit_plan_mode': () => `Complete plan`,
       'xml_escape': (p) => `XML escape: ${this.truncatePath(p.file_path)}`,
       'image_read': (p) => `Read image: ${this.truncatePath(p.image_input)}`,
-      'Skill': (p) => `Execute skill: ${p.skill}`
+      'Skill': (p) => `Execute skill: ${p.skill}`,
+      'ListSkills': () => `List available skills`,
+      'GetSkillDetails': (p) => `Get skill details: ${p.skill}`,
+      'InvokeSkill': (p) => `Invoke skill: ${p.skillId} - ${this.truncatePath(p.taskDescription || '', 40)}`
     };
 
     const getDescription = descriptions[toolName];

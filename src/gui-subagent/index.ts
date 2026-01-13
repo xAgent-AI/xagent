@@ -14,7 +14,6 @@ export * from './operator/index.js';
 export * from './agent/index.js';
 
 import { ComputerOperator, type ComputerOperatorOptions } from './operator/computer-operator.js';
-import { BrowserOperator, type BrowserOperatorOptions } from './operator/browser-operator.js';
 import { GUIAgent, type GUIAgentConfig, type GUIAgentData, type Conversation, GUIAgentStatus } from './agent/gui-agent.js';
 import type { Operator } from './operator/base-operator.js';
 
@@ -29,9 +28,6 @@ export interface GUISubAgentConfig {
   loopIntervalInMs?: number;
   maxLoopCount?: number;
   showAIDebugInfo?: boolean;
-  operatorType?: 'browser' | 'computer';
-  browserPath?: string;
-  viewport?: { width: number; height: number };
 }
 
 /**
@@ -45,9 +41,6 @@ export const DEFAULT_GUI_CONFIG: Required<GUISubAgentConfig> = {
   loopIntervalInMs: 0,
   maxLoopCount: 100,
   showAIDebugInfo: false,
-  operatorType: 'browser',
-  browserPath: '',
-  viewport: { width: 1280, height: 800 },
 };
 
 /**
@@ -63,22 +56,13 @@ export async function createGUISubAgent<T extends Operator>(
 
   if (operator) {
     agentOperator = operator;
-  } else if (mergedConfig.operatorType === 'computer') {
-    const computerOptions: ComputerOperatorOptions = {
-      config: {
-        headless: mergedConfig.headless,
-      },
-    };
-    agentOperator = new ComputerOperator(computerOptions) as unknown as T;
   } else {
-    const browserOptions: BrowserOperatorOptions = {
+    const operatorOptions: ComputerOperatorOptions = {
       config: {
         headless: mergedConfig.headless,
-        browserPath: mergedConfig.browserPath,
-        viewport: mergedConfig.viewport,
       },
     };
-    agentOperator = new BrowserOperator(browserOptions) as unknown as T;
+    agentOperator = new ComputerOperator(operatorOptions) as unknown as T;
   }
 
   const agentConfig: GUIAgentConfig<T> = {
@@ -92,7 +76,8 @@ export async function createGUISubAgent<T extends Operator>(
   };
 
   const agent = new GUIAgent<T>(agentConfig);
-  // NOTE: Initialize is called lazily in GUIAgent.run() to delay browser launch
+  await agent.initialize();
+
   return agent;
 }
 
@@ -107,14 +92,13 @@ export async function createGUIAgent<T extends Operator>(
     operator,
     ...config,
   });
-  // NOTE: Initialize is called in GUIAgent.run() to delay browser launch
+  await agent.initialize();
   return agent;
 }
 
-export { ComputerOperator, BrowserOperator, GUIAgent, GUIAgentStatus };
+export { ComputerOperator, GUIAgent, GUIAgentStatus };
 export type {
   ComputerOperatorOptions,
-  BrowserOperatorOptions,
   GUIAgentConfig,
   GUIAgentData,
   Conversation,

@@ -702,40 +702,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     this.logger.info('Cleaning up GUI Agent...');
     await this.operator.cleanup();
   }
-
-  /**
-   * Execute a single action
-   * @param params - Action parameters with thought and action string
-   */
-  async executeSingleAction(params: { thought: string; action: string }): Promise<void> {
-    const { thought, action } = params;
-    const screenContext = await this.operator.getScreenContext();
-    const snapshot = await this.operator.doScreenshot();
-
-    if (snapshot.status !== 'success' || !snapshot.base64) {
-      throw new Error('Failed to take screenshot');
-    }
-
-    const { parsed: parsedPredictions } = actionParser({
-      prediction: `${thought}\nAction: ${action}`,
-      factor: [1000, 1000],
-      screenContext: {
-        width: screenContext.width,
-        height: screenContext.height,
-      },
-    });
-
-    for (const parsedPrediction of parsedPredictions) {
-      await this.operator.doExecute({
-        prediction: action,
-        parsedPrediction,
-        screenWidth: screenContext.width,
-        screenHeight: screenContext.height,
-        scaleFactor: snapshot.scaleFactor ?? screenContext.scaleFactor,
-        factors: [1000, 1000],
-      });
-    }
-  }
 }
 
 export { GUIAgentStatus as StatusEnum };

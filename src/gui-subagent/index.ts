@@ -1,11 +1,9 @@
 /**
- * GUI Subagent - Browser/Computer Automation for xagent
+ * GUI Subagent - Computer Automation for xagent
  *
  * A powerful automation subagent that can:
- * - Control browsers via GUI actions (BrowserOperator)
  * - Control the entire desktop via computer actions (ComputerOperator)
- * - Perform clicks, typing, scrolling
- * - Navigate websites
+ * - Perform clicks, typing, scrolling, drag operations
  * - Execute complex automation workflows
  *
  * Based on UI-TARS architecture
@@ -15,27 +13,18 @@ export * from './types/index.js';
 export * from './operator/index.js';
 export * from './agent/index.js';
 
-import { BrowserOperator, type BrowserOperatorOptions } from './operator/browser-operator.js';
 import { ComputerOperator, type ComputerOperatorOptions } from './operator/computer-operator.js';
 import { GUIAgent, type GUIAgentConfig, type GUIAgentData, type Conversation, GUIAgentStatus } from './agent/gui-agent.js';
 import type { Operator } from './operator/base-operator.js';
 
 /**
- * Operator type for gui-subagent
- */
-export type GUIOperatorType = 'browser' | 'computer';
-
-/**
  * GUI Subagent configuration
  */
 export interface GUISubAgentConfig {
-  operatorType?: GUIOperatorType;
   model?: string;
   modelBaseUrl?: string;
   modelApiKey?: string;
   headless?: boolean;
-  browserPath?: string;
-  viewport?: { width: number; height: number };
   loopIntervalInMs?: number;
   maxLoopCount?: number;
   showAIDebugInfo?: boolean;
@@ -45,13 +34,10 @@ export interface GUISubAgentConfig {
  * Default configuration values (aligned with UI-TARS)
  */
 export const DEFAULT_GUI_CONFIG: Required<GUISubAgentConfig> = {
-  operatorType: 'browser',
   model: 'gpt-4o',
   modelBaseUrl: '',
   modelApiKey: '',
   headless: false,
-  browserPath: '',
-  viewport: { width: 1280, height: 800 },
   loopIntervalInMs: 0,
   maxLoopCount: 100,
   showAIDebugInfo: false,
@@ -70,22 +56,13 @@ export async function createGUISubAgent<T extends Operator>(
 
   if (operator) {
     agentOperator = operator;
-  } else if (mergedConfig.operatorType === 'computer') {
-    agentOperator = new ComputerOperator({
-      config: {
-        headless: mergedConfig.headless,
-        viewport: mergedConfig.viewport,
-      },
-    }) as unknown as T;
   } else {
-    const operatorOptions: BrowserOperatorOptions = {
+    const operatorOptions: ComputerOperatorOptions = {
       config: {
         headless: mergedConfig.headless,
-        browserPath: mergedConfig.browserPath,
-        viewport: mergedConfig.viewport,
       },
     };
-    agentOperator = new BrowserOperator(operatorOptions) as unknown as T;
+    agentOperator = new ComputerOperator(operatorOptions) as unknown as T;
   }
 
   const agentConfig: GUIAgentConfig<T> = {
@@ -119,9 +96,8 @@ export async function createGUIAgent<T extends Operator>(
   return agent;
 }
 
-export { BrowserOperator, ComputerOperator, GUIAgent, GUIAgentStatus };
+export { ComputerOperator, GUIAgent, GUIAgentStatus };
 export type {
-  BrowserOperatorOptions,
   ComputerOperatorOptions,
   GUIAgentConfig,
   GUIAgentData,

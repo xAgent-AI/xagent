@@ -1,6 +1,7 @@
 import { ToolRegistry } from './tools.js';
 import { ExecutionMode, AgentConfig } from './types.js';
 import { getAgentManager } from './agents.js';
+import { getSkillInvoker, SkillInfo } from './skill-invoker.js';
 
 export interface ToolParameter {
   type: string;
@@ -30,7 +31,7 @@ export class SystemPromptGenerator {
     this.agentConfig = agentConfig;
   }
 
-  generateEnhancedSystemPrompt(baseSystemPrompt: string): string {
+  async generateEnhancedSystemPrompt(baseSystemPrompt: string): Promise<string> {
     let availableTools = this.toolRegistry.getAll().filter(
       tool => tool.allowedModes.includes(this.executionMode)
     );
@@ -49,6 +50,7 @@ export class SystemPromptGenerator {
       const toolUsageGuide = this.generateToolUsageGuide(toolSchemas);
       const decisionMakingGuide = this.generateDecisionMakingGuide();
       const executionStrategy = this.generateExecutionStrategy();
+      const skillInstructions = await this.generateSkillInstructions();
 
       enhancedPrompt += `
 
@@ -57,6 +59,8 @@ ${toolUsageGuide}
 ${decisionMakingGuide}
 
 ${executionStrategy}
+
+${skillInstructions}
 
 ## Important Notes
 - Always verify tool results before proceeding to next steps
@@ -648,6 +652,46 @@ When a user asks you to:
 - Provide clear summaries of what you've done
 - Highlight any assumptions you've made
 - Ask for confirmation on destructive operations`;
+  }
+
+  /**
+   * Dynamically generate skill instructions from loaded skills
+   */
+  private async generateSkillInstructions(): Promise<string> {
+    try {
+      const skillInvoker = getSkillInvoker();
+      await skillInvoker.initialize();
+      const skills = await skillInvoker.listAvailableSkills();
+
+      if (skills.length === 0) {
+        return '';
+      }
+
+      // Group skills by category
+      const skillsByCategory = new Map<string, SkillInfo[]>();
+      for (const skill of skills) {
+        const existing = skillsByCategory.get(skill.category) || [];
+        existing.push(skill);
+        skillsByCategory.set(skill.category, existing);
+      }
+
+      let guide = '## Available Skills\n\n';
+      guide += 'When users request tasks matching these domains, use the "InvokeSkill" tool to access specialized capabilities:\n\n';
+
+      for (const [category, categorySkills] of skillsByCategory) {
+        guide += `### ${category}\n`;
+        for (const skill of categorySkills) {
+          guide += `- **${skill.name}**: ${skill.description}\n`;
+          guide += `  → Invoke: InvokeSkill(skillId="${skill.id}", taskDescription="...")\n`;
+        }
+        guide += '\n';
+      }
+
+      return guide;
+    } catch (error) {
+      // If skills can't be loaded, return empty string
+      return '';
+    }
   }
 
   getToolDefinitions(): any[] {

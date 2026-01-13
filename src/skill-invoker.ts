@@ -27,6 +27,8 @@ export interface SkillMatcherResult {
   category: string;
 }
 
+export type { SkillInfo } from './skill-loader.js';
+
 // 技能类别到关键词的映射
 const SKILL_TRIGGERS: Record<string, { skillId: string; keywords: string[]; category: string }> = {
   docx: {

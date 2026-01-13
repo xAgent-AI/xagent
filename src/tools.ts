@@ -1095,7 +1095,7 @@ export class TaskTool implements Tool {
     };
     
     const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, mode, agent);
-    const enhancedSystemPrompt = systemPromptGenerator.generateEnhancedSystemPrompt(agent.systemPrompt);
+    const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(agent.systemPrompt);
     
     const fullPrompt = constraints.length > 0
       ? `${prompt}\n\nConstraints:\n${constraints.map(c => `- ${c}`).join('\n')}`

@@ -90,6 +90,38 @@ const MAX_LOOP_COUNT = 100;
 const MAX_SNAPSHOT_ERR_CNT = 5;
 const IMAGE_PLACEHOLDER = '{{IMG_PLACEHOLDER_0}}';
 
+/**
+ * Extract URL from instruction text
+ * Returns the URL if found, otherwise null
+ */
+function extractUrlFromInstruction(instruction: string): string | null {
+  // URL patterns
+  const urlPatterns = [
+    // Standard URL with protocol
+    /(?:https?:\/\/)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)/gi,
+    // Common website patterns
+    /(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}/gi,
+  ];
+
+  for (const pattern of urlPatterns) {
+    const matches = instruction.match(pattern);
+    if (matches) {
+      for (const match of matches) {
+        // Skip if it looks like a word, not a URL
+        if (match.includes('.') && !/^[a-zA-Z]+$/.test(match)) {
+          let url = match;
+          // Add protocol if missing
+          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            url = 'https://' + url;
+          }
+          return url;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 export class GUIAgent<T extends Operator> {
   private readonly operator: T;
   private readonly model: string;
@@ -174,6 +206,30 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
   }
 
   /**
+   * Check if instruction is a simple URL navigation request
+   * and can be handled without LLM
+   */
+  private isSimpleUrlNavigation(instruction: string): { isSimple: boolean; url: string | null } {
+    const url = extractUrlFromInstruction(instruction);
+    if (!url) {
+      return { isSimple: false, url: null };
+    }
+
+    // Check if the instruction is primarily about navigating to a URL
+    const navKeywords = ['打开', 'open', '访问', 'visit', '浏览', 'browse', '导航', 'navigate', '去', 'go to'];
+    const hasNavKeyword = navKeywords.some(keyword => 
+      instruction.toLowerCase().includes(keyword.toLowerCase())
+    );
+
+    // If instruction is just a URL or contains navigation keywords with a URL
+    if (hasNavKeyword || instruction.replace(url, '').trim().length < 20) {
+      return { isSimple: true, url };
+    }
+
+    return { isSimple: false, url: null };
+  }
+
+  /**
    * Run the GUI agent with a single instruction (UI-TARS style)
    */
   async run(instruction: string): Promise<GUIAgentData> {
@@ -201,6 +257,34 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         model: this.model,
         maxLoopCount: this.maxLoopCount,
       });
+    }
+
+    // Check if this is a simple URL navigation request
+    // If so, handle it directly without calling LLM
+    const { isSimple, url } = this.isSimpleUrlNavigation(instruction);
+    if (isSimple && url) {
+      try {
+        // Directly execute navigate action
+        await this.operator.doExecute({
+          prediction: `Action: navigate(url='${url}')`,
+          parsedPrediction: {
+            reflection: null,
+            thought: `Navigate to ${url}`,
+            action_type: 'navigate',
+            action_inputs: { url },
+          },
+          screenWidth: 1280,
+          screenHeight: 800,
+          scaleFactor: 1,
+          factors: [1000, 1000],
+        });
+        
+        data.status = GUIAgentStatus.END;
+        await this.onData?.({ ...data, conversations: [] });
+        return data;
+      } catch (navError) {
+        // Continue with normal LLM flow if direct navigation fails
+      }
     }
 
     let loopCnt = 0;

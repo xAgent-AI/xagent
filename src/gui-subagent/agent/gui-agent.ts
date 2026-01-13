@@ -155,19 +155,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 {instruction}`;
   }
 
-  private getDefaultActionSpaces(): string {
-    return [
-      `click(point='<point>x1 y1</point>')`,
-      `left_double(point='<point>x1 y1</point>')`,
-      `right_single(point='<point>x1 y1</point>')`,
-      `drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')`,
-      `hotkey(key='ctrl c') # Split keys with a space and use lowercase.`,
-      `type(content='xxx') # Use escape characters \', \", and \n. Use \n at the end to submit.`,
-      `scroll(point='<point>x1 y1</point>', direction='down or up or right or left')`,
-      `wait() #Sleep for 5s and take a screenshot.`,
-      `finished(content='xxx') # Use escape characters \', \", and \n.`,
-    ].join('\n');
-  }
+
 
   async initialize(): Promise<void> {
     await this.operator.doInitialize();
@@ -747,31 +735,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         factors: [1000, 1000],
       });
     }
-  }
-
-  getToolDefinition(): {
-    name: string;
-    description: string;
-    parameters: object;
-  } {
-    return {
-      name: GUI_TOOL_NAME,
-      description: 'Perform GUI operations on computer/browser including clicks, typing, navigation, etc.',
-      parameters: {
-        type: 'object',
-        properties: {
-          thought: {
-            type: 'string',
-            description: 'Thought process and plan for the next action',
-          },
-          action: {
-            type: 'string',
-            description: 'Action to perform: click(start_box="[x1, y1, x2, y2]"), type(content="text"), scroll(direction="down"), hotkey(key="ctrl c"), finished(), etc.',
-          },
-        },
-        required: ['thought', 'action'],
-      },
-    };
   }
 }
 

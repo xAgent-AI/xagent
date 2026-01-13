@@ -863,26 +863,23 @@ export class InteractiveSession {
       }
     }
 
-    // Don't continue generating response if gui-subagent task failed
-    // This prevents infinite loops when browser automation fails
+    // Logic: Only skip returning results to main agent when user explicitly cancelled (ESC)
+    // For all other cases (success, failure, errors), always return results for further processing
     const guiSubagentFailed = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent');
-    const hasErrors = results.some(r => r.error);
-    const guiSubagentResultFailed = guiSubagentFailed && results.some(r => r.tool === 'task' && r.result?.success === false);
+    const guiSubagentCancelled = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent' && results.some(r => r.tool === 'task' && (r.result as any)?.cancelled === true));
 
-    if (!guiSubagentFailed && !hasErrors) {
-      await this.generateResponse();
-    } else if (guiSubagentResultFailed) {
+    // If GUI agent was cancelled by user, don't continue generating response
+    // This avoids wasting API calls and tokens on cancelled tasks
+    if (guiSubagentCancelled) {
       console.log('');
-      // Show actual error message from the GUI task result
-      const guiResult = results.find(r => r.tool === 'task' && r.result?.success === false);
-      const errorMsg = guiResult?.error || guiResult?.result?.message || 'Unknown error';
-      console.log(`${indent}${colors.textMuted('GUI task failed: ' + errorMsg)}`);
-      // Reset the flag so user can continue with other tasks
+      console.log(`${indent}${colors.textMuted('GUI task cancelled by user')}`);
       (this as any)._isOperationInProgress = false;
-    } else if (guiSubagentFailed && !hasErrors) {
-      // GUI task completed successfully - call generateResponse to feed results back to main agent
-      await this.generateResponse();
+      return;
     }
+
+    // For all other cases (GUI success/failure, other tool errors), return results to main agent
+    // This allows main agent to decide how to handle failures (retry, fallback, user notification, etc.)
+    await this.generateResponse();
   }
 
   /**

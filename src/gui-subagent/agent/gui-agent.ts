@@ -151,8 +151,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 - Use {language} in \`Thought\` part.
 - Write a small plan and finally summarize your next action (with its target element) in one sentence in \`Thought\` part.
 
-## User Instruction
-{instruction}`;
+`;
   }
 
 
@@ -264,6 +263,12 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           continue;
         }
 
+        // Check abort immediately after screenshot
+        if (this.signal?.aborted) {
+          data.status = GUIAgentStatus.USER_STOPPED;
+          break;
+        }
+
         // Validate screenshot
         const isValidImage = !!(snapshot?.base64);
         if (!isValidImage) {
@@ -305,6 +310,12 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         // Build messages for model
         const messages = this.buildModelMessages(data.conversations, data.systemPrompt);
 
+        // Check abort before model call
+        if (this.signal?.aborted) {
+          data.status = GUIAgentStatus.USER_STOPPED;
+          break;
+        }
+
         // Invoke model with retry
         let prediction: string;
         let parsedPredictions: PredictionParsed[];
@@ -338,6 +349,12 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           // Silently handle model errors - will be caught by upstream
           data.status = GUIAgentStatus.ERROR;
           data.error = 'Model invocation failed: ' + (modelError instanceof Error ? modelError.message : String(modelError));
+          break;
+        }
+
+        // Check abort immediately after model call
+        if (this.signal?.aborted) {
+          data.status = GUIAgentStatus.USER_STOPPED;
           break;
         }
 
@@ -422,6 +439,12 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
             }
           }
 
+          // Check abort immediately after action execution
+          if (this.signal?.aborted) {
+            data.status = GUIAgentStatus.USER_STOPPED;
+            break;
+          }
+
           // Handle special action types
           if (actionType === 'call_user') {
             data.status = GUIAgentStatus.CALL_USER;
@@ -430,6 +453,12 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
             data.status = GUIAgentStatus.END;
             break;
           }
+        }
+
+        // Check abort after action loop
+        if (this.signal?.aborted) {
+          data.status = GUIAgentStatus.USER_STOPPED;
+          break;
         }
 
         // Wait between iterations
@@ -610,6 +639,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify(requestBody),
+      signal: this.signal,
     });
 
     if (!response.ok) {
@@ -701,6 +731,15 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
   async cleanup(): Promise<void> {
     this.logger.info('Cleaning up GUI Agent...');
     await this.operator.cleanup();
+
+    // Cleanup cancellation listener if attached
+    const cancelHandler = (this as any)._cancelHandler;
+    const cancellationManager = (this as any)._cancellationManager;
+    if (cancelHandler && cancellationManager) {
+      cancellationManager.off('cancelled', cancelHandler);
+      (this as any)._cancelHandler = undefined;
+      (this as any)._cancellationManager = undefined;
+    }
   }
 }
 

@@ -981,7 +981,7 @@ export class TaskTool implements Tool {
     mode: ExecutionMode,
     config: any,
     indentLevel: number = 1
-  ): Promise<{ success: boolean; message: string; result?: any }> {
+  ): Promise<{ success: boolean; cancelled?: boolean; message: string; result?: any }> {
     const indent = '  '.repeat(indentLevel);
     const cancellationManager = getCancellationManager();
     const logger = getLogger();
@@ -1117,8 +1117,11 @@ export class TaskTool implements Tool {
       if (cancelled || cancellationManager.isOperationCancelled()) {
         cleanupStdinPolling();
         cancellationManager.off('cancelled', cancelHandler);
+        // Flush stdout to prevent residual output after prompt
+        process.stdout.write('\n');
         return {
           success: true,
+          cancelled: true,  // Mark as cancelled so main agent won't continue
           message: `GUI task "${description}" cancelled by user`,
           result: 'Task cancelled'
         };
@@ -1126,6 +1129,8 @@ export class TaskTool implements Tool {
 
       cleanupStdinPolling();
       cancellationManager.off('cancelled', cancelHandler);
+      // Flush stdout to ensure all output is displayed before returning
+      process.stdout.write('\n');
 
       // Return result based on GUIAgent status
       if (result.status === 'end') {
@@ -1151,6 +1156,20 @@ export class TaskTool implements Tool {
     } catch (error: any) {
       cleanupStdinPolling();
       cancellationManager.off('cancelled', cancelHandler);
+
+      // Flush stdout to prevent residual output
+      process.stdout.write('\n');
+
+      // If the user cancelled the task, ignore any API errors (like 429)
+      // and return cancelled status instead
+      if (cancelled || cancellationManager.isOperationCancelled()) {
+        return {
+          success: true,
+          cancelled: true,  // Mark as cancelled so main agent won't continue
+          message: `GUI task "${description}" cancelled by user`,
+          result: 'Task cancelled'
+        };
+      }
 
       if (error.message === 'Operation cancelled by user') {
         return {

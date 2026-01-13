@@ -832,6 +832,9 @@ export class InteractiveSession {
           console.log('');
           console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
           console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
+        } else if (result.success === false) {
+          // GUI task or other tool failed
+          console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
         } else {
           console.log(`${displayIndent}${colors.success(`${icons.check} Completed`)}`);
         }

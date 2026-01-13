@@ -372,9 +372,43 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           prediction = modelResult.prediction;
           parsedPredictions = modelResult.parsedPredictions;
         } catch (modelError) {
-          // Silently handle model errors - will be caught by upstream
+          // Handle multimodal model API errors with specific error messages
           data.status = GUIAgentStatus.ERROR;
-          data.error = 'Model invocation failed: ' + (modelError instanceof Error ? modelError.message : String(modelError));
+          const errorMsg = modelError instanceof Error ? modelError.message : String(modelError);
+
+          // Provide specific error message based on error type
+          if (errorMsg.includes('401') || errorMsg.includes('authentication') || errorMsg.includes('API key') || errorMsg.includes('api_key') || errorMsg.includes('Unauthorized') || errorMsg.includes('invalid_api_key')) {
+            data.error = '[Multimodal Model Authentication Failed] The guiSubagentApiKey configuration is invalid.\n' +
+              'Error details: HTTP 401 - API key is invalid or expired\n' +
+              'Suggested action: Please check the guiSubagentApiKey configuration in ~/.xagent/settings.json and ensure a valid API key is set';
+          } else if (errorMsg.includes('429') || errorMsg.includes('rate limit') || errorMsg.includes('too many requests')) {
+            data.error = '[Multimodal Model Rate Limit Exceeded] API requests exceed rate limit.\n' +
+              'Error details: HTTP 429 - Too Many Requests\n' +
+              'Suggested action: Please retry later, or check your API account quota settings. Wait a few minutes before retrying';
+          } else if (errorMsg.includes('network') || errorMsg.includes('fetch') || errorMsg.includes('connection') || errorMsg.includes('ECONNREFUSED')) {
+            data.error = '[Multimodal Model Network Error] Cannot connect to API service.\n' +
+              'Error details: Network connection failed. Possible causes:\n' +
+              '  1. Network connection is lost\n' +
+              '  2. The guiSubagentBaseUrl configuration is incorrect\n' +
+              '  3. API service endpoint is unreachable\n' +
+              'Suggested action: Please check the guiSubagentBaseUrl configuration in ~/.xagent/settings.json and ensure network connectivity';
+          } else if (errorMsg.includes('404') || errorMsg.includes('not found') || errorMsg.includes('model not found') || errorMsg.includes('InvalidEndpointOrModel.NotFound')) {
+            // Extract model name
+            const modelMatch = errorMsg.match(/model[:\s]+([^\s,"]+)|"model[:"]+([^",}]+)/i);
+            const modelName = modelMatch ? (modelMatch[1] || modelMatch[2]) : 'Unknown';
+            data.error = '[Multimodal Model Configuration Error] The model specified in guiSubagentModel does not exist or is not accessible.\n' +
+              'Error details: HTTP 404 - Model or Endpoint not found\n' +
+              'Configured model name: ' + modelName + '\n' +
+              'Suggested action: Please check the guiSubagentModel configuration in ~/.xagent/settings.json, remove or replace with a valid model name';
+          } else {
+            data.error = '[Multimodal Model API Call Failed]\n' +
+              'Error details: ' + errorMsg + '\n' +
+              'Please check the following configuration items:\n' +
+              '  - guiSubagentApiKey: API key\n' +
+              '  - guiSubagentBaseUrl: API service URL\n' +
+              '  - guiSubagentModel: Model name\n' +
+              'Config file location: ~/.xagent/settings.json';
+          }
           break;
         }
 
@@ -511,21 +545,33 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         data.error = error instanceof Error ? error.message : 'Unknown error';
       }
     } finally {
-      await this.onData?.({ ...data, conversations: [] });
+      // Save final status
+      const finalStatus = data.status;
+      const finalError = data.error;
 
-      if (data.status === GUIAgentStatus.ERROR) {
-        this.onError?.(
-          new Error(data.error || 'Unknown error occurred')
-        );
+      // Call onData callback if set
+      // Note: Use Promise.resolve().then() to avoid modifying data in callback
+      const onDataCallback = this.onData;
+      if (onDataCallback) {
+        Promise.resolve().then(() => onDataCallback({ ...data, conversations: [] }));
+      }
+
+      // Call onError callback if status is error
+      if (finalStatus === GUIAgentStatus.ERROR && this.onError) {
+        this.onError(new Error(finalError || 'Unknown error occurred'));
       }
 
       if (this.showAIDebugInfo) {
         this.logger.info('[GUIAgent] Final status:', {
-          status: data.status,
+          status: finalStatus,
           loopCnt,
           totalConversations: data.conversations.length,
         });
       }
+
+      // Ensure the returned status is correct (reassign)
+      data.status = finalStatus;
+      data.error = finalError;
     }
 
     return data;
@@ -662,22 +708,31 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         console.log('└─────────────────────────────────────────────────────────────┘');
       }
 
-      console.log('\n📤 Sending request to model API...\n');
+            console.log('\n📤 Sending request to model API...\n');
+
+          }
+
+      
+
+          let response;
+    try {
+      response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+        signal: this.signal,
+      });
+    } catch (fetchError) {
+      throw fetchError;
     }
 
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-      signal: this.signal,
-    });
-
+    // Handle non-200 responses
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Model API error: ${error}`);
+      const errorText = await response.text();
+      throw new Error(`Model API error: ${errorText}`);
     }
 
     const result = await response.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: any };

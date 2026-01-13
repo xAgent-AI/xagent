@@ -1,9 +1,11 @@
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
 import axios from 'axios';
 import { AgentConfig, MCPServerConfig } from './types.js';
 import { SkillLoader, getSkillLoader } from './skill-loader.js';
+import { getConfigManager } from './config.js';
 
 export interface WorkflowConfig {
   id: string;
@@ -42,25 +44,36 @@ export class WorkflowManager {
   }
 
   private async findSkillsPath(): Promise<string | null> {
+    // First, try to get from config
+    const configManager = getConfigManager();
+    const configuredPath = configManager.getSkillsPath();
+
+    if (configuredPath) {
+      return configuredPath;
+    }
+
+    // Fallback: auto-detect relative to script location
+    const scriptDir = path.dirname(process.argv[1]);
     const possiblePaths = [
-      // Skills submodule: skills/skills/ (anthropics/skills repo structure)
-      path.join(process.cwd(), 'skills', 'skills'),
-      // Alternative: skills/ directly (if repo structure changes)
-      path.join(process.cwd(), 'skills'),
-      // Parent xagent path
-      path.join(process.cwd(), '..', 'xagent', 'skills', 'skills'),
-      // External skills folder (backward compatibility)
-      path.join(process.cwd(), '..', 'skills', 'skills')
+      path.join(scriptDir, '..', 'skills', 'skills'),
+      path.join(scriptDir, '..', '..', 'skills', 'skills'),
+      path.join(scriptDir, 'skills', 'skills'),
+      path.join(scriptDir, '..', '..', '..', 'skills', 'skills'),
+      path.join(process.cwd(), 'skills', 'skills')
     ];
 
     for (const p of possiblePaths) {
       try {
-        await fs.access(p);
-        return p;
+        const resolvedPath = path.resolve(p);
+        const stat = await fs.stat(resolvedPath);
+        if (stat.isDirectory()) {
+          return resolvedPath;
+        }
       } catch {
         continue;
       }
     }
+
     return null;
   }
 

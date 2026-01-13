@@ -1,6 +1,8 @@
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import { WorkflowConfig } from './workflow.js';
+import { getConfigManager } from './config.js';
 
 export interface SkillInfo {
   id: string;
@@ -15,7 +17,7 @@ export interface SkillInfo {
 }
 
 export interface SkillLoaderConfig {
-  skillsRootPath: string;
+  skillsRootPath?: string;
 }
 
 export class SkillLoader {
@@ -23,7 +25,52 @@ export class SkillLoader {
   private loadedSkills: Map<string, SkillInfo> = new Map();
 
   constructor(config?: SkillLoaderConfig) {
-    this.skillsRootPath = config?.skillsRootPath || path.join(process.cwd(), '..', 'skills', 'skills');
+    if (config?.skillsRootPath) {
+      // Explicit path provided
+      this.skillsRootPath = config.skillsRootPath;
+    } else {
+      // Try to get from config first
+      const configManager = getConfigManager();
+      const configuredPath = configManager.getSkillsPath();
+
+      if (configuredPath) {
+        this.skillsRootPath = configuredPath;
+      } else {
+        // Fallback: auto-detect from script location
+        this.skillsRootPath = this.detectSkillsPath();
+      }
+    }
+  }
+
+  private detectSkillsPath(): string {
+    // Strategy: Find skills folder relative to the script location
+    // This works regardless of where the user runs xagent from
+    const scriptDir = path.dirname(process.argv[1]);
+
+    // Possible locations relative to where xagent script is installed
+    const possiblePaths = [
+      path.join(scriptDir, '..', 'skills', 'skills'),
+      path.join(scriptDir, '..', '..', 'skills', 'skills'),
+      path.join(scriptDir, 'skills', 'skills'),
+      path.join(scriptDir, '..', '..', '..', 'skills', 'skills'),
+      // Also try process.cwd() as fallback
+      path.join(process.cwd(), 'skills', 'skills')
+    ];
+
+    for (const p of possiblePaths) {
+      try {
+        const resolvedPath = path.resolve(p);
+        const stat = fsSync.statSync(resolvedPath);
+        if (stat.isDirectory()) {
+          return resolvedPath;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    // Ultimate fallback
+    return path.join(process.cwd(), 'skills', 'skills');
   }
 
   async loadAllSkills(): Promise<SkillInfo[]> {

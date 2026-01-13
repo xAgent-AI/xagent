@@ -376,8 +376,29 @@ export class AuthService {
         }
       );
       return response.status === 200;
-    } catch (error) {
-      console.error('API Key validation failed:', error);
+    } catch (error: any) {
+      // Provide user-friendly error messages without exposing stack traces
+      if (error.response) {
+        const status = error.response.status;
+        
+        if (status === 401) {
+          logger.error('API Key verification failed: Invalid or expired API Key', `Verify your API Key is correct and has not expired`);
+        } else if (status === 403) {
+          logger.error('API Key verification failed: Access denied', `Check if your API Key has permission to access`);
+        } else if (status === 404) {
+          logger.error('API request failed: API endpoint not found', `Verify your API Base URL is correct`);
+        } else if (status === 429) {
+          logger.error('API rate limit exceeded', `Please wait before retrying`);
+        } else {
+          logger.error(`API Key verification failed (HTTP ${status})`, `Verify your API Key and network connection`);
+        }
+      } else if (error.code === 'ECONNREFUSED') {
+        logger.error('Failed to connect to API server', `Verify your API Base URL and network connection`);
+      } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+        logger.error('API request timed out', `Check your network connection and try again`);
+      } else {
+        logger.error('API Key verification failed', `Verify your API Key and network connection`);
+      }
       return false;
     }
   }
@@ -507,7 +528,6 @@ export class AuthService {
       logger.success(`${selectedProvider.name} VLM configured successfully!`, `Model: ${vlmConfig.model}`);
       return vlmConfig;
     } else {
-      logger.error(`${selectedProvider.name} VLM configuration verification failed, please check API Key and network connection.`);
       return null;
     }
   }
@@ -531,8 +551,42 @@ export class AuthService {
         { headers, timeout: 10000 }
       );
       return response.status === 200;
-    } catch (error) {
-      console.error('VLM API Key validation failed:', error);
+    } catch (error: any) {
+      // Provide user-friendly error messages without exposing stack traces
+      // Distinguish between API Key errors and Base URL errors
+      
+      // Check if we received an HTTP response from server
+      if (error.response) {
+        const status = error.response.status;
+        
+        // Server responded but with error - API Key or permissions issue
+        if (status === 401 || status === 403) {
+          logger.error('VLM API authentication failed: Invalid API Key', `Verify your API Key is correct and has not expired`);
+        } else if (status === 429) {
+          logger.error('VLM API rate limit exceeded', `Please wait before retrying`);
+        } else if (status === 404) {
+          // 404 with valid response means base URL is valid but endpoint doesn't exist
+          logger.error('VLM API error: API endpoint not found (404)', `Verify your API Base URL is correct`);
+        } else {
+          logger.error(`VLM API request failed (HTTP ${status})`, `Verify your API Base URL and API Key`);
+        }
+        return false;
+      }
+      
+      // No HTTP response - server not reached or URL invalid
+      // These indicate Base URL issues
+      const networkErrors = ['ECONNREFUSED', 'ETIMEDOUT', 'ECONNABORTED', 'ENOTFOUND', 'EAI_AGAIN', 'EPROTO', 'ERR_INVALID_URL'];
+      
+      if (networkErrors.includes(error.code) || 
+          error.message?.includes('Invalid URL') ||
+          error.message?.includes('getaddrinfo') ||
+          error.message?.includes('socket hang up')) {
+        logger.error('VLM API connection failed: Unable to reach the server', `Verify your API Base URL is correct and accessible`);
+        return false;
+      }
+      
+      // Fallback for unknown errors
+      logger.error('VLM API request failed', `Verify your API Base URL and API Key`);
       return false;
     }
   }

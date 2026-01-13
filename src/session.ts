@@ -236,6 +236,11 @@ export class InteractiveSession {
         this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
         this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
         await this.configManager.save('global');
+      } else {
+        console.log('');
+        console.log(colors.error('VLM configuration failed. Exiting...'));
+        console.log('');
+        process.exit(1);
       }
     }
   }

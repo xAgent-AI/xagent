@@ -91,7 +91,7 @@ const MAX_SNAPSHOT_ERR_CNT = 5;
 const IMAGE_PLACEHOLDER = '{{IMG_PLACEHOLDER_0}}';
 
 export class GUIAgent<T extends Operator> {
-  private readonly operator: T;
+  private operator: T;
   private readonly model: string;
   private readonly modelBaseUrl: string;
   private readonly modelApiKey: string;
@@ -130,6 +130,13 @@ export class GUIAgent<T extends Operator> {
   private buildSystemPrompt(): string {
     return `You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
 
+## CRITICAL INSTRUCTION
+When the user's request is to "open a website", "visit a URL", "navigate to", "go to", "access", etc.:
+- Use ONLY the "navigate" action
+- Do NOT click on browser icons or use keyboard shortcuts
+- Do NOT be distracted by screenshots showing browser icons on taskbar
+- The "navigate" action will automatically open the browser and visit the URL
+
 ## Output Format
 \`
 Thought: ...
@@ -142,9 +149,10 @@ left_double(point='<point>x1 y1</point>')
 right_single(point='<point>x1 y1</point>')
 drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')
 hotkey(key='ctrl c') # Split keys with a space and use lowercase. Also, do not use more than 3 keys in one hotkey action.
-type(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content. 
+type(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content.
 scroll(point='<point>x1 y1</point>', direction='down or up or right or left') # Show more information on the \`direction\` side.
 wait() #Sleep for 5s and take a screenshot to check for any changes.
+navigate(url='https://xxx') # Use this when the task requires opening a URL in a browser.
 finished(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format.
 
 ## Note
@@ -161,11 +169,29 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
   }
 
   /**
+   * Switch to BrowserOperator if needed
+   */
+  private async switchToBrowserOperator(): Promise<void> {
+    // Clean up current operator if it's ComputerOperator
+    if (this.operator && (this.operator as any).cleanup) {
+      await this.operator.cleanup();
+    }
+    // Create new BrowserOperator
+    const browserOperator = new (await import('../operator/browser-operator.js')).BrowserOperator({
+      config: { headless: false },
+    });
+    this.operator = browserOperator as unknown as T;
+    await this.operator.doInitialize();
+  }
+
+  /**
    * Run the GUI agent with a single instruction (UI-TARS style)
    * All operations are determined by the GUI model
    */
   async run(instruction: string): Promise<GUIAgentData> {
-    await this.initialize();
+    // Initialize ComputerOperator for initial screenshot
+    // The operator type will be determined by LLM after first response
+    await this.operator.doInitialize();
 
     const currentTime = Date.now();
     const data: GUIAgentData = {
@@ -392,6 +418,13 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           ...data,
           conversations: data.conversations.slice(-1),
         });
+
+        // Check if we need to switch operator based on first action
+        const firstAction = parsedPredictions[0];
+        if (firstAction && firstAction.action_type === 'navigate') {
+          // Navigate action requires BrowserOperator
+          await this.switchToBrowserOperator();
+        }
 
         // Execute actions
         for (const parsedPrediction of parsedPredictions) {

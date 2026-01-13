@@ -14,6 +14,7 @@ export * from './operator/index.js';
 export * from './agent/index.js';
 
 import { ComputerOperator, type ComputerOperatorOptions } from './operator/computer-operator.js';
+import { BrowserOperator, type BrowserOperatorOptions } from './operator/browser-operator.js';
 import { GUIAgent, type GUIAgentConfig, type GUIAgentData, type Conversation, GUIAgentStatus } from './agent/gui-agent.js';
 import type { Operator } from './operator/base-operator.js';
 import { getCancellationManager } from '../cancellation.js';
@@ -53,18 +54,13 @@ export async function createGUISubAgent<T extends Operator>(
 ): Promise<GUIAgent<T>> {
   const mergedConfig = { ...DEFAULT_GUI_CONFIG, ...config };
 
-  let agentOperator: T;
-
-  if (operator) {
-    agentOperator = operator;
-  } else {
-    const operatorOptions: ComputerOperatorOptions = {
-      config: {
-        headless: mergedConfig.headless,
-      },
-    };
-    agentOperator = new ComputerOperator(operatorOptions) as unknown as T;
-  }
+  // Default to ComputerOperator for initial screenshot
+  // The actual operator type will be determined by LLM in run()
+  const agentOperator = operator ?? new ComputerOperator({
+    config: {
+      headless: mergedConfig.headless,
+    },
+  }) as unknown as T;
 
   // Create AbortController for cancellation support
   const abortController = new AbortController();
@@ -135,9 +131,10 @@ export async function createGUIAgent<T extends Operator>(
   return agent;
 }
 
-export { ComputerOperator, GUIAgent, GUIAgentStatus };
+export { ComputerOperator, BrowserOperator, GUIAgent, GUIAgentStatus };
 export type {
   ComputerOperatorOptions,
+  BrowserOperatorOptions,
   GUIAgentConfig,
   GUIAgentData,
   Conversation,

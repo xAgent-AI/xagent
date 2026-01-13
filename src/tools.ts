@@ -1101,6 +1101,7 @@ export class TaskTool implements Tool {
         modelApiKey: apiKey || undefined,
         maxLoopCount: 25,
         loopIntervalInMs: 500,
+        showAIDebugInfo: config.get('showAIDebugInfo') || false,
       });
 
       // Add constraints to prompt if any

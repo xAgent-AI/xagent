@@ -38,6 +38,7 @@ export interface GUISubAgentConfig {
   viewport?: { width: number; height: number };
   loopIntervalInMs?: number;
   maxLoopCount?: number;
+  showAIDebugInfo?: boolean;
 }
 
 /**
@@ -53,6 +54,7 @@ export const DEFAULT_GUI_CONFIG: Required<GUISubAgentConfig> = {
   viewport: { width: 1280, height: 800 },
   loopIntervalInMs: 0,
   maxLoopCount: 100,
+  showAIDebugInfo: false,
 };
 
 /**
@@ -93,6 +95,7 @@ export async function createGUISubAgent<T extends Operator>(
     modelApiKey: mergedConfig.modelApiKey,
     loopIntervalInMs: mergedConfig.loopIntervalInMs,
     maxLoopCount: mergedConfig.maxLoopCount,
+    showAIDebugInfo: mergedConfig.showAIDebugInfo,
   };
 
   const agent = new GUIAgent<T>(agentConfig);

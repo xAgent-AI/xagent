@@ -526,7 +526,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
   }
 
   /**
-   * Call the model API
+   * Call the model API with debug logging
    */
   private async callModelAPI(
     messages: any[],
@@ -541,9 +541,79 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       max_tokens: 1024,
       temperature: 0.1,
     };
-    const lastMessage = messages[messages.length - 1];
-    const imageContent = lastMessage?.content?.find?.((c: any) => c.type === 'image_url');
-    const imageSize = imageContent?.image_url?.url?.length || 0;
+
+    // Debug output for model input
+    if (this.showAIDebugInfo) {
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║               GUI MODEL REQUEST DEBUG                   ║');
+      console.log('╚══════════════════════════════════════════════════════════╝');
+      console.log(`📦 Model: ${this.model}`);
+      console.log(`🌐 Base URL: ${baseUrl}`);
+      console.log(`💬 Messages: ${messages.length}`);
+
+      // Show system prompt if present
+      const systemMsg = messages.find((m: any) => m.role === 'system');
+      if (systemMsg) {
+        console.log('\n┌─────────────────────────────────────────────────────────────┐');
+        console.log('│ 🟫 SYSTEM                                                     │');
+        console.log('├─────────────────────────────────────────────────────────────┤');
+        const systemContent = typeof systemMsg.content === 'string'
+          ? systemMsg.content
+          : JSON.stringify(systemMsg.content);
+        const lines = systemContent.split('\n').slice(0, 15);
+        for (const line of lines) {
+          console.log('│ ' + line.slice(0, 62));
+        }
+        if (systemContent.split('\n').length > 15) {
+          console.log('│ ... (truncated)');
+        }
+        console.log('└─────────────────────────────────────────────────────────────┘');
+      }
+
+      // Show conversation messages
+      const roleColors: Record<string, string> = {
+        user: '👤 USER',
+        assistant: '🤖 ASSISTANT',
+      };
+
+      for (let i = 0; i < messages.length; i++) {
+        const msg = messages[i];
+        if (msg.role === 'system') continue;
+
+        const roleLabel = roleColors[msg.role] || `● ${msg.role.toUpperCase()}`;
+        console.log(`\n┌─────────────────────────────────────────────────────────────┐`);
+        console.log(`│ ${roleLabel} (${i + 1})                                           │`);
+        console.log('├─────────────────────────────────────────────────────────────┤');
+
+        if (typeof msg.content === 'string') {
+          const lines = msg.content.split('\n').slice(0, 20);
+          for (const line of lines) {
+            console.log('│ ' + line.slice(0, 62));
+          }
+          if (msg.content.split('\n').length > 20) {
+            console.log('│ ... (truncated)');
+          }
+        } else if (Array.isArray(msg.content)) {
+          const hasImage = msg.content.some((c: any) => c.type === 'image_url');
+          console.log('│ 📎 Content blocks: ' + msg.content.length);
+          if (hasImage) {
+            const imageBlock = msg.content.find((c: any) => c.type === 'image_url');
+            const imageSize = imageBlock?.image_url?.url?.length || 0;
+            console.log('│ 🖼️  Image size: ' + (imageSize / 1024).toFixed(2) + ' KB');
+          }
+          const textBlock = msg.content.find((c: any) => c.type === 'text');
+          if (textBlock?.text) {
+            const lines = textBlock.text.split('\n').slice(0, 10);
+            for (const line of lines) {
+              console.log('│ ' + line.slice(0, 62));
+            }
+          }
+        }
+        console.log('└─────────────────────────────────────────────────────────────┘');
+      }
+
+      console.log('\n📤 Sending request to model API...\n');
+    }
 
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -559,8 +629,39 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       throw new Error(`Model API error: ${error}`);
     }
 
-    const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const result = await response.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: any };
     const content = result.choices?.[0]?.message?.content || '';
+
+    // Debug output for model response
+    if (this.showAIDebugInfo) {
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║               GUI MODEL RESPONSE DEBUG                  ║');
+      console.log('╚══════════════════════════════════════════════════════════╝');
+
+      if (result.usage) {
+        console.log(`📊 Tokens: ${result.usage.prompt_tokens} (prompt) + ${result.usage.completion_tokens} (completion) = ${result.usage.total_tokens} (total)`);
+      }
+
+      console.log('\n┌─────────────────────────────────────────────────────────────┐');
+      console.log('│ 🤖 ASSISTANT                                                 │');
+      console.log('├─────────────────────────────────────────────────────────────┤');
+      console.log('│ 💬 CONTENT:');
+      console.log('│ ───────────────────────────────────────────────────────────');
+
+      const lines = content.split('\n').slice(0, 30);
+      for (const line of lines) {
+        console.log('│ ' + line.slice(0, 62));
+      }
+      if (content.split('\n').length > 30) {
+        console.log(`│ ... (${content.split('\n').length - 30} more lines)`);
+      }
+      console.log('│ ───────────────────────────────────────────────────────────');
+      console.log('└─────────────────────────────────────────────────────────────┘');
+
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║                    RESPONSE ENDED                        ║');
+      console.log('╚══════════════════════════════════════════════════════════╝\n');
+    }
 
     const { parsed: parsedPredictions } = actionParser({
       prediction: content,

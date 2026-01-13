@@ -125,16 +125,17 @@ export class GUIAgent<T extends Operator> {
     this.retry = config.retry;
 
     this.systemPrompt = config.systemPrompt || this.buildSystemPrompt();
+    
+    this.logger.info('[GUIAgent] System Prompt includes navigate?', this.systemPrompt.includes('navigate'));
+    this.logger.info('[GUIAgent] System Prompt includes finished?', this.systemPrompt.includes('finished'));
+    this.logger.info('[GUIAgent] System Prompt includes Example 1?', this.systemPrompt.includes('Example 1'));
   }
 
   private buildSystemPrompt(): string {
     return `You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
 
 ## Output Format
-\`
-Thought: ...
-Action: ...
-\`
+You should output your thought and action. If the task is complete after this action, include \`finished(content='xxx')\` as the last action.
 
 ## Action Space
 click(point='<point>x1 y1</point>')
@@ -142,20 +143,46 @@ left_double(point='<point>x1 y1</point>')
 right_single(point='<point>x1 y1</point>')
 drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')
 hotkey(key='ctrl c') # Split keys with a space and use lowercase. Also, do not use more than 3 keys in one hotkey action.
-type(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content. 
+type(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content.
 scroll(point='<point>x1 y1</point>', direction='down or up or right or left') # Show more information on the \`direction\` side.
-wait() #Sleep for 5s and take a screenshot to check for any changes.
-finished(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format.
+navigate(url='https://example.com') # Navigate to a URL in the browser. If the task is just to open a URL, immediately return \`finished()\` after navigation - NO need to wait or take screenshots.
+wait() #Sleep for 5s and take a screenshot. Only use this if you need to verify page content changed.
+finished(content='xxx') # Task completed. Use escape characters \', \", and \n. Include this when the task is done.
+
+## Examples
+Example 1 (open a URL and finish immediately):
+Thought: 用户要求打开央视新闻网站，任务只是打开网页，不需要其他操作
+Action: navigate(url='https://news.cctv.com')
+finished()
+
+Example 2 (open a URL and do more actions):
+Thought: 用户要求打开央视新闻并滚动页面查看内容
+Action: navigate(url='https://news.cctv.com')
+scroll(point='<point>640 360</point>', direction='down')
 
 ## Note
 - Use {language} in \`Thought\` part.
 - Write a small plan and finally summarize your next action (with its target element) in one sentence in \`Thought\` part.
+- If the task is complete after the current action(s), ALWAYS include \`finished()\` as the last action.
 
 ## User Instruction
 {instruction}`;
   }
 
-
+  private getDefaultActionSpaces(): string {
+    return [
+      `click(point='<point>x1 y1</point>')`,
+      `left_double(point='<point>x1 y1</point>')`,
+      `right_single(point='<point>x1 y1</point>')`,
+      `drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')`,
+      `hotkey(key='ctrl c') # Split keys with a space and use lowercase.`,
+      `type(content='xxx') # Use escape characters \', \", and \n. Use \n at the end to submit.`,
+      `scroll(point='<point>x1 y1</point>', direction='down or up or right or left')`,
+      `navigate(url='https://example.com') # Navigate to a URL. Follow with finished() if task is done.`,
+      `wait() #Sleep for 5s and take a screenshot.`,
+      `finished(content='xxx') # Task completed.`,
+    ].join('\n');
+  }
 
   async initialize(): Promise<void> {
     await this.operator.doInitialize();
@@ -166,7 +193,8 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
    * All operations are determined by the GUI model
    */
   async run(instruction: string): Promise<GUIAgentData> {
-    await this.initialize();
+    // NOTE: initialize() is called lazily in doScreenshot() or doExecute()
+    // This allows the first action (e.g., navigate) to trigger browser initialization
 
     const currentTime = Date.now();
     const data: GUIAgentData = {
@@ -185,11 +213,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     };
 
     if (this.showAIDebugInfo) {
-      this.logger.info('[GUIAgent] run:', {
-        systemPrompt: this.systemPrompt,
-        model: this.model,
-        maxLoopCount: this.maxLoopCount,
-      });
     }
 
     let loopCnt = 0;
@@ -204,7 +227,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       // eslint-disable-next-line no-constant-condition
       while (true) {
         if (this.showAIDebugInfo) {
-          this.logger.info('[GUIAgent] loopCnt:', loopCnt);
         }
 
         // Check pause status
@@ -245,62 +267,78 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         loopCnt += 1;
         const start = Date.now();
 
-        // Take screenshot with retry
-        let snapshot: ScreenshotOutput;
-        try {
-          snapshot = await asyncRetry(
-            () => this.operator.doScreenshot(),
-            {
-              retries: this.retry?.screenshot?.maxRetries ?? 0,
-              minTimeout: 5000,
-              onRetry: this.retry?.screenshot?.onRetry,
-            }
-          );
-        } catch (screenshotError) {
-          this.logger.error('[GUIAgent] screenshot error', screenshotError);
-          loopCnt -= 1;
-          snapshotErrCnt += 1;
-          await sleep(1000);
-          continue;
-        }
+        // BrowserOperator: skip screenshot on first iteration (already has browser content from navigate)
+        // ComputerOperator: always take screenshot (needs screen context for UI elements)
+        // Check by seeing if operator config has browser-related properties
+        const isBrowserOperator = !!(this.operator as any).config?.browserPath || 
+                                  !!(this.operator as any).config?.viewport;
+        const needsScreenshot = isBrowserOperator
+          ? data.conversations.some(c => c.screenshotBase64)
+          : true;
 
-        // Validate screenshot
-        const isValidImage = !!(snapshot?.base64);
-        if (!isValidImage) {
-          loopCnt -= 1;
-          snapshotErrCnt += 1;
-          await sleep(1000);
-          continue;
-        }
+        let snapshot: ScreenshotOutput | null = null;
+        let screenContext: ScreenContext;
 
-        const end = Date.now();
+        if (needsScreenshot) {
+          // Take screenshot
+          try {
+            snapshot = await asyncRetry(
+              () => this.operator.doScreenshot(),
+              {
+                retries: this.retry?.screenshot?.maxRetries ?? 0,
+                minTimeout: 5000,
+                onRetry: this.retry?.screenshot?.onRetry,
+              }
+            );
+          } catch (screenshotError) {
+            loopCnt -= 1;
+            snapshotErrCnt += 1;
+            await sleep(1000);
+            continue;
+          }
 
-        // Get screen context
-        const screenContext = await this.operator.getScreenContext();
+          // Validate screenshot
+          const isValidImage = !!(snapshot?.base64);
+          if (!isValidImage) {
+            loopCnt -= 1;
+            snapshotErrCnt += 1;
+            await sleep(1000);
+            continue;
+          }
 
-        // Add screenshot to conversation
-        data.conversations.push({
-          from: 'human',
-          value: IMAGE_PLACEHOLDER,
-          screenshotBase64: snapshot.base64,
-          screenshotContext: {
-            size: {
-              width: screenContext.width,
-              height: screenContext.height,
+          screenContext = await this.operator.getScreenContext();
+
+          // Add screenshot to conversation
+          data.conversations.push({
+            from: 'human',
+            value: IMAGE_PLACEHOLDER,
+            screenshotBase64: snapshot.base64,
+            screenshotContext: {
+              size: {
+                width: screenContext.width,
+                height: screenContext.height,
+              },
+              scaleFactor: snapshot.scaleFactor ?? screenContext.scaleFactor,
             },
-            scaleFactor: snapshot.scaleFactor ?? screenContext.scaleFactor,
-          },
-          timing: {
-            start,
-            end,
-            cost: end - start,
-          },
-        });
+            timing: {
+              start,
+              end: Date.now(),
+              cost: Date.now() - start,
+            },
+          });
 
-        await this.onData?.({
-          ...data,
-          conversations: data.conversations.slice(-1),
-        });
+          await this.onData?.({
+            ...data,
+            conversations: data.conversations.slice(-1),
+          });
+        } else {
+          // First iteration for BrowserOperator: use default screen context (no screenshot, no initialize)
+          screenContext = {
+            width: 1280,
+            height: 800,
+            scaleFactor: 1,
+          };
+        }
 
         // Build messages for model
         const messages = this.buildModelMessages(data.conversations, data.systemPrompt);
@@ -342,13 +380,15 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         }
 
         if (!prediction) {
-          this.logger.error('[GUIAgent] Response Empty:', prediction);
           continue;
         }
 
+        // Always log parsed actions for user visibility
+        for (const p of parsedPredictions) {
+          this.logger.info(`  - action_type: ${p.action_type}, inputs: ${JSON.stringify(p.action_inputs)}`);
+        }
+
         if (this.showAIDebugInfo) {
-          this.logger.info('[GUIAgent] Response:', prediction);
-          this.logger.info('[GUIAgent] Parsed Predictions:', JSON.stringify(parsedPredictions));
         }
 
         const predictionSummary = this.getSummary(prediction);
@@ -366,7 +406,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
               width: screenContext.width,
               height: screenContext.height,
             },
-            scaleFactor: snapshot.scaleFactor ?? screenContext.scaleFactor,
+            scaleFactor: screenContext.scaleFactor,
           },
           predictionParsed: parsedPredictions,
         });
@@ -381,7 +421,13 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           const actionType = parsedPrediction.action_type;
 
           if (this.showAIDebugInfo) {
-            this.logger.info('[GUIAgent] Action:', actionType);
+          }
+
+          // Handle empty/unsupported action (parse failure)
+          if (!actionType) {
+            data.status = GUIAgentStatus.ERROR;
+            data.error = 'Failed to parse action: ' + prediction;
+            break;
           }
 
           // Handle internal action spaces
@@ -405,7 +451,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
                     parsedPrediction,
                     screenWidth: screenContext.width,
                     screenHeight: screenContext.height,
-                    scaleFactor: snapshot.scaleFactor ?? screenContext.scaleFactor,
+                    scaleFactor: screenContext.scaleFactor,
                     factors: [1000, 1000], // Default factors
                   }),
                 {
@@ -415,7 +461,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
                 }
               );
             } catch (executeError) {
-              this.logger.error('[GUIAgent] execute error', executeError);
               data.status = GUIAgentStatus.ERROR;
               data.error = 'Action execution failed';
               break;
@@ -432,13 +477,17 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           }
         }
 
+        // Check if task ended in this iteration
+        if (data.status === GUIAgentStatus.END) {
+          break;
+        }
+
         // Wait between iterations
         if (this.loopIntervalInMs > 0) {
           await sleep(this.loopIntervalInMs);
         }
       }
     } catch (error) {
-      this.logger.error('[GUIAgent] Catch error', error);
       if (
         error instanceof Error &&
         (error.name === 'AbortError' || error.message?.includes('aborted'))
@@ -457,12 +506,8 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         );
       }
 
+      // Always log final status for user visibility
       if (this.showAIDebugInfo) {
-        this.logger.info('[GUIAgent] Final status:', {
-          status: data.status,
-          loopCnt,
-          totalConversations: data.conversations.length,
-        });
       }
     }
 
@@ -701,6 +746,65 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
   async cleanup(): Promise<void> {
     this.logger.info('Cleaning up GUI Agent...');
     await this.operator.cleanup();
+  }
+
+  /**
+   * Execute a single action
+   * @param params - Action parameters with thought and action string
+   */
+  async executeSingleAction(params: { thought: string; action: string }): Promise<void> {
+    const { thought, action } = params;
+    const screenContext = await this.operator.getScreenContext();
+    const snapshot = await this.operator.doScreenshot();
+
+    if (snapshot.status !== 'success' || !snapshot.base64) {
+      throw new Error('Failed to take screenshot');
+    }
+
+    const { parsed: parsedPredictions } = actionParser({
+      prediction: `${thought}\nAction: ${action}`,
+      factor: [1000, 1000],
+      screenContext: {
+        width: screenContext.width,
+        height: screenContext.height,
+      },
+    });
+
+    for (const parsedPrediction of parsedPredictions) {
+      await this.operator.doExecute({
+        prediction: action,
+        parsedPrediction,
+        screenWidth: screenContext.width,
+        screenHeight: screenContext.height,
+        scaleFactor: snapshot.scaleFactor ?? screenContext.scaleFactor,
+        factors: [1000, 1000],
+      });
+    }
+  }
+
+  getToolDefinition(): {
+    name: string;
+    description: string;
+    parameters: object;
+  } {
+    return {
+      name: GUI_TOOL_NAME,
+      description: 'Perform GUI operations on computer/browser including clicks, typing, navigation, scrolling, etc.',
+      parameters: {
+        type: 'object',
+        properties: {
+          thought: {
+            type: 'string',
+            description: 'Thought process and plan for the next action',
+          },
+          action: {
+            type: 'string',
+            description: 'Action to perform: navigate(url="https://..."), click(point="x y"), type(content="text"), scroll(direction="down"), hotkey(key="ctrl c"), finished(), etc.',
+          },
+        },
+        required: ['thought', 'action'],
+      },
+    };
   }
 }
 

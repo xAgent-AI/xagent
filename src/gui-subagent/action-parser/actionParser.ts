@@ -167,11 +167,12 @@ export function parseActionVlm(
     actionStr = actionContent || '';
   }
 
-  const allActions = actionStr.split('\n\n');
+  // Split actions by single newline, filter out empty lines
+  const allActions = actionStr.split('\n').filter(line => line.trim());
   const actions: PredictionParsed[] = [];
 
   for (const rawStr of allActions) {
-    const actionInstance = parseAction(rawStr.replace(/\n/g, String.raw`\n`).trimStart());
+    const actionInstance = parseAction(rawStr.trim());
     let actionType = '';
     let actionInputs: ActionInputs = {};
 
@@ -256,13 +257,16 @@ export function parseActionVlm(
 
 function parseAction(actionStr: string) {
   try {
-    actionStr = actionStr.replace(/<\|box_start\|>|<\|box_end\|>/g, '');
+    // Remove newlines that break the regex pattern
+    actionStr = actionStr.replace(/\n/g, '').trim();
 
     actionStr = actionStr
+      .replace(/<\|box_start\|>|<\|box_end\|>/g, '')
       .replace(/(?<!start_|end_)point=/g, 'start_box=')
       .replace(/start_point=/g, 'start_box=')
       .replace(/end_point=/g, 'end_box=');
 
+    // Parse as function call: functionName(args)
     const functionPattern = /^(\w+)\((.*)\)$/;
     const match = actionStr.trim().match(functionPattern);
 
@@ -272,7 +276,7 @@ function parseAction(actionStr: string) {
 
     const [_, functionName, argsStr] = match;
 
-    const kwargs = {};
+    const kwargs: Record<string, string> = {};
 
     if (argsStr.trim()) {
       const argPairs = argsStr.match(/([^,']|'[^']*')+/g) || [];
@@ -296,7 +300,6 @@ function parseAction(actionStr: string) {
           value = `(${value})`;
         }
 
-        //@ts-ignore
         kwargs[key.trim()] = value;
       }
     }

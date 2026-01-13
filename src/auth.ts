@@ -7,6 +7,38 @@ import { getLogger } from './logger.js';
 
 const logger = getLogger();
 
+interface VLMProviderInfo {
+  name: string;
+  provider: string;
+  baseUrl: string;
+  defaultModel: string;
+  models: string[];
+}
+
+const VLM_PROVIDERS: VLMProviderInfo[] = [
+  {
+    name: 'OpenAI',
+    provider: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4o',
+    models: ['gpt-5', 'gpt-4o', 'gpt-4o-mini', 'gpt-5-mini']
+  },
+  {
+    name: 'Volcengine (Doubao)',
+    provider: 'volcengine',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    defaultModel: 'doubao-1-5-ui-tars-250428',
+    models: ['doubao-1-5-ui-tars-250428', 'doubao-seed-1-8-251228', 'seed1.5-vl']
+  },
+  {
+    name: 'Anthropic',
+    provider: 'anthropic',
+    baseUrl: 'https://api.anthropic.com/v1',
+    defaultModel: 'claude-sonnet-4-5',
+    models: ['claude-sonnet-4-5', 'claude-opus-4-5', 'claude-sonnet-4', 'claude-opus-4']
+  }
+];
+
 interface ThirdPartyProvider {
   name: string;
   baseUrl: string;
@@ -395,6 +427,114 @@ export class AuthService {
 
   updateAuthConfig(config: Partial<AuthConfig>): void {
     this.authConfig = { ...this.authConfig, ...config };
+  }
+
+  /**
+   * Configure and validate VLM for GUI Agent
+   * Returns { model, baseUrl, apiKey } if successful, null if failed or cancelled
+   */
+  async configureAndValidateVLM(): Promise<{ model: string; baseUrl: string; apiKey: string } | null> {
+    logger.info('\n🔧 Configuring VLM for GUI Agent...', 'Vision-Language Model for browser/desktop automation\n');
+
+    const { provider } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'provider',
+        message: 'Select VLM provider for GUI automation:',
+        choices: VLM_PROVIDERS.map(p => ({
+          name: `${p.name}`,
+          value: p
+        }))
+      }
+    ]);
+
+    const selectedProvider = provider as VLMProviderInfo;
+
+    logger.info(`\nSelected: ${selectedProvider.name}`);
+    logger.info(`API URL: ${selectedProvider.baseUrl}`);
+    logger.info(`Available models: ${selectedProvider.models.join(', ')}`);
+
+    const { selectedModel } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'selectedModel',
+        message: 'Select VLM model:',
+        choices: selectedProvider.models.map(model => ({
+          name: model === selectedProvider.defaultModel ? `${model} (default)` : model,
+          value: model
+        }))
+      }
+    ]);
+
+    const { baseUrl } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'baseUrl',
+        message: 'Enter VLM API Base URL:',
+        default: selectedProvider.baseUrl,
+        validate: (input: string) => {
+          if (!input || input.trim().length === 0) {
+            return 'Base URL cannot be empty';
+          }
+          return true;
+        }
+      }
+    ]);
+
+    const { apiKey } = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'apiKey',
+        message: `Enter ${selectedProvider.name} API Key:`,
+        mask: '*',
+        validate: (input: string) => {
+          if (!input || input.trim().length === 0) {
+            return 'API Key cannot be empty';
+          }
+          return true;
+        }
+      }
+    ]);
+
+    const vlmConfig = {
+      model: selectedModel as string,
+      baseUrl: (baseUrl as string).trim(),
+      apiKey: (apiKey as string).trim()
+    };
+
+    const isValid = await this.validateVLMApiKey(vlmConfig.baseUrl, vlmConfig.apiKey);
+    if (isValid) {
+      logger.success(`${selectedProvider.name} VLM configured successfully!`, `Model: ${vlmConfig.model}`);
+      return vlmConfig;
+    } else {
+      logger.error(`${selectedProvider.name} VLM configuration verification failed, please check API Key and network connection.`);
+      return null;
+    }
+  }
+
+  private async validateVLMApiKey(baseUrl: string, apiKey: string): Promise<boolean> {
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+
+      // Anthropic uses x-api-key header
+      if (baseUrl.includes('anthropic.com')) {
+        headers['x-api-key'] = apiKey;
+        headers['anthropic-version'] = '2023-06-01';
+      } else {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+
+      const response = await axios.get(
+        `${baseUrl}/models`,
+        { headers, timeout: 10000 }
+      );
+      return response.status === 200;
+    } catch (error) {
+      console.error('VLM API Key validation failed:', error);
+      return false;
+    }
   }
 }
 

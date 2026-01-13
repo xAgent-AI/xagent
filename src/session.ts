@@ -2,7 +2,7 @@ import readline from 'readline';
 import chalk from 'chalk';
 import ora from 'ora';
 import inquirer from 'inquirer';
-import { ExecutionMode, ChatMessage, ToolCall } from './types.js';
+import { ExecutionMode, ChatMessage, ToolCall, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
@@ -217,6 +217,27 @@ export class InteractiveSession {
 
     const authConfig = authService.getAuthConfig();
     await this.configManager.setAuthConfig(authConfig);
+
+    // Configure VLM for GUI Agent
+    console.log('');
+    const { configureVLM } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'configureVLM',
+        message: 'Do you want to configure VLM for GUI Agent (browser/desktop automation)?',
+        default: true
+      }
+    ]);
+
+    if (configureVLM) {
+      const vlmConfig = await authService.configureAndValidateVLM();
+      if (vlmConfig) {
+        this.configManager.set('guiSubagentModel', vlmConfig.model);
+        this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
+        this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
+        await this.configManager.save('global');
+      }
+    }
   }
 
   private showWelcomeMessage(): void {

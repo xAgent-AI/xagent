@@ -217,6 +217,7 @@ Customize xAgent by editing `~/.xagent/settings.json`:
   "autoUpdate": true,
   "telemetryEnabled": true,
   "showToolDetails": false,
+  "showAIDebugInfo": false,
   "contextCompress": {
     "enabled": false,
     "autoTrigger": false,

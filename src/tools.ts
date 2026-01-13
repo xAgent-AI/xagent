@@ -1951,19 +1951,19 @@ export class SkillTool implements Tool {
 
   async execute(params: { skill: string }): Promise<{ success: boolean; message: string; result?: any }> {
     const { skill } = params;
-    
+
     try {
       const { getWorkflowManager } = await import('./workflow.js');
       const workflowManager = getWorkflowManager(process.cwd());
-      
+
       const workflow = workflowManager.getWorkflow(skill);
-      
+
       if (!workflow) {
         throw new Error(`Skill ${skill} not found`);
       }
-      
+
       await workflowManager.executeWorkflow(skill, 'Execute skill');
-      
+
       return {
         success: true,
         message: `Successfully executed skill: ${skill}`,
@@ -1971,6 +1971,139 @@ export class SkillTool implements Tool {
       };
     } catch (error: any) {
       throw new Error(`Failed to execute skill: ${error.message}`);
+    }
+  }
+}
+
+export class InvokeSkillTool implements Tool {
+  name = 'InvokeSkill';
+  description = `Invoke a specialized skill to handle domain-specific tasks. Skills are AI-powered capabilities that understand complex requirements and generate high-quality outputs.
+
+# When to Use
+- When user requests involve document processing (Word, PDF, PowerPoint)
+- When user wants to create frontend interfaces or web applications
+- When user needs visual design, posters, or generative art
+- When user asks for documentation or internal communications
+- When the task matches a specific skill domain
+
+# Available Skills by Category
+
+## Document Processing
+- **docx**: Create/edit Word documents with tracked changes, comments
+- **pdf**: PDF manipulation, extraction, creation, forms
+- **pptx**: PowerPoint presentations, slides
+- **xlsx**: Spreadsheets with formulas and data visualization
+
+## Frontend & Web Development
+- **frontend-design**: Create production-grade web interfaces, UI components
+- **web-artifacts-builder**: Complex React artifacts with state management
+- **webapp-testing**: Test web applications with Playwright
+
+## Visual & Creative Design
+- **canvas-design**: Create visual art, posters, design pieces
+- **algorithmic-art**: Generative art with p5.js, flow fields
+- **theme-factory**: Apply professional themes (colors/fonts)
+- **brand-guidelines**: Apply Anthropic brand styling
+
+## Communication & Documentation
+- **doc-coauthoring**: Structured documentation writing
+- **internal-comms**: Internal communications, status reports
+
+## Development & Integration
+- **mcp-builder**: Build MCP servers for API integration
+- **skill-creator**: Create new skills
+
+# When NOT to Use
+- For simple file operations (use Read/Write instead)
+- For basic code changes (use Replace/Write instead)
+- When a regular tool can accomplish the task
+
+# Parameters
+- \`skillId\`: The skill identifier (e.g., "docx", "frontend-design", "canvas-design")
+- \`taskDescription\`: Detailed description of what to accomplish
+- \`inputFile\`: (Optional) Path to input file if applicable
+- \`outputFile\`: (Optional) Desired output file path
+- \`options\`: (Optional) Additional options for the skill
+
+# Examples
+- "Create a Word document with contract terms" → InvokeSkill(skillId="docx", taskDescription="Create a professional Word document with contract terms, including numbered sections, signature blocks, and professional formatting")
+- "Build a landing page for a product" → InvokeSkill(skillId="frontend-design", taskDescription="Create a visually striking landing page with hero section, features, pricing, and footer. Use bold typography and animations.")
+- "Create a poster for a music festival" → InvokeSkill(skillId="canvas-design", taskDescription="Create a poster for an electronic music festival. The topic is subtle reference to techno culture and underground rave scene.")
+- "Write API documentation" → InvokeSkill(skillId="doc-coauthoring", taskDescription="Write comprehensive API documentation for a REST API including endpoints, request/response examples, and error handling")
+
+# Best Practices
+- Provide detailed task descriptions for better results
+- Include relevant file paths when working with existing files
+- Match the skill to the domain (e.g., don't use frontend-design for Word docs)
+- Skills will guide you through their specific workflows`;
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+
+  async execute(params: {
+    skillId: string;
+    taskDescription: string;
+    inputFile?: string;
+    outputFile?: string;
+    options?: Record<string, any>;
+  }, _executionMode?: ExecutionMode): Promise<{
+    success: boolean;
+    message: string;
+    skill: string;
+    task: string;
+    result?: any;
+    files?: string[];
+  }> {
+    const { skillId, taskDescription, inputFile, outputFile, options } = params;
+
+    try {
+      const { getSkillInvoker } = await import('./skill-invoker.js');
+      const { SkillExecutionParams } = await import('./skill-invoker.js') as any;
+      const skillInvoker = getSkillInvoker();
+
+      await skillInvoker.initialize();
+
+      // Verify skill exists
+      const skillDetails = await skillInvoker.getSkillDetails(skillId);
+      if (!skillDetails) {
+        // Try to auto-match the skill
+        const match = await skillInvoker.matchSkill(taskDescription);
+        if (match) {
+          return {
+            success: true,
+            message: `Auto-matched skill: ${match.skill.name} (${match.category})`,
+            skill: match.skill.id,
+            task: taskDescription,
+            result: {
+              category: match.category,
+              confidence: match.confidence,
+              matchedKeywords: match.matchedKeywords
+            }
+          };
+        }
+        throw new Error(`Skill not found: ${skillId}`);
+      }
+
+      const result = await skillInvoker.executeSkill({
+        skillId,
+        taskDescription,
+        inputFile,
+        outputFile,
+        options
+      });
+
+      if (result.success) {
+        return {
+          success: true,
+          message: `Successfully invoked skill: ${skillDetails.name}`,
+          skill: skillId,
+          task: taskDescription,
+          result: result.output,
+          files: result.files
+        };
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (error: any) {
+      throw new Error(`Failed to invoke skill: ${error.message}`);
     }
   }
 }
@@ -2088,6 +2221,7 @@ export class ToolRegistry {
     this.register(new SkillTool());
     this.register(new ListSkillsTool());
     this.register(new GetSkillDetailsTool());
+    this.register(new InvokeSkillTool());
     // GUI Subagent Tools
     // this.register(new GUIOperateTool());
     // this.register(new GUIScreenshotTool());

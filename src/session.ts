@@ -879,7 +879,8 @@ export class InteractiveSession {
       'image_read': (p) => `Read image: ${this.truncatePath(p.image_input)}`,
       'Skill': (p) => `Execute skill: ${p.skill}`,
       'ListSkills': () => `List available skills`,
-      'GetSkillDetails': (p) => `Get skill details: ${p.skill}`
+      'GetSkillDetails': (p) => `Get skill details: ${p.skill}`,
+      'InvokeSkill': (p) => `Invoke skill: ${p.skillId} - ${this.truncatePath(p.taskDescription || '', 40)}`
     };
 
     const getDescription = descriptions[toolName];

@@ -2692,48 +2692,6 @@ export class ToolRegistry {
           };
           break;
 
-        case 'gui_operate':
-          parameters = {
-            type: 'object',
-            properties: {
-              operatorType: {
-                type: 'string',
-                enum: ['browser', 'computer'],
-                description: 'Operator type: browser (Puppeteer) or computer (Nut.js desktop control)'
-              },
-              action: {
-                type: 'string',
-                description: 'Action to perform in UI-TARS format (e.g., "click(start_box=\'[100, 100, 200, 200]\')")'
-              },
-              headless: {
-                type: 'boolean',
-                description: 'Run browser in headless mode (browser only)'
-              },
-              model: {
-                type: 'string',
-                description: 'AI model for action generation (e.g., gpt-4o)'
-              },
-              modelBaseUrl: {
-                type: 'string',
-                description: 'Base URL for the model API'
-              },
-              modelApiKey: {
-                type: 'string',
-                description: 'API key for the model'
-              },
-              maxLoopCount: {
-                type: 'number',
-                description: 'Maximum loop iterations'
-              },
-              thought: {
-                type: 'string',
-                description: 'Thought process describing the action'
-              }
-            },
-            required: ['action']
-          };
-          break;
-
         default:
           // For any unknown tools, keep the empty schema
           parameters = {

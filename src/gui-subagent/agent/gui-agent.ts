@@ -90,38 +90,6 @@ const MAX_LOOP_COUNT = 100;
 const MAX_SNAPSHOT_ERR_CNT = 5;
 const IMAGE_PLACEHOLDER = '{{IMG_PLACEHOLDER_0}}';
 
-/**
- * Extract URL from instruction text
- * Returns the URL if found, otherwise null
- */
-function extractUrlFromInstruction(instruction: string): string | null {
-  // URL patterns
-  const urlPatterns = [
-    // Standard URL with protocol
-    /(?:https?:\/\/)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)/gi,
-    // Common website patterns
-    /(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}/gi,
-  ];
-
-  for (const pattern of urlPatterns) {
-    const matches = instruction.match(pattern);
-    if (matches) {
-      for (const match of matches) {
-        // Skip if it looks like a word, not a URL
-        if (match.includes('.') && !/^[a-zA-Z]+$/.test(match)) {
-          let url = match;
-          // Add protocol if missing
-          if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            url = 'https://' + url;
-          }
-          return url;
-        }
-      }
-    }
-  }
-  return null;
-}
-
 export class GUIAgent<T extends Operator> {
   private readonly operator: T;
   private readonly model: string;
@@ -206,30 +174,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
   }
 
   /**
-   * Check if instruction is a simple URL navigation request
-   * and can be handled without LLM
-   */
-  private isSimpleUrlNavigation(instruction: string): { isSimple: boolean; url: string | null } {
-    const url = extractUrlFromInstruction(instruction);
-    if (!url) {
-      return { isSimple: false, url: null };
-    }
-
-    // Check if the instruction is primarily about navigating to a URL
-    const navKeywords = ['打开', 'open', '访问', 'visit', '浏览', 'browse', '导航', 'navigate', '去', 'go to'];
-    const hasNavKeyword = navKeywords.some(keyword => 
-      instruction.toLowerCase().includes(keyword.toLowerCase())
-    );
-
-    // If instruction is just a URL or contains navigation keywords with a URL
-    if (hasNavKeyword || instruction.replace(url, '').trim().length < 20) {
-      return { isSimple: true, url };
-    }
-
-    return { isSimple: false, url: null };
-  }
-
-  /**
    * Run the GUI agent with a single instruction (UI-TARS style)
    */
   async run(instruction: string): Promise<GUIAgentData> {
@@ -250,36 +194,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         },
       ],
     };
-
-    // Check if this is a simple URL navigation request
-    // If so, handle it directly without calling LLM
-    const { isSimple, url } = this.isSimpleUrlNavigation(instruction);
-    if (isSimple && url) {
-      console.log('[DEBUG-GUI] Simple URL navigation detected, executing directly:', url);
-      try {
-        // Directly execute navigate action
-        await this.operator.doExecute({
-          prediction: `Action: navigate(url='${url}')`,
-          parsedPrediction: {
-            reflection: null,
-            thought: `Navigate to ${url}`,
-            action_type: 'navigate',
-            action_inputs: { url },
-          },
-          screenWidth: 1280,
-          screenHeight: 800,
-          scaleFactor: 1,
-          factors: [1000, 1000],
-        });
-        
-        data.status = GUIAgentStatus.END;
-        await this.onData?.({ ...data, conversations: [] });
-        return data;
-      } catch (navError) {
-        console.log('[DEBUG-GUI] Direct navigation failed:', navError);
-        // Continue with normal LLM flow if direct navigation fails
-      }
-    }
 
     if (this.debug) {
       this.logger.info('[GUIAgent] run:', {
@@ -401,8 +315,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
         // Build messages for model
         const messages = this.buildModelMessages(data.conversations, data.systemPrompt);
-        console.log('[DEBUG-GUI] Built messages, count:', messages.length);
-        console.log('[DEBUG-GUI] Last message type:', messages[messages.length - 1]?.role);
 
         // Invoke model with retry
         let prediction: string;
@@ -433,9 +345,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           );
           prediction = modelResult.prediction;
           parsedPredictions = modelResult.parsedPredictions;
-          console.log('[DEBUG-GUI] Model invocation successful, prediction length:', prediction.length);
         } catch (modelError) {
-          console.log('[DEBUG-GUI] Model invocation failed, error:', modelError);
           // Silently handle model errors - will be caught by upstream
           data.status = GUIAgentStatus.ERROR;
           data.error = 'Model invocation failed: ' + (modelError instanceof Error ? modelError.message : String(modelError));
@@ -621,12 +531,8 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     messages: any[],
     screenContext: ScreenContext
   ): Promise<{ prediction: string; parsedPredictions: PredictionParsed[] }> {
-    console.log('[DEBUG-GUI] this.modelBaseUrl:', this.modelBaseUrl);
-    console.log('[DEBUG-GUI] this.model:', this.model);
-    console.log('[DEBUG-GUI] this.modelApiKey:', this.modelApiKey ? '***' : '(empty)');
     const baseUrl = this.modelBaseUrl || process.env.MODEL_BASE_URL || 'https://api.openai.com/v1';
     const apiKey = this.modelApiKey || process.env.MODEL_API_KEY || '';
-    console.log('[DEBUG-GUI] Calling API:', `${baseUrl}/chat/completions`);
 
     const requestBody = {
       model: this.model,
@@ -637,11 +543,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     const lastMessage = messages[messages.length - 1];
     const imageContent = lastMessage?.content?.find?.((c: any) => c.type === 'image_url');
     const imageSize = imageContent?.image_url?.url?.length || 0;
-    console.log('[DEBUG-GUI] Image data size:', imageSize, 'chars');
-    console.log('[DEBUG-GUI] Total request body size:', JSON.stringify(requestBody).length, 'chars');
-    console.log('[DEBUG-GUI] model:', this.model);
-    console.log('[DEBUG-GUI] messages count:', messages.length);
-    console.log('[DEBUG-GUI] last message has image:', !!imageContent);
 
     const response = await fetch(`${baseUrl}/chat/completions`, {
       method: 'POST',
@@ -652,17 +553,13 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       body: JSON.stringify(requestBody),
     });
 
-    console.log('[DEBUG-GUI] response.ok:', response.ok, 'status:', response.status);
     if (!response.ok) {
       const error = await response.text();
-      console.log('[DEBUG-GUI] Full API Error response:', error);
       throw new Error(`Model API error: ${error}`);
     }
 
     const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-    console.log('[DEBUG-GUI] API result choices:', result.choices?.length);
     const content = result.choices?.[0]?.message?.content || '';
-    console.log('[DEBUG-GUI] content length:', content.length);
 
     const { parsed: parsedPredictions } = actionParser({
       prediction: content,

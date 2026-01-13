@@ -42,7 +42,7 @@ export interface GUIAgentConfig<T extends Operator> {
   signal?: AbortSignal;
   onData?: (data: GUIAgentData) => void;
   onError?: (error: Error) => void;
-  debug?: boolean;
+  showAIDebugInfo?: boolean;
   retry?: {
     screenshot?: {
       maxRetries?: number;
@@ -102,7 +102,7 @@ export class GUIAgent<T extends Operator> {
   private readonly signal?: AbortSignal;
   private readonly onData?: (data: GUIAgentData) => void;
   private readonly onError?: (error: Error) => void;
-  private readonly debug: boolean;
+  private readonly showAIDebugInfo: boolean;
   private readonly retry?: GUIAgentConfig<T>['retry'];
 
   private isPaused = false;
@@ -121,7 +121,7 @@ export class GUIAgent<T extends Operator> {
     this.signal = config.signal;
     this.onData = config.onData;
     this.onError = config.onError;
-    this.debug = config.debug || false;
+    this.showAIDebugInfo = config.showAIDebugInfo ?? false;
     this.retry = config.retry;
 
     this.systemPrompt = config.systemPrompt || this.buildSystemPrompt();
@@ -196,7 +196,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       ],
     };
 
-    if (this.debug) {
+    if (this.showAIDebugInfo) {
       this.logger.info('[GUIAgent] run:', {
         systemPrompt: this.systemPrompt,
         model: this.model,
@@ -215,7 +215,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
-        if (this.debug) {
+        if (this.showAIDebugInfo) {
           this.logger.info('[GUIAgent] loopCnt:', loopCnt);
         }
 
@@ -358,7 +358,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           continue;
         }
 
-        if (this.debug) {
+        if (this.showAIDebugInfo) {
           this.logger.info('[GUIAgent] Response:', prediction);
           this.logger.info('[GUIAgent] Parsed Predictions:', JSON.stringify(parsedPredictions));
         }
@@ -392,7 +392,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         for (const parsedPrediction of parsedPredictions) {
           const actionType = parsedPrediction.action_type;
 
-          if (this.debug) {
+          if (this.showAIDebugInfo) {
             this.logger.info('[GUIAgent] Action:', actionType);
           }
 
@@ -469,7 +469,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         );
       }
 
-      if (this.debug) {
+      if (this.showAIDebugInfo) {
         this.logger.info('[GUIAgent] Final status:', {
           status: data.status,
           loopCnt,
@@ -675,3 +675,4 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 }
 
 export { GUIAgentStatus as StatusEnum };
+

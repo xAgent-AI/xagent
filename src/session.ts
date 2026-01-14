@@ -216,7 +216,6 @@ export class InteractiveSession {
     }
 
     const authConfig = authService.getAuthConfig();
-    await this.configManager.setAuthConfig(authConfig);
 
     // Configure VLM for GUI Agent
     console.log('');
@@ -232,6 +231,8 @@ export class InteractiveSession {
     if (configureVLM) {
       const vlmConfig = await authService.configureAndValidateVLM();
       if (vlmConfig) {
+        // Both LLM and VLM configured successfully - save all at once
+        this.configManager.setAuthConfig(authConfig);
         this.configManager.set('guiSubagentModel', vlmConfig.model);
         this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
         this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
@@ -242,6 +243,9 @@ export class InteractiveSession {
         console.log('');
         process.exit(1);
       }
+    } else {
+      // Only LLM configured - save LLM config
+      await this.configManager.setAuthConfig(authConfig);
     }
   }
 

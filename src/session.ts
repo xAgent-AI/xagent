@@ -52,7 +52,7 @@ export class InteractiveSession {
     this.mcpManager = getMCPManager();
     this.checkpointManager = getCheckpointManager(process.cwd());
     this.conversationManager = getConversationManager();
-    this.sessionManager = getSessionManager();
+    this.sessionManager = getSessionManager(process.cwd());
     this.slashCommandHandler = new SlashCommandHandler();
     
     // 注册 /clear 回调，清除对话时同步清空本地 conversation

@@ -306,7 +306,7 @@ function parseAction(actionStr: string) {
       args: kwargs,
     };
   } catch (e) {
-    console.error(`Failed to parse action '${actionStr}': ${e}`);
+    console.warn(`[ActionParser] Skipping invalid action: '${actionStr}'`);
     return null;
   }
 }

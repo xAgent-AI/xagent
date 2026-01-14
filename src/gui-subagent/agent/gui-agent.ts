@@ -464,7 +464,7 @@ call_user()                                            # Need user's help
         }
 
         if (!prediction) {
-          this.logger.error('[GUIAgent] Response Empty:', prediction);
+          this.logger.warn('[GUIAgent] Warning: Empty response from model, retrying...');
           continue;
         }
 

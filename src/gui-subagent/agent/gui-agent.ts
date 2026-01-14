@@ -16,6 +16,7 @@ import type {
 import type { Operator } from '../operator/base-operator.js';
 import { sleep, asyncRetry } from '../utils.js';
 import { actionParser } from '../action-parser/index.js';
+import { colors } from '../../theme.js';
 
 const GUI_TOOL_NAME = 'gui_operate';
 
@@ -182,7 +183,13 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       config: { headless: false },
     });
     this.operator = browserOperator as unknown as T;
-    await this.operator.doInitialize();
+    try {
+      await this.operator.doInitialize();
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`[GUIAgent] Failed to initialize BrowserOperator: ${errorMsg}`);
+      throw new Error(`Browser initialization failed: ${errorMsg}`);
+    }
   }
 
   /**
@@ -198,7 +205,13 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       config: { headless: false },
     });
     this.operator = computerOperator as unknown as T;
-    await this.operator.doInitialize();
+    try {
+      await this.operator.doInitialize();
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(`[GUIAgent] Failed to initialize ComputerOperator: ${errorMsg}`);
+      throw new Error(`Computer operator initialization failed: ${errorMsg}`);
+    }
   }
 
   /**
@@ -228,11 +241,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
    * All operations are determined by the GUI model
    */
   async run(instruction: string): Promise<GUIAgentData> {
-    // Initialize ComputerOperator for initial screenshot
-    // The operator type will be determined by LLM after first response
-    await this.operator.doInitialize();
-
-    const currentTime = Date.now();
     const data: GUIAgentData = {
       status: GUIAgentStatus.INIT,
       conversations: [
@@ -240,13 +248,37 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           from: 'human',
           value: instruction,
           timing: {
-            start: currentTime,
-            end: currentTime,
+            start: Date.now(),
+            end: Date.now(),
             cost: 0,
           },
         },
       ],
     };
+
+    // Initialize ComputerOperator for initial screenshot
+    // The operator type will be determined by LLM after first response
+    try {
+      await this.operator.doInitialize();
+    } catch (initError) {
+      const errorMsg = initError instanceof Error ? initError.message : 'Unknown error';
+      this.logger.error(`[GUIAgent] Failed to initialize operator: ${errorMsg}`);
+
+      // Check if it's an RDP-related issue
+      if (errorMsg.includes('screen') || errorMsg.includes('capture') || errorMsg.includes('display')) {
+        data.status = GUIAgentStatus.ERROR;
+        data.error = 'Failed to initialize screen capture. This may be caused by:\n' +
+          '  1. Remote Desktop session disconnected or minimized\n' +
+          '  2. Display driver issues\n' +
+          'Suggestion: Ensure your display is active and try again.';
+      } else {
+        data.status = GUIAgentStatus.ERROR;
+        data.error = `Failed to initialize operator: ${errorMsg}`;
+      }
+      return data;
+    }
+
+    const currentTime = Date.now();
 
     if (this.showAIDebugInfo) {
       this.logger.info('[GUIAgent] run:', {
@@ -302,30 +334,38 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         // Check screenshot error limit
         if (snapshotErrCnt >= MAX_SNAPSHOT_ERR_CNT) {
           data.status = GUIAgentStatus.ERROR;
-          data.error = 'Too many screenshot failures';
+          data.error = 'Screenshot failed too many times. Stopping task.';
           break;
         }
 
         loopCnt += 1;
         const start = Date.now();
 
-        // Take screenshot with retry
+        // Take screenshot (single attempt - no retry to avoid infinite loops)
         let snapshot: ScreenshotOutput;
         try {
-          snapshot = await asyncRetry(
-            () => this.operator.doScreenshot(),
-            {
-              retries: this.retry?.screenshot?.maxRetries ?? 0,
-              minTimeout: 5000,
-              onRetry: this.retry?.screenshot?.onRetry,
-            }
-          );
+          snapshot = await this.operator.doScreenshot();
         } catch (screenshotError) {
-          this.logger.error('[GUIAgent] screenshot error', screenshotError);
-          loopCnt -= 1;
+          const errorMsg = screenshotError instanceof Error ? screenshotError.message : 'Unknown error';
+          this.logger.warn(`[GUIAgent] Screenshot exception: ${errorMsg}`);
           snapshotErrCnt += 1;
+          data.status = GUIAgentStatus.ERROR;
+          data.error = `Screenshot failed ${snapshotErrCnt} times. Stopping task.`;
+          this.logger.error(`[GUIAgent] ${data.error}`);
           await sleep(1000);
-          continue;
+          break;
+        }
+
+        // Check if screenshot returned failure status
+        if (snapshot.status === 'failed') {
+          const errorMsg = snapshot.errorMessage || 'Unknown error';
+          this.logger.warn(`[GUIAgent] Screenshot failed: ${errorMsg}`);
+          snapshotErrCnt += 1;
+          data.status = GUIAgentStatus.ERROR;
+          data.error = `Screenshot failed ${snapshotErrCnt} times. Stopping task.`;
+          this.logger.error(`[GUIAgent] ${data.error}`);
+          await sleep(1000);
+          break;
         }
 
         // Check abort immediately after screenshot
@@ -337,11 +377,16 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         // Validate screenshot
         const isValidImage = !!(snapshot?.base64);
         if (!isValidImage) {
-          loopCnt -= 1;
           snapshotErrCnt += 1;
+          data.status = GUIAgentStatus.ERROR;
+          data.error = `Screenshot failed ${snapshotErrCnt} times. Stopping task.`;
+          this.logger.error(`[GUIAgent] ${data.error}`);
           await sleep(1000);
-          continue;
+          break;
         }
+
+        // Reset error counter on successful screenshot
+        snapshotErrCnt = 0;
 
         const end = Date.now();
 
@@ -622,6 +667,11 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       const finalStatus = data.status;
       const finalError = data.error;
 
+      // Output error immediately if task failed
+      if (finalStatus === GUIAgentStatus.ERROR && finalError) {
+        console.log(`\n${colors.error('✖')} ${finalError}\n`);
+      }
+
       // Call onData callback if set
       // Note: Use Promise.resolve().then() to avoid modifying data in callback
       const onDataCallback = this.onData;
@@ -643,6 +693,8 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       }
 
       // Ensure the returned status is correct (reassign)
+      this.logger.info(`[GUIAgent] Finally: finalStatus=${finalStatus}, finalError=${finalError}, data.status=${data.status}, data.error=${data.error}`);
+      console.log(`\n${colors.error('✖')} ${finalError}\n`);
       data.status = finalStatus;
       data.error = finalError;
     }

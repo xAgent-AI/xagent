@@ -139,10 +139,11 @@ export class ComputerOperator extends Operator {
         scaleFactor,
       };
     } catch (error) {
-      this.logger.error('Screenshot failed:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.warn(`[ComputerOperator] Screenshot failed: ${errorMsg}`);
       return {
         status: 'failed',
-        errorMessage: (error as Error).message,
+        errorMessage: errorMsg,
       };
     }
   }

@@ -120,7 +120,11 @@ export class BrowserOperator extends Operator {
 
   protected async screenshot(): Promise<ScreenshotOutput> {
     if (!this.page) {
-      throw new Error('Page not initialized');
+      this.logger.error('Screenshot failed: Page not initialized');
+      return {
+        status: 'failed',
+        errorMessage: 'Browser page not initialized',
+      };
     }
 
     try {
@@ -138,10 +142,11 @@ export class BrowserOperator extends Operator {
         scaleFactor: this.screenCtx?.scaleFactor || 1,
       };
     } catch (error) {
-      this.logger.error('Screenshot failed:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.warn(`[BrowserOperator] Screenshot failed: ${errorMsg}`);
       return {
         status: 'failed',
-        errorMessage: (error as Error).message,
+        errorMessage: errorMsg,
       };
     }
   }

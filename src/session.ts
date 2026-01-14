@@ -54,6 +54,12 @@ export class InteractiveSession {
     this.conversationManager = getConversationManager();
     this.sessionManager = getSessionManager();
     this.slashCommandHandler = new SlashCommandHandler();
+    
+    // 注册 /clear 回调，清除对话时同步清空本地 conversation
+    this.slashCommandHandler.setClearCallback(() => {
+      this.conversation = [];
+    });
+    
     this.executionMode = ExecutionMode.DEFAULT;
     this.cancellationManager = getCancellationManager();
     this.indentLevel = indentLevel;

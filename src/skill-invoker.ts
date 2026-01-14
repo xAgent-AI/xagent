@@ -5,7 +5,7 @@ import { getSkillLoader, SkillInfo, SkillLoader } from './skill-loader.js';
 import { getToolRegistry } from './tools.js';
 import { ExecutionMode, Tool } from './types.js';
 
-// 重新导出 SkillInfo 以便其他模块使用
+// Re-export SkillInfo for other modules
 export type { SkillInfo };
 
 export interface SkillExecutionParams {
@@ -14,10 +14,12 @@ export interface SkillExecutionParams {
   inputFile?: string;
   outputFile?: string;
   options?: Record<string, any>;
+  /** Task ID for workspace directory naming */
+  taskId?: string;
 }
 
 /**
- * 执行步骤接口 - 告诉 Agent 接下来要做什么
+ * Execution step interface - tells Agent what to do next
  */
 export interface ExecutionStep {
   step: number;
@@ -29,17 +31,21 @@ export interface ExecutionStep {
 }
 
 /**
- * 技能执行结果 - 包含指导内容和下一步行动
+ * Skill execution result - contains guidance and next actions
  */
 export interface SkillExecutionResult {
   success: boolean;
   output?: string;
   error?: string;
   files?: string[];
-  /** 告诉 Agent 接下来要做什么 */
+  /** Tells Agent what to do next */
   nextSteps?: ExecutionStep[];
-  /** 技能类型，用于决定是否需要手动执行 */
+  /** Skill type for determining if manual execution is needed */
   requiresManualExecution?: boolean;
+  /** Workspace directory used, for cleanup */
+  workspaceDir?: string;
+  /** Files to preserve (relative paths), skipped during cleanup */
+  preserveFiles?: string[];
 }
 
 export interface SkillMatcherResult {
@@ -50,26 +56,127 @@ export interface SkillMatcherResult {
 }
 
 // ============================================================
-// 共享的内容提取工具函数
+// Workspace Utility Functions
 // ============================================================
 
 /**
- * 移除 Markdown 格式（粗体、斜体等）
+ * Get workspace directory path
+ * @param taskId Task ID for creating unique workspace directory
+ * @returns Absolute path to workspace directory
+ */
+export function getWorkspaceDir(taskId: string): string {
+  return path.join(os.homedir(), '.xagent', 'workspace', taskId);
+}
+
+/**
+ * Ensure workspace directory exists
+ * @param workspaceDir Workspace directory path
+ */
+export async function ensureWorkspaceDir(workspaceDir: string): Promise<void> {
+  await fs.mkdir(workspaceDir, { recursive: true });
+}
+
+/**
+ * Clean up workspace directory
+ * @param workspaceDir Workspace directory path
+ * @param preserveFiles Files to preserve (relative paths)
+ */
+export async function cleanupWorkspace(workspaceDir: string, preserveFiles: string[] = []): Promise<void> {
+  try {
+    const entries = await fs.readdir(workspaceDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(workspaceDir, entry.name);
+
+      // Skip files to preserve
+      if (preserveFiles.includes(entry.name)) {
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        // Recursively delete subdirectories
+        await fs.rm(fullPath, { recursive: true, force: true });
+      } else {
+        // Delete files
+        await fs.unlink(fullPath);
+      }
+    }
+  } catch (error: any) {
+    if (error.code !== 'ENOENT') {
+      console.warn(`Workspace cleanup failed: ${error.message}`);
+    }
+  }
+}
+
+/**
+ * Determine if workspace should be auto-cleaned based on ExecutionMode
+ * @param executionMode Execution mode
+ * @returns Whether auto-cleanup should happen
+ */
+export function shouldAutoCleanup(executionMode: ExecutionMode): boolean {
+  // YOLO mode: fully automatic, clean up directly
+  if (executionMode === ExecutionMode.YOLO) {
+    return true;
+  }
+  // Other modes require user confirmation
+  return false;
+}
+
+/**
+ * Generate cleanup prompt message
+ * @param workspaceDir Workspace directory path
+ */
+export async function getCleanupInfo(workspaceDir: string): Promise<{ files: string[]; totalSize: string }> {
+  try {
+    const entries = await fs.readdir(workspaceDir, { withFileTypes: true });
+    const files: string[] = [];
+
+    for (const entry of entries) {
+      files.push(entry.name);
+    }
+
+    // Calculate total size
+    let totalSize = 0;
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        const stats = await fs.stat(path.join(workspaceDir, entry.name));
+        totalSize += stats.size;
+      }
+    }
+
+    const formatSize = (bytes: number): string => {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    };
+
+    return { files, totalSize: formatSize(totalSize) };
+  } catch {
+    return { files: [], totalSize: '0 B' };
+  }
+}
+
+// ============================================================
+// Shared Content Extraction Utilities
+// ============================================================
+
+/**
+ * Remove Markdown formatting (bold, italic, etc.)
  */
 export function stripMarkdown(text: string): string {
   return text
-    .replace(/\*\*(.+?)\*\*/g, '$1')  // 移除粗体 **
-    .replace(/\*(.+?)\*/g, '$1')      // 移除斜体 *
-    .replace(/`(.+?)`/g, '$1')        // 移除行内代码 `
+    .replace(/\*\*(.+?)\*\*/g, '$1')  // Remove bold **
+    .replace(/\*(.+?)\*/g, '$1')      // Remove italic *
+    .replace(/`(.+?)`/g, '$1')        // Remove inline code `
     .trim();
 }
 
 /**
- * 提取与关键词相关的内容（用于SKILL.md内容匹配）
- * @param content SKILL.md 完整内容
- * @param keywords 关键词列表
- * @param maxLength 最大返回长度
- * @returns 提取的相关内容
+ * Extract content related to keywords (for SKILL.md content matching)
+ * @param content SKILL.md full content
+ * @param keywords Keyword list
+ * @param maxLength Maximum return length
+ * @returns Extracted relevant content
  */
 export function extractContent(content: string, keywords: string[], maxLength: number = 5000): string {
   const lines = content.split('\n');
@@ -81,12 +188,12 @@ export function extractContent(content: string, keywords: string[], maxLength: n
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // 检测标题
+    // Detect headings
     if (line.match(/^#{1,6}\s/)) {
       const strippedLine = stripMarkdown(line);
       const lowerLine = strippedLine.toLowerCase();
 
-      // 检查是否包含关键词
+      // Check if contains keywords
       const hasKeyword = keywords.some(kw => lowerLine.includes(kw.toLowerCase()));
 
       if (hasKeyword) {
@@ -94,7 +201,7 @@ export function extractContent(content: string, keywords: string[], maxLength: n
         found = true;
         sectionDepth = line.match(/^(#+)/)?.[1].length || 1;
       } else if (inRelevantSection) {
-        // 检查是否是同级或更高级别标题（结束当前 section）
+        // Check if same level or higher heading (end current section)
         const currentDepth = line.match(/^(#+)/)?.[1].length || 1;
         if (currentDepth <= sectionDepth) {
           inRelevantSection = false;
@@ -106,7 +213,7 @@ export function extractContent(content: string, keywords: string[], maxLength: n
       relevantLines.push(line);
     }
 
-    // 限制内容长度
+    // Limit content length
     if (relevantLines.join('\n').length > maxLength) {
       relevantLines.push('\n...(content truncated for brevity)...');
       break;
@@ -117,12 +224,12 @@ export function extractContent(content: string, keywords: string[], maxLength: n
     return relevantLines.join('\n').trim();
   }
 
-  // 如果还是找不到，返回前 100 行
+  // If still not found, return first 100 lines
   return lines.slice(0, 100).join('\n').trim() + '\n\n...(See SKILL.md for full instructions)';
 }
 
 /**
- * 读取 SKILL.md 并根据任务提取相关内容
+ * Read SKILL.md and extract relevant content based on task
  */
 export async function readSkillContent(skillPath: string, keywords: string[], maxLength: number = 5000): Promise<string> {
   const skillMdPath = path.join(skillPath, 'SKILL.md');
@@ -131,7 +238,7 @@ export async function readSkillContent(skillPath: string, keywords: string[], ma
 }
 
 // ============================================================
-// SKILL 触发词映射
+// SKILL Trigger Keywords Mapping
 // ============================================================
 
 const SKILL_TRIGGERS: Record<string, { skillId: string; keywords: string[]; category: string }> = {
@@ -268,7 +375,7 @@ const SKILL_TRIGGERS: Record<string, { skillId: string; keywords: string[]; cate
 };
 
 // ============================================================
-// SkillInvoker 主类
+// SkillInvoker Main Class
 // ============================================================
 
 export class SkillInvoker {
@@ -292,7 +399,7 @@ export class SkillInvoker {
   }
 
   /**
-   * 获取所有可用的技能列表
+   * Get list of all available skills
    */
   async listAvailableSkills(): Promise<SkillInfo[]> {
     await this.initialize();
@@ -300,7 +407,7 @@ export class SkillInvoker {
   }
 
   /**
-   * 根据用户输入匹配最相关的技能
+   * Match the most relevant skill based on user input
    */
   async matchSkill(userInput: string): Promise<SkillMatcherResult | null> {
     await this.initialize();
@@ -308,7 +415,7 @@ export class SkillInvoker {
     const lowerInput = userInput.toLowerCase();
     let bestMatch: SkillMatcherResult | null = null;
 
-    // 首先检查预定义的触发词
+    // First check predefined trigger keywords
     for (const trigger of Object.values(SKILL_TRIGGERS)) {
       const matchedKeywords = trigger.keywords.filter(kw => lowerInput.includes(kw.toLowerCase()));
 
@@ -335,7 +442,7 @@ export class SkillInvoker {
   }
 
   /**
-   * 获取技能详情
+   * Get skill details
    */
   async getSkillDetails(skillId: string): Promise<SkillInfo | null> {
     await this.initialize();
@@ -343,7 +450,7 @@ export class SkillInvoker {
   }
 
   /**
-   * 执行技能
+   * Execute skill
    */
   async executeSkill(params: SkillExecutionParams): Promise<SkillExecutionResult> {
     const skill = this.skillCache.get(params.skillId);
@@ -355,10 +462,20 @@ export class SkillInvoker {
       };
     }
 
+    // Generate task ID (if not provided)
+    const taskId = params.taskId || `${params.skillId}-${Date.now()}`;
+
     try {
-      // 根据 skillId 执行相应的处理逻辑
+      // Execute based on skillId
       const executor = this.getSkillExecutor(skill.id);
-      return await executor.execute(skill, params);
+      const result = await executor.execute(skill, { ...params, taskId });
+
+      // Add workspaceDir to result
+      if (result.success && result.nextSteps && result.nextSteps.length > 0) {
+        result.workspaceDir = getWorkspaceDir(taskId);
+      }
+
+      return result;
     } catch (error: any) {
       return {
         success: false,
@@ -368,8 +485,49 @@ export class SkillInvoker {
   }
 
   /**
-   * 获取技能对应的执行器
-   * 根据 skill.id 判断使用哪个执行器
+   * Clean up workspace based on execution result
+   * @param result Skill execution result
+   * @param executionMode Execution mode
+   * @returns Whether cleanup was performed
+   */
+  async cleanupAfterExecution(result: SkillExecutionResult, executionMode: ExecutionMode): Promise<boolean> {
+    if (!result.workspaceDir) {
+      return false;
+    }
+
+    // YOLO mode: auto cleanup
+    if (executionMode === ExecutionMode.YOLO) {
+      await cleanupWorkspace(result.workspaceDir, result.preserveFiles || []);
+      return true;
+    }
+
+    // Other modes: don't auto cleanup, let user decide
+    return false;
+  }
+
+  /**
+   * Get cleanup prompt (for asking user)
+   */
+  async getCleanupPrompt(result: SkillExecutionResult): Promise<string | null> {
+    if (!result.workspaceDir) {
+      return null;
+    }
+
+    const info = await getCleanupInfo(result.workspaceDir);
+    if (info.files.length === 0) {
+      return null;
+    }
+
+    return `Task completed! Workspace directory contains the following files:\n` +
+      `📁 ${result.workspaceDir}\n` +
+      `Files: ${info.files.join(', ')}\n` +
+      `Size: ${info.totalSize}\n\n` +
+      `Do you want to clean up these temporary files?`;
+  }
+
+  /**
+   * Get executor for skill
+   * Determine which executor to use based on skill.id
    */
   private getSkillExecutor(skillId: string): SkillExecutor {
     const docProcessingSkills = ['docx', 'pdf', 'pptx', 'xlsx'];
@@ -393,7 +551,7 @@ export class SkillInvoker {
   }
 
   /**
-   * 生成技能调用说明（用于 system prompt）
+   * Generate skill invocation instructions (for system prompt)
    */
   generateSkillInstructions(): string {
     const categories = new Map<string, { skillId: string; name: string; description: string }[]>();
@@ -428,7 +586,7 @@ export class SkillInvoker {
 }
 
 // ============================================================
-// Skill Executor 接口和实现
+// Skill Executor Interface and Implementation
 // ============================================================
 
 interface SkillExecutor {
@@ -436,7 +594,7 @@ interface SkillExecutor {
 }
 
 /**
- * 文档处理技能执行器
+ * Document Processing Skill Executor
  */
 class DocumentSkillExecutor implements SkillExecutor {
   async execute(skill: SkillInfo, params: SkillExecutionParams): Promise<SkillExecutionResult> {
@@ -444,23 +602,23 @@ class DocumentSkillExecutor implements SkillExecutor {
     const files: string[] = [];
     const nextSteps: ExecutionStep[] = [];
 
-    outputMessages.push(`## ${skill.name} Skill - 执行指南\n`);
-    outputMessages.push(`**任务**: ${params.taskDescription}\n`);
+    outputMessages.push(`## ${skill.name} Skill - Execution Guide\n`);
+    outputMessages.push(`**Task**: ${params.taskDescription}\n`);
 
     try {
-      // 读取技能文档完整内容
+      // Read complete skill documentation
       const skillPath = skill.skillsPath;
       const skillMdPath = path.join(skillPath, 'SKILL.md');
       files.push(skillMdPath);
 
-      // 读取 SKILL.md 内容
+      // Read SKILL.md content
       const skillContent = await fs.readFile(skillMdPath, 'utf-8');
 
-      // 根据任务类型提取相关内容并生成执行步骤
+      // Extract relevant content based on task type and generate execution steps
       const taskContent = await this.extractRelevantContent(skill, params, skillContent, nextSteps);
       outputMessages.push(taskContent);
 
-      // 如果有 input/output 文件，也加入文件列表
+      // Add input/output files to list if they exist
       if (params.inputFile) files.push(params.inputFile);
       if (params.outputFile) files.push(params.outputFile);
 
@@ -480,7 +638,7 @@ class DocumentSkillExecutor implements SkillExecutor {
   }
 
   /**
-   * 根据任务类型提取相关的 skill 内容并生成执行步骤
+   * Extract relevant skill content based on task type and generate execution steps
    */
   private async extractRelevantContent(
     skill: SkillInfo,
@@ -490,7 +648,7 @@ class DocumentSkillExecutor implements SkillExecutor {
   ): Promise<string> {
     const taskLower = params.taskDescription.toLowerCase();
 
-    // 根据 skill 类型提取相关内容
+    // Extract content based on skill type
     switch (skill.id) {
       case 'pptx':
         return this.extractPptxContent(taskLower, fullContent, nextSteps);
@@ -506,40 +664,46 @@ class DocumentSkillExecutor implements SkillExecutor {
   }
 
   /**
-   * 提取 PPTX 相关内容并生成步骤
+   * Extract PPTX-related content and generate steps
    */
   private extractPptxContent(taskLower: string, fullContent: string, nextSteps: ExecutionStep[]): string {
     const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
 
-    // 检测是否使用模板
-    const useTemplate = taskLower.includes('template') || taskLower.includes('模板');
+    // Check if using template
+    const useTemplate = taskLower.includes('template') || taskLower.includes('template');
 
     if (useTemplate) {
-      // 添加使用模板的步骤
+      // Add template usage steps
       nextSteps.push({
         step: 1,
         action: 'Read documentation',
         description: 'Read html2pptx.md for template usage',
         file: 'skills/skills/pptx/html2pptx.md',
-        reason: '了解如何使用模板创建 PPTX'
+        reason: 'Understand how to create PPTX using templates'
       });
       nextSteps.push({
         step: 2,
-        action: 'Create HTML slide file',
-        description: 'Create slide.html with content and styling (720pt × 405pt for 16:9)',
-        reason: '创建幻灯片 HTML 文件'
+        action: 'Create HTML slide file in workspace',
+        description: 'Create slide.html in workspace (~/.xagent/workspace/<task-id>/) with content and styling (720pt × 405pt for 16:9)',
+        reason: 'Create slide HTML file in workspace to avoid polluting target directory'
       });
       nextSteps.push({
         step: 3,
         action: 'Create JS file using html2pptx library',
-        description: 'Create create_ppt.js: const { html2pptx } = require("./skills/skills/pptx/scripts/html2pptx.js");',
-        reason: '使用 html2pptx 库将 HTML 转换为 PPTX'
+        description: 'Create create_ppt.js in workspace using dynamic import with absolute path: const { html2pptx } = await import("D:/xagent/xagent/skills/skills/pptx/scripts/html2pptx.js");',
+        reason: 'Use html2pptx library to convert HTML to PPTX (must use dynamic import with absolute path)'
       });
       nextSteps.push({
         step: 4,
-        action: 'Run the script',
-        description: 'Execute: node create_ppt.js',
-        reason: '生成 PPTX 文件'
+        action: 'Run the script in workspace',
+        description: 'Execute: node create_ppt.js in workspace directory',
+        reason: 'Generate PPTX file in workspace'
+      });
+      nextSteps.push({
+        step: 5,
+        action: 'Copy output to target directory',
+        description: 'Copy output.pptx from workspace to target directory',
+        reason: 'Only save final file to specified path, keep workspace clean'
       });
 
       const patterns = [
@@ -555,31 +719,37 @@ class DocumentSkillExecutor implements SkillExecutor {
       }
     }
 
-    // 不使用模板的情况
+    // Not using template
     nextSteps.push({
       step: 1,
       action: 'Read documentation',
       description: 'Read html2pptx.md for creation workflow',
       file: 'skills/skills/pptx/html2pptx.md',
-      reason: '了解如何创建 PPTX 演示文稿'
+      reason: 'Understand how to create PPTX presentations'
     });
     nextSteps.push({
       step: 2,
-      action: 'Create HTML slide file',
-      description: 'Create slide.html with content and styling (720pt × 405pt for 16:9)',
-      reason: '创建幻灯片 HTML 文件'
+      action: 'Create HTML slide file in workspace',
+      description: 'Create slide.html in workspace (~/.xagent/workspace/<task-id>/) with content and styling (720pt × 405pt for 16:9)',
+      reason: 'Create slide HTML file in workspace to avoid polluting target directory'
     });
     nextSteps.push({
       step: 3,
       action: 'Create JS file using html2pptx library',
-      description: 'Create create_ppt.js: const { html2pptx } = require("./skills/skills/pptx/scripts/html2pptx.js");',
-      reason: '使用 html2pptx 库将 HTML 转换为 PPTX'
+      description: 'Create create_ppt.js in workspace using dynamic import with absolute path: const { html2pptx } = await import("D:/xagent/xagent/skills/skills/pptx/scripts/html2pptx.js");',
+      reason: 'Use html2pptx library to convert HTML to PPTX (must use dynamic import with absolute path)'
     });
     nextSteps.push({
       step: 4,
-      action: 'Run the script',
-      description: 'Execute: node create_ppt.js',
-      reason: '生成 PPTX 文件'
+      action: 'Run the script in workspace',
+      description: 'Execute: node create_ppt.js in workspace directory',
+      reason: 'Generate PPTX file in workspace'
+    });
+    nextSteps.push({
+      step: 5,
+      action: 'Copy output to target directory',
+      description: 'Copy output.pptx from workspace to target directory',
+      reason: 'Only save final file to specified path, keep workspace clean'
     });
 
     const patterns = [
@@ -598,7 +768,7 @@ class DocumentSkillExecutor implements SkillExecutor {
   }
 
   /**
-   * 提取 DOCX 相关内容并生成步骤
+   * Extract DOCX-related content and generate steps
    */
   private extractDocxContent(
     taskLower: string,
@@ -609,90 +779,110 @@ class DocumentSkillExecutor implements SkillExecutor {
     const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
 
     const isNew = taskLower.includes('create') || taskLower.includes('new');
-    const isEditing = taskLower.includes('edit') || taskLower.includes('modify') || taskLower.includes('修改');
+    const isEditing = taskLower.includes('edit') || taskLower.includes('modify') || taskLower.includes('modify');
 
     if (isNew) {
-      // 创建新文档
+      // Create new document
       nextSteps.push({
         step: 1,
         action: 'Read documentation',
         description: 'Read docx-js.md for API reference',
         file: 'skills/skills/docx/docx-js.md',
-        reason: '了解如何使用 docx-js 库创建 Word 文档'
+        reason: 'Understand how to use docx-js library to create Word documents'
       });
       nextSteps.push({
         step: 2,
-        action: 'Create TypeScript/JavaScript file',
-        description: 'Create create_doc.js: const { Document, Paragraph, TextRun, Packer } = require("docx");',
-        reason: '创建 Word 文档代码，使用 docx 库'
+        action: 'Create script in workspace',
+        description: 'Create create_doc.js in workspace (~/.xagent/workspace/<task-id>/): const { Document, Paragraph, TextRun, Packer } = await import("docx");',
+        reason: 'Create Word document code in workspace using docx library with dynamic import'
       });
       nextSteps.push({
         step: 3,
-        action: 'Export to .docx',
-        description: 'Use Packer.toBuffer() to export',
-        reason: '导出为 .docx 文件'
+        action: 'Run the script',
+        description: 'Execute: node create_doc.js in workspace',
+        reason: 'Generate DOCX file in workspace'
+      });
+      nextSteps.push({
+        step: 4,
+        action: 'Copy output to target directory',
+        description: 'Copy output.docx from workspace to target directory',
+        reason: 'Only save final file to specified path, keep workspace clean'
       });
 
       return extractContent(content, ['Creating', 'docx-js', 'Workflow']);
     }
 
     if (isEditing) {
-      // 编辑现有文档
+      // Edit existing document
       nextSteps.push({
         step: 1,
         action: 'Read documentation',
         description: 'Read ooxml.md for editing API',
         file: 'skills/skills/docx/ooxml.md',
-        reason: '了解如何编辑现有 Word 文档'
+        reason: 'Understand how to edit existing Word documents'
+      });
+
+      nextSteps.push({
+        step: 2,
+        action: 'Create workspace directory',
+        description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
+        reason: 'Create workspace directory for intermediate files'
       });
 
       if (params.inputFile) {
         nextSteps.push({
-          step: 2,
-          action: 'Unpack document',
-          description: `Run: python skills/skills/docx/ooxml/scripts/unpack.py "${params.inputFile}" <output_dir>`,
-          reason: '解压 DOCX 文件以便编辑'
+          step: 3,
+          action: 'Unpack document in workspace',
+          description: `Run: python skills/skills/docx/ooxml/scripts/unpack.py "${params.inputFile}" <workspace_dir>/docx_input`,
+          reason: 'Unpack DOCX file in workspace for editing'
         });
       }
 
       nextSteps.push({
-        step: 3,
-        action: 'Create editing script',
-        description: 'Create edit_doc.py: from ooxml import Document; doc = Document("<dir>");',
-        reason: '编写 Python 编辑脚本，使用 ooxml 库的 Document 类'
+        step: 4,
+        action: 'Create editing script in workspace',
+        description: 'Create edit_doc.py in workspace: from ooxml import Document; doc = Document("<workspace_dir>/docx_input");',
+        reason: 'Create Python editing script in workspace'
       });
 
       if (params.inputFile || params.outputFile) {
         nextSteps.push({
-          step: 4,
+          step: 5,
           action: 'Pack document',
-          description: 'Run: python skills/skills/docx/ooxml/scripts/pack.py <input_dir> <output_file>',
-          reason: '重新打包为 DOCX'
+          description: 'Run: python skills/skills/docx/ooxml/scripts/pack.py <workspace_dir>/docx_input <workspace_dir>/output.docx',
+          reason: 'Repack DOCX in workspace'
         });
       }
+
+      nextSteps.push({
+        step: 6,
+        action: 'Copy output to target directory',
+        description: 'Copy output.docx from workspace to target directory',
+        reason: 'Only save final file to specified path'
+      });
 
       return extractContent(content, ['Editing', 'redlining', 'ooxml']);
     }
 
-    // 默认情况
+    // Default case
     nextSteps.push({
       step: 1,
       action: 'Read documentation',
       description: 'Read ooxml.md or docx-js.md',
-      reason: '了解文档处理方法'
+      reason: 'Understand document processing methods'
     });
     nextSteps.push({
       step: 2,
       action: 'Create or edit document',
       description: 'Write code using appropriate library',
-      reason: '执行文档操作'
+      reason: 'Perform document operations'
     });
 
     return extractContent(content, ['Creating', 'Editing', 'document', 'docx']);
   }
 
   /**
-   * 提取 PDF 相关内容并生成步骤
+   * Extract PDF-related content and generate steps
    */
   private extractPdfContent(
     taskLower: string,
@@ -702,46 +892,67 @@ class DocumentSkillExecutor implements SkillExecutor {
   ): string {
     const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
 
-    const isForm = taskLower.includes('form') || taskLower.includes('表单');
-    const isExtract = taskLower.includes('extract') || taskLower.includes('提取');
-    const isMerge = taskLower.includes('merge') || taskLower.includes('合并');
+    const isForm = taskLower.includes('form') || taskLower.includes('form');
+    const isExtract = taskLower.includes('extract') || taskLower.includes('extract');
+    const isMerge = taskLower.includes('merge') || taskLower.includes('merge');
 
     nextSteps.push({
       step: 1,
       action: 'Read documentation',
       description: 'Read reference.md for PDF operations',
       file: 'skills/skills/pdf/reference.md',
-      reason: '了解 PDF 操作方法'
+      reason: 'Understand PDF operation methods'
+    });
+
+    nextSteps.push({
+      step: 2,
+      action: 'Create workspace directory',
+      description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
+      reason: 'Create workspace directory for intermediate files'
     });
 
     if (isForm) {
       nextSteps.push({
-        step: 2,
-        action: 'Create/edit PDF form',
-        description: 'Use pypdf or similar library for form fields',
-        reason: '处理 PDF 表单'
+        step: 3,
+        action: 'Create PDF form script in workspace',
+        description: 'Create pdf_script.py in workspace using pypdf or similar library for form fields',
+        reason: 'Create PDF form processing script in workspace'
       });
     } else if (isExtract) {
       nextSteps.push({
-        step: 2,
-        action: 'Extract content',
-        description: 'Use markitdown or pypdf for text extraction',
-        reason: '提取 PDF 内容'
+        step: 3,
+        action: 'Create extraction script in workspace',
+        description: 'Create extract_script.py in workspace using markitdown or pypdf for text extraction',
+        reason: 'Create PDF content extraction script in workspace'
       });
     } else if (isMerge) {
       nextSteps.push({
-        step: 2,
-        action: 'Merge PDFs',
-        description: 'Use pypdf.Merger to combine files',
-        reason: '合并 PDF 文件'
+        step: 3,
+        action: 'Create merge script in workspace',
+        description: 'Create merge_script.py in workspace using pypdf.Merger to combine files',
+        reason: 'Create PDF merge script in workspace'
       });
     }
+
+    nextSteps.push({
+      step: 4,
+      action: 'Run the script',
+      description: 'Execute: python pdf_script.py in workspace',
+      reason: 'Execute PDF operation script in workspace'
+    });
+
+    nextSteps.push({
+      step: 5,
+      action: 'Copy output to target directory',
+      description: 'Copy output.pdf from workspace to target directory',
+      reason: 'Only save final file to specified path'
+    });
 
     return extractContent(content, ['Creating', 'pdf', 'PDF']);
   }
 
   /**
-   * 提取 XLSX 相关内容并生成步骤
+   * Extract XLSX relevant content and generate steps
    */
   private extractXlsxContent(taskLower: string, fullContent: string, nextSteps: ExecutionStep[]): string {
     const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
@@ -753,30 +964,51 @@ class DocumentSkillExecutor implements SkillExecutor {
       step: 1,
       action: 'Read documentation',
       description: 'Read openpyxl documentation for Excel operations',
-      reason: '了解 Excel 操作方法'
+      reason: 'Understand Excel operation methods'
+    });
+
+    nextSteps.push({
+      step: 2,
+      action: 'Create workspace directory',
+      description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
+      reason: 'Create workspace directory for intermediate files'
     });
 
     if (hasFormulas || hasData) {
       nextSteps.push({
-        step: 2,
-        action: 'Create spreadsheet with formulas',
-        description: 'Use openpyxl to create workbook with formulas',
-        reason: '创建包含公式的电子表格'
+        step: 3,
+        action: 'Create spreadsheet script in workspace',
+        description: 'Create create_xlsx.py in workspace using openpyxl to create workbook with formulas',
+        reason: 'Create spreadsheet script with formulas in workspace'
       });
     } else {
       nextSteps.push({
-        step: 2,
-        action: 'Create spreadsheet',
-        description: 'Use openpyxl to create workbook',
-        reason: '创建电子表格'
+        step: 3,
+        action: 'Create spreadsheet script in workspace',
+        description: 'Create create_xlsx.py in workspace using openpyxl to create workbook',
+        reason: 'Create spreadsheet script in workspace'
       });
     }
+
+    nextSteps.push({
+      step: 4,
+      action: 'Run the script',
+      description: 'Execute: python create_xlsx.py in workspace',
+      reason: 'Generate XLSX file in workspace'
+    });
+
+    nextSteps.push({
+      step: 5,
+      action: 'Copy output to target directory',
+      description: 'Copy output.xlsx from workspace to target directory',
+      reason: 'Only save final file to specified path'
+    });
 
     return extractContent(content, ['Excel', 'xlsx', 'spreadsheet']);
   }
 
   /**
-   * 提取默认内容
+   * Extract default content
    */
   private extractDefaultContent(skill: SkillInfo, fullContent: string, nextSteps: ExecutionStep[]): string {
     const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
@@ -787,7 +1019,7 @@ class DocumentSkillExecutor implements SkillExecutor {
       action: 'Read SKILL.md',
       description: `Read ${skill.skillsPath}/SKILL.md for full instructions`,
       file: `${skill.skillsPath}/SKILL.md`,
-      reason: '了解完整的执行流程'
+      reason: 'Understand complete execution workflow'
     });
 
     return `### ${skill.name}\n\n${firstLines}\n\n(See ${skill.skillsPath}/SKILL.md for full instructions)`;
@@ -795,7 +1027,7 @@ class DocumentSkillExecutor implements SkillExecutor {
 }
 
 /**
- * 前端开发技能执行器
+ * Frontend Development Skill Executor
  */
 class FrontendSkillExecutor implements SkillExecutor {
   async execute(skill: SkillInfo, params: SkillExecutionParams): Promise<SkillExecutionResult> {
@@ -803,20 +1035,20 @@ class FrontendSkillExecutor implements SkillExecutor {
     const files: string[] = [];
     const nextSteps: ExecutionStep[] = [];
 
-    outputMessages.push(`## ${skill.name} Skill - 执行指南\n`);
-    outputMessages.push(`**任务**: ${params.taskDescription}\n`);
+    outputMessages.push(`## ${skill.name} Skill - Execution Guide\n`);
+    outputMessages.push(`**Task**: ${params.taskDescription}\n`);
 
     try {
-      // 读取 SKILL.md 内容
+      // Read SKILL.md content
       const skillMdPath = path.join(skill.skillsPath, 'SKILL.md');
       files.push(skillMdPath);
       const skillContent = await fs.readFile(skillMdPath, 'utf-8');
 
-      // 生成执行步骤
+      // Generate execution steps
       const taskContent = await this.extractFrontendContent(skill, params, skillContent, nextSteps);
       outputMessages.push(taskContent);
 
-      // 如果有 input/output 文件，也加入文件列表
+      // Add input/output files to list if they exist
       if (params.inputFile) files.push(params.inputFile);
       if (params.outputFile) files.push(params.outputFile);
 
@@ -836,7 +1068,7 @@ class FrontendSkillExecutor implements SkillExecutor {
   }
 
   /**
-   * 根据前端技能类型提取相关内容并生成步骤
+   * Extract relevant content based on frontend skill type and generate steps
    */
   private async extractFrontendContent(
     skill: SkillInfo,
@@ -846,54 +1078,114 @@ class FrontendSkillExecutor implements SkillExecutor {
   ): Promise<string> {
     const taskLower = params.taskDescription.toLowerCase();
 
-    // 添加通用步骤
+    // Add common steps
     nextSteps.push({
       step: 1,
       action: 'Design Thinking',
       description: 'Understand requirements, define aesthetic direction',
-      reason: '明确设计方向和目标'
+      reason: 'Clarify design direction and goals'
     });
     nextSteps.push({
       step: 2,
       action: 'Create implementation',
       description: 'Write production-grade HTML/CSS/JS or React code',
-      reason: '实现前端界面'
+      reason: 'Implement frontend interface'
     });
 
     switch (skill.id) {
       case 'frontend-design':
+        nextSteps.push({
+          step: 3,
+          action: 'Create workspace directory',
+          description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
+          reason: 'Create workspace directory for frontend files'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Create frontend files in workspace',
+          description: 'Create index.html, styles.css, app.js in workspace',
+          reason: 'Create frontend files in workspace'
+        });
         if (taskLower.includes('landing')) {
           nextSteps.push({
-            step: 3,
+            step: 5,
             action: 'Focus areas',
             description: 'Hero section, features, pricing, testimonials, footer',
-            reason: '重点实现落地页各部分'
+            reason: 'Implement landing page sections'
           });
         } else if (taskLower.includes('dashboard')) {
           nextSteps.push({
-            step: 3,
+            step: 5,
             action: 'Focus areas',
             description: 'Charts, data visualization, navigation panels',
-            reason: '重点实现仪表盘功能'
+            reason: 'Implement dashboard functionality'
           });
         }
+        nextSteps.push({
+          step: 6,
+          action: 'Verify in browser',
+          description: 'Open files in workspace to verify',
+          reason: 'Verify in browser'
+        });
+        nextSteps.push({
+          step: 7,
+          action: 'Copy files to target directory',
+          description: 'Copy frontend files from workspace to target directory',
+          reason: 'Only save final files to specified path'
+        });
         return extractContent(fullContent, ['frontend', 'design', 'web', 'interface']);
 
       case 'web-artifacts-builder':
         nextSteps.push({
           step: 3,
-          action: 'Build React artifact',
-          description: 'Use React with shadcn/ui components',
-          reason: '构建 React 交互式组件'
+          action: 'Create workspace directory',
+          description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
+          reason: 'Create workspace directory for component files'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Build React artifact in workspace',
+          description: 'Create React component files in workspace using shadcn/ui',
+          reason: 'Build React component in workspace'
+        });
+        nextSteps.push({
+          step: 5,
+          action: 'Test artifact',
+          description: 'Test the artifact in workspace',
+          reason: 'Test component functionality'
+        });
+        nextSteps.push({
+          step: 6,
+          action: 'Copy artifact to target directory',
+          description: 'Copy component files from workspace to target directory',
+          reason: 'Only save final files to specified path'
         });
         return extractContent(fullContent, ['Web Artifacts Builder', 'React', 'Quick Start']);
 
       case 'webapp-testing':
         nextSteps.push({
           step: 3,
-          action: 'Write Playwright tests',
-          description: 'Create test scripts for web application',
-          reason: '编写测试脚本'
+          action: 'Create workspace directory',
+          description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
+          reason: 'Create workspace directory for test files'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Write Playwright tests in workspace',
+          description: 'Create test scripts in workspace for web application',
+          reason: 'Write test scripts in workspace'
+        });
+        nextSteps.push({
+          step: 5,
+          action: 'Run tests',
+          description: 'Execute: npx playwright test in workspace',
+          reason: 'Run tests'
+        });
+        nextSteps.push({
+          step: 6,
+          action: 'Copy test reports to target directory',
+          description: 'Copy test reports from workspace to target directory',
+          reason: 'Only save test reports to specified path'
         });
         return extractContent(fullContent, ['test', 'web', 'playwright', 'testing']);
 
@@ -904,7 +1196,7 @@ class FrontendSkillExecutor implements SkillExecutor {
 }
 
 /**
- * 视觉设计技能执行器
+ * Visual Design Skill Executor
  */
 class VisualDesignSkillExecutor implements SkillExecutor {
   async execute(skill: SkillInfo, params: SkillExecutionParams): Promise<SkillExecutionResult> {
@@ -912,20 +1204,20 @@ class VisualDesignSkillExecutor implements SkillExecutor {
     const files: string[] = [];
     const nextSteps: ExecutionStep[] = [];
 
-    outputMessages.push(`## ${skill.name} Skill - 执行指南\n`);
-    outputMessages.push(`**任务**: ${params.taskDescription}\n`);
+    outputMessages.push(`## ${skill.name} Skill - Execution Guide\n`);
+    outputMessages.push(`**Task**: ${params.taskDescription}\n`);
 
     try {
-      // 读取 SKILL.md 内容
+      // Read SKILL.md content
       const skillMdPath = path.join(skill.skillsPath, 'SKILL.md');
       files.push(skillMdPath);
       const skillContent = await fs.readFile(skillMdPath, 'utf-8');
 
-      // 生成执行步骤
+      // Generate execution steps
       const taskContent = await this.extractVisualContent(skill, params, skillContent, nextSteps);
       outputMessages.push(taskContent);
 
-      // 如果有 input/output 文件，也加入文件列表
+      // Add input/output files to list if they exist
       if (params.inputFile) files.push(params.inputFile);
       if (params.outputFile) files.push(params.outputFile);
 
@@ -945,7 +1237,7 @@ class VisualDesignSkillExecutor implements SkillExecutor {
   }
 
   /**
-   * 根据视觉设计技能类型提取相关内容并生成步骤
+   * Extract relevant content based on visual design skill type and generate steps
    */
   private async extractVisualContent(
     skill: SkillInfo,
@@ -957,18 +1249,30 @@ class VisualDesignSkillExecutor implements SkillExecutor {
 
     switch (skill.id) {
       case 'canvas-design':
-        // Canvas Design: 两步流程
+        // Canvas Design: Two-step process
         nextSteps.push({
           step: 1,
-          action: 'Design Philosophy Creation',
-          description: 'Create manifesto/md file defining aesthetic movement',
-          reason: '创建设计哲学文档'
+          action: 'Create workspace directory',
+          description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
+          reason: 'Create workspace directory for design files'
         });
         nextSteps.push({
           step: 2,
+          action: 'Design Philosophy Creation',
+          description: 'Create manifesto/md file in workspace defining aesthetic movement',
+          reason: 'Create design philosophy document in workspace'
+        });
+        nextSteps.push({
+          step: 3,
           action: 'Canvas Creation',
-          description: 'Express philosophy visually using PDF/PNG output',
-          reason: '在画布上表达设计哲学'
+          description: 'Express philosophy visually using PDF/PNG output in workspace',
+          reason: 'Express philosophy visually on canvas in workspace'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Copy output to target directory',
+          description: 'Copy output files from workspace to target directory',
+          reason: 'Only save final files to specified path'
         });
         return extractContent(fullContent, ['design', 'art', 'visual', 'philosophy']);
 
@@ -976,15 +1280,33 @@ class VisualDesignSkillExecutor implements SkillExecutor {
         // Algorithmic Art
         nextSteps.push({
           step: 1,
-          action: 'Algorithmic Philosophy',
-          description: 'Define generative art philosophy',
-          reason: '创建生成艺术哲学'
+          action: 'Create workspace directory',
+          description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
+          reason: 'Create workspace directory for generative art files'
         });
         nextSteps.push({
           step: 2,
+          action: 'Algorithmic Philosophy',
+          description: 'Define generative art philosophy in workspace',
+          reason: 'Create generative art philosophy in workspace'
+        });
+        nextSteps.push({
+          step: 3,
           action: 'P5.js Implementation',
-          description: 'Write p5.js code for generative art',
-          reason: '实现生成艺术代码'
+          description: 'Write p5.js code in workspace for generative art',
+          reason: 'Implement generative art code in workspace'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Generate artwork',
+          description: 'Run p5.js code in workspace to generate artwork',
+          reason: 'Run generative art code'
+        });
+        nextSteps.push({
+          step: 5,
+          action: 'Copy output to target directory',
+          description: 'Copy output files from workspace to target directory',
+          reason: 'Only save final files to specified path'
         });
         return extractContent(fullContent, ['generative', 'algorithmic', 'art']);
 
@@ -992,15 +1314,27 @@ class VisualDesignSkillExecutor implements SkillExecutor {
         // Theme Factory
         nextSteps.push({
           step: 1,
-          action: 'Select theme',
-          description: 'Choose from available themes or create custom',
-          reason: '选择或创建主题'
+          action: 'Create workspace directory',
+          description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
+          reason: 'Create workspace directory for theme files'
         });
         nextSteps.push({
           step: 2,
+          action: 'Select theme',
+          description: 'Choose from available themes or create custom in workspace',
+          reason: 'Select or create theme in workspace'
+        });
+        nextSteps.push({
+          step: 3,
           action: 'Apply theme',
-          description: 'Apply colors, fonts to design',
-          reason: '应用主题到设计'
+          description: 'Apply colors, fonts to design in workspace',
+          reason: 'Apply theme to design in workspace'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Copy output to target directory',
+          description: 'Copy theme files from workspace to target directory',
+          reason: 'Only save final files to specified path'
         });
         return extractContent(fullContent, ['Theme Factory', 'Themes', 'apply']);
 
@@ -1008,24 +1342,48 @@ class VisualDesignSkillExecutor implements SkillExecutor {
         // Brand Guidelines
         nextSteps.push({
           step: 1,
-          action: 'Apply brand colors',
-          description: 'Use Anthropic brand colors and typography',
-          reason: '应用品牌颜色'
+          action: 'Create workspace directory',
+          description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
+          reason: 'Create workspace directory for brand files'
         });
         nextSteps.push({
           step: 2,
+          action: 'Apply brand colors',
+          description: 'Use Anthropic brand colors and typography in workspace',
+          reason: 'Apply brand colors in workspace'
+        });
+        nextSteps.push({
+          step: 3,
           action: 'Follow guidelines',
-          description: 'Apply brand styling consistently',
-          reason: '遵循品牌指南'
+          description: 'Apply brand styling consistently in workspace',
+          reason: 'Follow brand guidelines in workspace'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Copy output to target directory',
+          description: 'Copy brand files from workspace to target directory',
+          reason: 'Only save final files to specified path'
         });
         return extractContent(fullContent, ['Brand Guidelines', 'Colors', 'Typography']);
 
       default:
         nextSteps.push({
           step: 1,
+          action: 'Create workspace directory',
+          description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
+          reason: 'Create workspace directory for design files'
+        });
+        nextSteps.push({
+          step: 2,
           action: 'Create visual design',
-          description: 'Write design code or use canvas',
-          reason: '创建视觉设计'
+          description: 'Write design code or use canvas in workspace',
+          reason: 'Create visual design in workspace'
+        });
+        nextSteps.push({
+          step: 3,
+          action: 'Copy output to target directory',
+          description: 'Copy output files from workspace to target directory',
+          reason: 'Only save final files to specified path'
         });
         return extractContent(fullContent, ['design', 'art', 'visual']);
     }
@@ -1033,7 +1391,7 @@ class VisualDesignSkillExecutor implements SkillExecutor {
 }
 
 /**
- * 文档编写技能执行器
+ * Documentation Skill Executor
  */
 class DocumentationSkillExecutor implements SkillExecutor {
   async execute(skill: SkillInfo, params: SkillExecutionParams): Promise<SkillExecutionResult> {
@@ -1041,20 +1399,20 @@ class DocumentationSkillExecutor implements SkillExecutor {
     const files: string[] = [];
     const nextSteps: ExecutionStep[] = [];
 
-    outputMessages.push(`## ${skill.name} Skill - 执行指南\n`);
-    outputMessages.push(`**任务**: ${params.taskDescription}\n`);
+    outputMessages.push(`## ${skill.name} Skill - Execution Guide\n`);
+    outputMessages.push(`**Task**: ${params.taskDescription}\n`);
 
     try {
-      // 读取 SKILL.md 内容
+      // Read SKILL.md content
       const skillMdPath = path.join(skill.skillsPath, 'SKILL.md');
       files.push(skillMdPath);
       const skillContent = await fs.readFile(skillMdPath, 'utf-8');
 
-      // 生成执行步骤
+      // Generate execution steps
       const taskContent = await this.extractDocContent(skill, params, skillContent, nextSteps);
       outputMessages.push(taskContent);
 
-      // 如果有 input/output 文件，也加入文件列表
+      // Add input/output files to list if they exist
       if (params.inputFile) files.push(params.inputFile);
       if (params.outputFile) files.push(params.outputFile);
 
@@ -1074,7 +1432,7 @@ class DocumentationSkillExecutor implements SkillExecutor {
   }
 
   /**
-   * 根据文档编写技能类型提取相关内容并生成步骤
+   * Extract relevant content based on documentation skill type and generate steps
    */
   private async extractDocContent(
     skill: SkillInfo,
@@ -1092,43 +1450,55 @@ class DocumentationSkillExecutor implements SkillExecutor {
             step: 1,
             action: 'Gather information',
             description: 'Collect progress, plans, problems',
-            reason: '收集状态信息'
+            reason: 'Gather status information'
           });
           nextSteps.push({
             step: 2,
             action: 'Write update',
             description: 'Draft 3P update format',
-            reason: '编写状态更新'
+            reason: 'Write status update'
           });
         } else if (taskLower.includes('newsletter')) {
           nextSteps.push({
             step: 1,
             action: 'Create newsletter',
             description: 'Write company newsletter content',
-            reason: '创建公司通讯'
+            reason: 'Create company newsletter'
           });
         }
         return extractContent(fullContent, ['documentation', 'writing', 'internal']);
 
       case 'doc-coauthoring':
-        // Doc Co-Authoring: 三阶段流程
+        // Doc Co-Authoring: Three-stage process
         nextSteps.push({
           step: 1,
-          action: 'Stage 1: Context Gathering',
-          description: 'Gather requirements and initial questions',
-          reason: '收集文档背景和需求'
+          action: 'Create workspace directory',
+          description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
+          reason: 'Create workspace directory for document drafts'
         });
         nextSteps.push({
           step: 2,
-          action: 'Stage 2: Refinement',
-          description: 'Structure and draft content',
-          reason: '构建文档结构并起草'
+          action: 'Stage 1: Context Gathering',
+          description: 'Gather requirements and initial questions',
+          reason: 'Gather document background and requirements'
         });
         nextSteps.push({
           step: 3,
+          action: 'Stage 2: Refinement',
+          description: 'Structure and draft content in workspace',
+          reason: 'Structure and draft document in workspace'
+        });
+        nextSteps.push({
+          step: 4,
           action: 'Stage 3: Reader Testing',
-          description: 'Test with fresh Claude and refine',
-          reason: '测试并优化文档'
+          description: 'Test with fresh Claude and refine in workspace',
+          reason: 'Test and refine document in workspace'
+        });
+        nextSteps.push({
+          step: 5,
+          action: 'Copy final document to target directory',
+          description: 'Copy final document from workspace to target directory',
+          reason: 'Only save final document to specified path'
         });
         return extractContent(fullContent, ['documentation', 'coauthor', 'workflow']);
 
@@ -1139,7 +1509,7 @@ class DocumentationSkillExecutor implements SkillExecutor {
 }
 
 /**
- * 默认技能执行器
+ * Default Skill Executor
  */
 class DefaultSkillExecutor implements SkillExecutor {
   async execute(skill: SkillInfo, params: SkillExecutionParams): Promise<SkillExecutionResult> {
@@ -1147,20 +1517,20 @@ class DefaultSkillExecutor implements SkillExecutor {
     const files: string[] = [];
     const nextSteps: ExecutionStep[] = [];
 
-    outputMessages.push(`## ${skill.name} Skill - 执行指南\n`);
-    outputMessages.push(`**任务**: ${params.taskDescription}\n`);
+    outputMessages.push(`## ${skill.name} Skill - Execution Guide\n`);
+    outputMessages.push(`**Task**: ${params.taskDescription}\n`);
 
     try {
-      // 读取 SKILL.md 内容
+      // Read SKILL.md content
       const skillMdPath = path.join(skill.skillsPath, 'SKILL.md');
       files.push(skillMdPath);
       const skillContent = await fs.readFile(skillMdPath, 'utf-8');
 
-      // 生成执行步骤
+      // Generate execution steps
       const taskContent = this.extractDefaultContent(skill, skillContent, nextSteps);
       outputMessages.push(taskContent);
 
-      // 如果有 input/output 文件，也加入文件列表
+      // Add input/output files to list if they exist
       if (params.inputFile) files.push(params.inputFile);
       if (params.outputFile) files.push(params.outputFile);
 
@@ -1180,20 +1550,20 @@ class DefaultSkillExecutor implements SkillExecutor {
   }
 
   /**
-   * 提取默认技能内容并生成步骤
+   * Extract default skill content and generate steps
    */
   private extractDefaultContent(skill: SkillInfo, fullContent: string, nextSteps: ExecutionStep[]): string {
     nextSteps.push({
       step: 1,
       action: 'Read SKILL.md',
       description: `Read ${skill.skillsPath}/SKILL.md for full instructions`,
-      reason: '了解完整的执行流程'
+      reason: 'Understand complete execution workflow'
     });
     nextSteps.push({
       step: 2,
       action: 'Follow workflow',
       description: 'Execute according to SKILL.md instructions',
-      reason: '按照 SKILL.md 指导执行'
+      reason: 'Follow SKILL.md guidance for execution'
     });
 
     return extractContent(fullContent, ['skill', 'guide', 'how to', skill.name]);
@@ -1201,7 +1571,7 @@ class DefaultSkillExecutor implements SkillExecutor {
 }
 
 // ============================================================
-// 单例实例和导出
+// Singleton Instance and Exports
 // ============================================================
 
 let skillInvokerInstance: SkillInvoker | null = null;

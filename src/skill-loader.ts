@@ -18,11 +18,36 @@ export interface SkillInfo {
 
 export interface SkillLoaderConfig {
   skillsRootPath?: string;
+  onError?: (error: SkillLoadError) => void;
+  onWarning?: (warning: SkillLoadWarning) => void;
+}
+
+export interface SkillLoadError {
+  skillId?: string;
+  path: string;
+  error: Error;
+  phase: 'directory_read' | 'file_read' | 'parse_markdown';
+}
+
+export interface SkillLoadWarning {
+  skillId?: string;
+  path: string;
+  warning: string;
+  reason?: string;
 }
 
 export class SkillLoader {
   private skillsRootPath: string;
   private loadedSkills: Map<string, SkillInfo> = new Map();
+  private skillDirectories: Map<string, string> = new Map(); // skillId -> path mapping
+  private errorCallback?: (error: SkillLoadError) => void;
+  private warningCallback?: (warning: SkillLoadWarning) => void;
+  private loadStats: {
+    totalFound: number;
+    successfullyLoaded: number;
+    failed: number;
+    errors: SkillLoadError[];
+  } = { totalFound: 0, successfullyLoaded: 0, failed: 0, errors: [] };
 
   constructor(config?: SkillLoaderConfig) {
     if (config?.skillsRootPath) {
@@ -40,6 +65,10 @@ export class SkillLoader {
         this.skillsRootPath = this.detectSkillsPath();
       }
     }
+
+    // Set error and warning callbacks
+    this.errorCallback = config?.onError;
+    this.warningCallback = config?.onWarning;
   }
 
   private detectSkillsPath(): string {
@@ -75,34 +104,239 @@ export class SkillLoader {
 
   async loadAllSkills(): Promise<SkillInfo[]> {
     const skills: SkillInfo[] = [];
-    
+
+    // Reset stats
+    this.loadStats = { totalFound: 0, successfullyLoaded: 0, failed: 0, errors: [] };
+
     try {
       const categories = await fs.readdir(this.skillsRootPath, { withFileTypes: true });
-      
+
+      // First pass: discover all skill directories
+      const skillDirs: { path: string; category: string }[] = [];
       for (const category of categories) {
         if (category.isDirectory()) {
           const categoryPath = path.join(this.skillsRootPath, category.name);
-          const skillInfo = await this.loadSkillFromPath(categoryPath, category.name);
-          if (skillInfo) {
-            skills.push(skillInfo);
-            this.loadedSkills.set(skillInfo.id, skillInfo);
+          skillDirs.push({ path: categoryPath, category: category.name });
+          this.loadStats.totalFound++;
+        }
+      }
+
+      // Second pass: load skills (can be parallelized)
+      const loadPromises = skillDirs.map(async ({ path: skillPath, category }) => {
+        const skillInfo = await this.loadSkillFromPath(skillPath, category);
+        if (skillInfo) {
+          this.loadedSkills.set(skillInfo.id, skillInfo);
+          this.skillDirectories.set(skillInfo.id, skillPath);
+          this.loadStats.successfullyLoaded++;
+          return skillInfo;
+        } else {
+          this.loadStats.failed++;
+          return null;
+        }
+      });
+
+      const results = await Promise.all(loadPromises);
+      for (const skill of results) {
+        if (skill) skills.push(skill);
+      }
+
+      // Log summary if there were errors
+      if (this.loadStats.failed > 0) {
+        const errorMsg = `Loaded ${this.loadStats.successfullyLoaded}/${this.loadStats.totalFound} skills, ${this.loadStats.failed} failed`;
+        if (this.warningCallback) {
+          this.warningCallback({
+            skillId: undefined,
+            path: this.skillsRootPath,
+            warning: errorMsg,
+            reason: `${this.loadStats.errors.length} parsing errors`
+          });
+        } else {
+          console.warn(`[SkillLoader] ${errorMsg}`);
+        }
+      }
+
+    } catch (error) {
+      const loadError: SkillLoadError = {
+        skillId: undefined,
+        path: this.skillsRootPath,
+        error: error as Error,
+        phase: 'directory_read'
+      };
+      this.loadStats.errors.push(loadError);
+
+      if (this.errorCallback) {
+        this.errorCallback(loadError);
+      } else {
+        console.error(`[SkillLoader] Failed to load skills from ${this.skillsRootPath}:`, error);
+      }
+    }
+
+    return skills;
+  }
+
+  /**
+   * Lazy load a single skill by ID - only loads when needed
+   * This is the key optimization for on-demand loading
+   */
+  async loadSkill(skillId: string): Promise<SkillInfo | null> {
+    // Return from cache if already loaded
+    const cached = this.loadedSkills.get(skillId);
+    if (cached) return cached;
+
+    // Try to find and load the specific skill
+    const skillPath = this.skillDirectories.get(skillId);
+    if (skillPath) {
+      const skillInfo = await this.loadSkillFromPath(skillPath, '');
+      if (skillInfo) {
+        this.loadedSkills.set(skillInfo.id, skillInfo);
+        return skillInfo;
+      }
+    }
+
+    // Fallback: search in skills root directory
+    return this.loadSkillBySearching(skillId);
+  }
+
+  /**
+   * Search for a skill by ID in the skills root directory
+   */
+  private async loadSkillBySearching(skillId: string): Promise<SkillInfo | null> {
+    try {
+      const categories = await fs.readdir(this.skillsRootPath, { withFileTypes: true });
+
+      for (const category of categories) {
+        if (category.isDirectory()) {
+          const categoryPath = path.join(this.skillsRootPath, category.name);
+          const skillMdPath = path.join(categoryPath, 'SKILL.md');
+
+          try {
+            const content = await fs.readFile(skillMdPath, 'utf-8');
+            const parsed = this.parseSkillMarkdown(content);
+
+            if (parsed.name === skillId) {
+              this.skillDirectories.set(skillId, categoryPath);
+              const skillInfo: SkillInfo = {
+                id: parsed.name,
+                name: parsed.name,
+                description: parsed.description,
+                license: parsed.license || 'Unknown',
+                version: parsed.version || '1.0.0',
+                author: parsed.author || 'Anonymous',
+                category: category.name,
+                markdown: content,
+                skillsPath: categoryPath
+              };
+              this.loadedSkills.set(skillId, skillInfo);
+              return skillInfo;
+            }
+          } catch {
+            // Continue searching
+            continue;
           }
         }
       }
     } catch (error) {
-      console.error(`Failed to load skills from ${this.skillsRootPath}:`, error);
+      const loadError: SkillLoadError = {
+        skillId,
+        path: this.skillsRootPath,
+        error: error as Error,
+        phase: 'directory_read'
+      };
+      this.handleError(loadError);
     }
-    
-    return skills;
+
+    return null;
+  }
+
+  /**
+   * Pre-discover skill directories without loading content
+   * This allows faster subsequent lazy loading
+   */
+  async discoverSkills(): Promise<string[]> {
+    const skillIds: string[] = [];
+
+    try {
+      const categories = await fs.readdir(this.skillsRootPath, { withFileTypes: true });
+
+      for (const category of categories) {
+        if (category.isDirectory()) {
+          const categoryPath = path.join(this.skillsRootPath, category.name);
+          const skillMdPath = path.join(categoryPath, 'SKILL.md');
+
+          try {
+            const content = await fs.readFile(skillMdPath, 'utf-8');
+            const parsed = this.parseSkillMarkdown(content);
+
+            if (parsed.name) {
+              this.skillDirectories.set(parsed.name, categoryPath);
+              skillIds.push(parsed.name);
+            }
+          } catch (error) {
+            const loadError: SkillLoadError = {
+              skillId: undefined,
+              path: categoryPath,
+              error: error as Error,
+              phase: 'file_read'
+            };
+            this.handleError(loadError);
+          }
+        }
+      }
+    } catch (error) {
+      const loadError: SkillLoadError = {
+        skillId: undefined,
+        path: this.skillsRootPath,
+        error: error as Error,
+        phase: 'directory_read'
+      };
+      this.handleError(loadError);
+    }
+
+    return skillIds;
+  }
+
+  /**
+   * Get load statistics
+   */
+  getLoadStats(): { totalFound: number; successfullyLoaded: number; failed: number; errors: SkillLoadError[] } {
+    return { ...this.loadStats };
+  }
+
+  /**
+   * Handle error with callback or console
+   */
+  private handleError(error: SkillLoadError): void {
+    this.loadStats.errors.push(error);
+
+    if (this.errorCallback) {
+      this.errorCallback(error);
+    } else {
+      console.error(`[SkillLoader] Error loading skill from ${error.path}:`, error.error.message);
+    }
   }
 
   private async loadSkillFromPath(skillPath: string, category: string): Promise<SkillInfo | null> {
     const skillMdPath = path.join(skillPath, 'SKILL.md');
-    
+
     try {
       const content = await fs.readFile(skillMdPath, 'utf-8');
       const parsed = this.parseSkillMarkdown(content);
-      
+
+      if (!parsed.name) {
+        const warning: SkillLoadWarning = {
+          skillId: undefined,
+          path: skillPath,
+          warning: 'SKILL.md missing required "name" field',
+          reason: 'Cannot determine skill ID'
+        };
+        if (this.warningCallback) {
+          this.warningCallback(warning);
+        } else {
+          console.warn(`[SkillLoader] Warning: ${warning.warning} in ${skillPath}`);
+        }
+        return null;
+      }
+
       return {
         id: parsed.name,
         name: parsed.name,
@@ -115,7 +349,13 @@ export class SkillLoader {
         skillsPath: skillPath
       };
     } catch (error) {
-      console.warn(`Failed to load skill from ${skillPath}:`, error);
+      const loadError: SkillLoadError = {
+        skillId: undefined,
+        path: skillPath,
+        error: error as Error,
+        phase: 'file_read'
+      };
+      this.handleError(loadError);
       return null;
     }
   }

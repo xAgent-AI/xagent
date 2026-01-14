@@ -1947,7 +1947,7 @@ export class SkillTool implements Tool {
 # Best Practices
 - Skills are pre-configured workflows from the marketplace
 - Check if a relevant skill exists first`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: { skill: string }): Promise<{ success: boolean; message: string; result?: any }> {
     const { skill } = params;
@@ -2036,7 +2036,7 @@ export class InvokeSkillTool implements Tool {
 - Include relevant file paths when working with existing files
 - Match the skill to the domain (e.g., don't use frontend-design for Word docs)
 - Skills will guide you through their specific workflows`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: {
     skillId: string;
@@ -2051,6 +2051,16 @@ export class InvokeSkillTool implements Tool {
     task: string;
     result?: any;
     files?: string[];
+    /** 告诉 Agent 接下来要做什么 */
+    nextSteps?: Array<{
+      step: number;
+      action: string;
+      description: string;
+      command?: string;
+      file?: string;
+      reason: string;
+    }>;
+    guidance?: string;
   }> {
     const { skillId, taskDescription, inputFile, outputFile, options } = params;
 
@@ -2076,7 +2086,8 @@ export class InvokeSkillTool implements Tool {
               category: match.category,
               confidence: match.confidence,
               matchedKeywords: match.matchedKeywords
-            }
+            },
+            guidance: '请按照匹配到的技能继续执行任务。'
           };
         }
         throw new Error(`Skill not found: ${skillId}`);
@@ -2091,13 +2102,34 @@ export class InvokeSkillTool implements Tool {
       });
 
       if (result.success) {
+        // 生成指导信息，告诉 Agent 接下来要做什么
+        let guidance = '';
+        if (result.nextSteps && result.nextSteps.length > 0) {
+          guidance = `\n## 🎯 下一步操作\n\n请按照以下步骤继续执行任务：\n\n`;
+          for (const step of result.nextSteps) {
+            guidance += `### 步骤 ${step.step}: ${step.action}\n`;
+            guidance += `- **描述**: ${step.description}\n`;
+            guidance += `- **原因**: ${step.reason}\n`;
+            if (step.command) {
+              guidance += `- **命令**: \`${step.command}\`\n`;
+            }
+            if (step.file) {
+              guidance += `- **文件**: ${step.file}\n`;
+            }
+            guidance += '\n';
+          }
+          guidance += `---\n**重要**: 上述步骤是根据 SKILL.md 自动生成的执行指南。请按照这些步骤继续完成任务，而不是结束对话。\n`;
+        }
+
         return {
           success: true,
-          message: `Successfully invoked skill: ${skillDetails.name}`,
+          message: `技能已激活: ${skillDetails.name}`,
           skill: skillId,
           task: taskDescription,
-          result: result.output,
-          files: result.files
+          result: result.output + (guidance ? guidance : ''),
+          files: result.files,
+          nextSteps: result.nextSteps,
+          guidance: guidance
         };
       } else {
         throw new Error(result.error);
@@ -2117,7 +2149,7 @@ export class ListSkillsTool implements Tool {
 
 This returns a list of all skills with their names, descriptions, and categories.`;
 
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(): Promise<{ success: boolean; skills: any[] }> {
     try {

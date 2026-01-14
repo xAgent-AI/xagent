@@ -172,23 +172,22 @@ Thought: [Describe your plan and target in user's language]
 Action: [Specific GUI operation]
 
 ## Available Actions
-click(start_box='[x1, y1, x2, y2]')           # Single click on the ELEMENT YOU SEE in screenshot (taskbar icons)
-left_double(start_box='[x1, y1, x2, y2]')      # Double click on the ELEMENT YOU SEE (desktop icons/folders)
-right_single(start_box='[x1, y1, x2, y2]')     # Right click on the ELEMENT YOU SEE
-drag(start_box='[x1, y1, x2, y2]', end_box='[x3, y3, x4, y4]')  # Drag from one position to another
-hotkey(key='ctrl c / alt tab')                # Press multiple keys together
-type(content='text')                          # Type text (use "\\n" for Enter)
-scroll(start_box='[x1, y1, x2, y2]', direction='down / up')  # Scroll at position
-open_url(url='https://xxx')                   # Open URL in default browser
-press(key='enter / esc')                      # Press a single key
-wait()                                        # Wait 5s and take screenshot
-finished()                                    # Task completed
-call_user()                                   # Need user's help
+click(point='<point>x1 y1</point>')                    # Single click
+left_double(point='<point>x1 y1</point>')              # Double click
+right_single(point='<point>x1 y1</point>')             # Right click
+drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')  # Drag
+hotkey(key='ctrl c / alt tab')                         # Press hotkeys
+type(content='text')                                   # Type text (use "\\n" for Enter)
+scroll(point='<point>x1 y1</point>', direction='down / up')  # Scroll
+open_url(url='https://xxx')                            # Open URL in browser
+press(key='enter / esc')                               # Press single key
+wait()                                                 # Wait 5s and take screenshot
+finished()                                             # Task completed
+call_user()                                            # Need user's help
 
 ## Important Reminders
 - Taskbar icons MUST use single click, not double click
-- Always prefer GUI for opening anything
-- Don't overthink - find visible elements and click them
+- All coordinates use 0-1000 range (500 means 50% of screen width)
 
 `;
   }

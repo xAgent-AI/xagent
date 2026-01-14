@@ -27,8 +27,8 @@ const VLM_PROVIDERS: VLMProviderInfo[] = [
     name: 'Volcengine (Doubao)',
     provider: 'volcengine',
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-    defaultModel: 'doubao-1-5-ui-tars-250428',
-    models: ['doubao-1-5-ui-tars-250428', 'doubao-seed-1-8-251228', 'seed1.5-vl']
+    defaultModel: 'doubao-seed-1-8-251228',
+    models: ['doubao-seed-1-8-251228', 'doubao-1-5-ui-tars-250428', 'seed1.5-vl']
   },
   {
     name: 'Anthropic',

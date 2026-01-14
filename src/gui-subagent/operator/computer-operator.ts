@@ -473,18 +473,45 @@ export class ComputerOperator extends Operator {
   static override get MANUAL(): OperatorManual {
     return {
       ACTION_SPACES: [
-        `click(start_box='[x1, y1, x2, y2]')`,
-        `left_double(start_box='[x1, y1, x2, y2]')`,
-        `right_single(start_box='[x1, y1, x2, y2]')`,
-        `drag(start_box='[x1, y1, x2, y2]', end_box='[x3, y3, x4, y4]')`,
-        `hotkey(key='')`,
-        `type(content='') #If you want to submit your input, use "\\n" at the end of \`content\`.`,
-        `scroll(start_box='[x1, y1, x2, y2]', direction='down or up or right or left')`,
+        // Mouse actions
+        `click(start_box='[x1, y1, x2, y2]') # Single click (taskbar icons)`,
+        `left_double(start_box='[x1, y1, x2, y2]') # Double click (desktop icons/folders)`,
+        `right_single(start_box='[x1, y1, x2, y2]') # Right click`,
+        `drag(start_box='[x1, y1, x2, y2]', end_box='[x3, y3, x4, y4]') # Drag`,
+        
+        // Keyboard actions
+        `hotkey(key='') # e.g., 'ctrl c', 'alt tab' (max 3 keys)`,
+        `type(content='') # Use "\\n" at the end to submit`,
+        `press(key='') # Single key press: 'enter', 'esc', 'tab', 'win', etc.`,
+        
+        // Navigation
         `open_url(url='https://xxx') # Open URL in default browser`,
-        `wait() #Sleep for 5s and take a screenshot to check for any changes.`,
-        `finished()`,
-        `call_user() # Submit the task and call the user when the task is unsolvable, or when you need the user's help.`,
+        
+        // Scroll
+        `scroll(start_box='[x1, y1, x2, y2]', direction='down or up or right or left')`,
+        
+        // System
+        `wait() # Sleep 5s and take a screenshot`,
+        `finished() # Task completed`,
+        `call_user() # Need user's help`,
       ],
+      
+      KEY_SPACE: {
+        'enter': 'Enter key',
+        'esc': 'Escape key',
+        'tab': 'Tab key',
+        'win': 'Windows key (or Command on Mac)',
+        'delete': 'Delete key',
+        'backspace': 'Backspace key',
+        'page up': 'Page Up',
+        'page down': 'Page Down',
+        'home': 'Home key',
+        'end': 'End key',
+        'arrow up': 'Up arrow',
+        'arrow down': 'Down arrow',
+        'arrow left': 'Left arrow',
+        'arrow right': 'Right arrow',
+      },
     };
   }
 }

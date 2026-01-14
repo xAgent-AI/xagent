@@ -1,7 +1,7 @@
 /**
  * GUI Agent for xagent
- * Orchestrates browser/desktop automation with AI-powered action execution
- * Based on UI-TARS architecture with support for both browser and computer control
+ * Orchestrates desktop automation with AI-powered action execution
+ * Based on UI-TARS architecture with computer control only
  *
  * This implementation is aligned with packages/ui-tars/sdk/src/GUIAgent.ts
  */
@@ -107,9 +107,6 @@ export class GUIAgent<T extends Operator> {
   private readonly showAIDebugInfo: boolean;
   private readonly retry?: GUIAgentConfig<T>['retry'];
 
-  // Cache BrowserOperator instance to reuse within the same task
-  private browserOperatorInstance: any = null;
-
   private isPaused = false;
   private resumePromise: Promise<void> | null = null;
   private resolveResume: (() => void) | null = null;
@@ -133,48 +130,61 @@ export class GUIAgent<T extends Operator> {
   }
 
   private buildSystemPrompt(): string {
-    return `You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
+    return `You are a GUI AGENT. You control the computer through GUI actions only.
 
-## BROWSER NAVIGATION RULES (IMPORTANT)
-- **Within a single task**, the browser maintains a single session with history.
-- When navigating between related pages (e.g., clicking links to go to another page), use **click** action on the link element.
-- Use **navigate** ONLY when the task explicitly requires opening a specific URL directly.
-- Use **navigate_back** when you need to return to the previous page in the browser history.
-- Do NOT use "open URL" or "visit website" as a reason to use navigate - click on visible links instead.
+## CRITICAL: THIS IS A GUI AUTOMATION TASK
+- You MUST use GUI actions to complete tasks
+- NEVER use command line, bash, code execution, or any non-GUI methods
+- If you think about using commands like "cd", "ls", "dir", "type", "cat", etc. - STOP! You must use GUI actions instead
 
-## CRITICAL INSTRUCTION
-When the user's request is to "open a website", "visit a URL", "navigate to", "go to", "access", etc.:
-- Use ONLY the "navigate" action
-- Do NOT click on browser icons or use keyboard shortcuts
-- Do NOT be distracted by screenshots showing browser icons on taskbar
-- The "navigate" action will automatically open the browser and visit the URL
+## Task Types and How to Handle:
 
-When the user's request is to "go back", "return to previous page", "navigate back", etc.:
-- Use ONLY the "navigate_back" action
-- Do NOT use browser back button or hotkeys
+### 1. File/Folder Operations (e.g., "打开我的电脑进入下载目录")
+- Find and double-click file explorer/computer icon on desktop or taskbar
+- Navigate through folders using double-click
+- Example: "打开我的电脑进入下载目录"
+  - Step 1: Find "此电脑" (This PC) or "我的电脑" icon → double_click
+  - Step 2: Find and double-click the drive containing Downloads (usually C:)
+  - Step 3: Double-click "Downloads" folder
+
+### 2. Open Application (e.g., "打开微信", "打开记事本")
+- Find the application icon on desktop, start menu, or taskbar
+- Use double_click to launch the application
+
+### 3. Open Website (e.g., "打开百度", "访问 https://google.com")
+- Use the "open_url" action with the URL
+- The system will automatically open your default browser and navigate to the URL
+- Example: open_url(url='https://www.baidu.com')
+- Do NOT try to click browser icons or use keyboard shortcuts
+
+### 4. Type Text (e.g., "在搜索框输入 hello")
+- Click on the input field first
+- Then use type action to input text
 
 ## Output Format
 \`
-Thought: ...
+Thought: ... (in user's language, plan your next action)
 Action: ...
 \`
 
 ## Action Space
-click(point='<point>x1 y1</point>')
-left_double(point='<point>x1 y1</point>')
-right_single(point='<point>x1 y1</point>')
-drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')
-hotkey(key='ctrl c') # Split keys with a space and use lowercase. Also, do not use more than 3 keys in one hotkey action.
-type(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content.
-scroll(point='<point>x1 y1</point>', direction='down or up or right or left') # Show more information on the \`direction\` side.
-wait() #Sleep for 5s and take a screenshot to check for any changes.
-navigate(url='https://xxx') # Use this when you need to directly open a specific URL (not for clicking links).
-navigate_back() # Use this when you need to go back to the previous page in the browser.
-finished(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format.
+click(start_box='[x1, y1, x2, y2]') # Single click
+left_double(start_box='[x1, y1, x2, y2]') # Double click to open
+right_single(start_box='[x1, y1, x2, y2]') # Right click
+drag(start_box='[x1, y1, x2, y2]', end_box='[x3, y3, x4, y4]') # Drag
+hotkey(key='') # e.g., 'ctrl c', 'alt tab' (max 3 keys)
+type(content='') # Use "\\n" at the end to submit
+scroll(start_box='[x1, y1, x2, y2]', direction='down or up or right or left')
+open_url(url='https://xxx') # Open website in default browser
+wait() # Sleep 5s and take screenshot
+finished() # Task completed
+call_user() # Need user's help
 
 ## Note
-- Use {language} in \`Thought\` part.
-- Write a small plan and finally summarize your next action (with its target element) in one sentence in \`Thought\` part.
+- Use the same language as user's instruction in Thought section
+- Always describe what element you're targeting in Thought
+- Double-click is used for opening files/folders/applications
+- Single click is used for selecting or focusing
 
 `;
   }
@@ -183,86 +193,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
   async initialize(): Promise<void> {
     await this.operator.doInitialize();
-  }
-
-  /**
-   * Switch to BrowserOperator if needed
-   * Reuses existing BrowserOperator instance to maintain browser history
-   */
-  private async switchToBrowserOperator(): Promise<void> {
-    const BrowserOperatorClass = (await import('../operator/browser-operator.js')).BrowserOperator;
-
-    // Reuse existing BrowserOperator instance if available
-    if (this.browserOperatorInstance) {
-      this.operator = this.browserOperatorInstance as unknown as T;
-      return;
-    }
-
-    // Clean up current operator if it's ComputerOperator
-    if (this.operator && (this.operator as any).cleanup) {
-      await this.operator.cleanup();
-    }
-
-    // Create new BrowserOperator and cache it
-    const browserOperator = new BrowserOperatorClass({
-      config: { headless: false },
-    });
-    this.browserOperatorInstance = browserOperator;
-    this.operator = browserOperator as unknown as T;
-    try {
-      await this.operator.doInitialize();
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`[GUIAgent] Failed to initialize BrowserOperator: ${errorMsg}`);
-      throw new Error(`Browser initialization failed: ${errorMsg}`);
-    }
-  }
-
-  /**
-   * Switch to ComputerOperator if needed
-   * Preserves BrowserOperator instance to maintain browser session and history
-   */
-  private async switchToComputerOperator(): Promise<void> {
-    // Cache current BrowserOperator instance before switching
-    const BrowserOperatorClass = (await import('../operator/browser-operator.js')).BrowserOperator;
-    if (this.operator instanceof BrowserOperatorClass) {
-      this.browserOperatorInstance = this.operator;
-    }
-
-    // Create new ComputerOperator (ComputerOperator is stateless, so no need to cache)
-    const computerOperator = new (await import('../operator/computer-operator.js')).ComputerOperator({
-      config: { headless: false },
-    });
-    this.operator = computerOperator as unknown as T;
-    try {
-      await this.operator.doInitialize();
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(`[GUIAgent] Failed to initialize ComputerOperator: ${errorMsg}`);
-      throw new Error(`Computer operator initialization failed: ${errorMsg}`);
-    }
-  }
-
-  /**
-   * Check if an action type requires BrowserOperator
-   */
-  private requiresBrowserOperator(actionType: string): boolean {
-    const browserActions = ['navigate', 'navigate_back'];
-    return browserActions.includes(actionType);
-  }
-
-  /**
-   * Switch to the appropriate operator based on action type
-   */
-  private async switchOperatorForAction(actionType: string): Promise<void> {
-    const needsBrowserOperator = this.requiresBrowserOperator(actionType);
-    const isCurrentlyBrowserOperator = this.operator instanceof (await import('../operator/browser-operator.js')).BrowserOperator;
-
-    if (needsBrowserOperator && !isCurrentlyBrowserOperator) {
-      await this.switchToBrowserOperator();
-    } else if (!needsBrowserOperator && isCurrentlyBrowserOperator) {
-      await this.switchToComputerOperator();
-    }
   }
 
   /**
@@ -285,8 +215,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       ],
     };
 
-    // Initialize ComputerOperator for initial screenshot
-    // The operator type will be determined by LLM after first response
+    // Initialize operator for initial screenshot
     try {
       await this.operator.doInitialize();
     } catch (initError) {
@@ -574,9 +503,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           if (this.showAIDebugInfo) {
             this.logger.info('[GUIAgent] Action:', actionType);
           }
-
-          // Switch operator based on action type
-          await this.switchOperatorForAction(actionType);
 
           // Handle internal action spaces
           if (actionType === 'error_env') {

@@ -14,7 +14,6 @@ export * from './operator/index.js';
 export * from './agent/index.js';
 
 import { ComputerOperator, type ComputerOperatorOptions } from './operator/computer-operator.js';
-import { BrowserOperator, type BrowserOperatorOptions } from './operator/browser-operator.js';
 import { GUIAgent, type GUIAgentConfig, type GUIAgentData, type Conversation, GUIAgentStatus } from './agent/gui-agent.js';
 import type { Operator } from './operator/base-operator.js';
 import { getCancellationManager } from '../cancellation.js';
@@ -131,10 +130,9 @@ export async function createGUIAgent<T extends Operator>(
   return agent;
 }
 
-export { ComputerOperator, BrowserOperator, GUIAgent, GUIAgentStatus };
+export { ComputerOperator, GUIAgent, GUIAgentStatus };
 export type {
   ComputerOperatorOptions,
-  BrowserOperatorOptions,
   GUIAgentConfig,
   GUIAgentData,
   Conversation,

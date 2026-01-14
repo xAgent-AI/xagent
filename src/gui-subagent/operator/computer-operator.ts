@@ -94,6 +94,7 @@ export class ComputerOperator extends Operator {
       'hotkey',
       'press',
       'release',
+      'open_url',
       'wait',
       'finished',
       'user_stop',
@@ -383,6 +384,71 @@ export class ComputerOperator extends Operator {
         break;
       }
 
+      case 'open_url': {
+        let url = inputs?.url || inputs?.content;
+        if (!url) {
+          throw new Error('No URL specified for open_url action');
+        }
+
+        // Ensure URL has protocol
+        if (!/^https?:\/\//i.test(url)) {
+          url = 'https://' + url;
+        }
+
+        this.logger.info(`[ComputerOperator] Opening URL: ${url}`);
+
+        // Use system command to open URL in default browser
+        const { exec } = await import('child_process');
+        const platform = process.platform;
+
+        if (platform === 'win32') {
+          // Windows: use start command
+          await new Promise<void>((resolve, reject) => {
+            exec(`start "" "${url}"`, (error) => {
+              if (error) {
+                this.logger.warn(`[ComputerOperator] Failed to open URL with start command: ${error.message}`);
+                // Fallback: try using PowerShell
+                exec(`powershell -Command "Start-Process '${url}'"`, (psError) => {
+                  if (psError) {
+                    reject(psError);
+                  } else {
+                    resolve();
+                  }
+                });
+              } else {
+                resolve();
+              }
+            });
+          });
+        } else if (platform === 'darwin') {
+          // macOS: use open command
+          await new Promise<void>((resolve, reject) => {
+            exec(`open "${url}"`, (error) => {
+              if (error) {
+                reject(error);
+              } else {
+                resolve();
+              }
+            });
+          });
+        } else {
+          // Linux: use xdg-open
+          await new Promise<void>((resolve, reject) => {
+            exec(`xdg-open "${url}"`, (error) => {
+              if (error) {
+                reject(error);
+              } else {
+                resolve();
+              }
+            });
+          });
+        }
+
+        // Wait for browser to open and page to load
+        await sleep(2000);
+        break;
+      }
+
       case 'error_env':
       case 'call_user':
       case 'finished':
@@ -414,6 +480,7 @@ export class ComputerOperator extends Operator {
         `hotkey(key='')`,
         `type(content='') #If you want to submit your input, use "\\n" at the end of \`content\`.`,
         `scroll(start_box='[x1, y1, x2, y2]', direction='down or up or right or left')`,
+        `open_url(url='https://xxx') # Open URL in default browser`,
         `wait() #Sleep for 5s and take a screenshot to check for any changes.`,
         `finished()`,
         `call_user() # Submit the task and call the user when the task is unsolvable, or when you need the user's help.`,

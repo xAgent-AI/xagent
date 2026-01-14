@@ -1120,7 +1120,7 @@ export class TaskTool implements Tool {
         model: modelName,
         modelBaseUrl: baseUrl || undefined,
         modelApiKey: apiKey || undefined,
-        maxLoopCount: 25,
+        maxLoopCount: 30,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
       });

@@ -123,15 +123,6 @@ export type ReleaseAction = BaseAction<
   }
 >;
 
-export type NavigateAction = BaseAction<
-  'navigate',
-  {
-    url: string;
-  }
->;
-
-export type NavigateBackAction = BaseAction<'navigate_back', Record<string, never>>;
-
 export type LongPressAction = BaseAction<
   'long_press',
   {
@@ -173,6 +164,13 @@ export type FinishAction = BaseAction<
   }
 >;
 
+export type OpenUrlAction = BaseAction<
+  'open_url',
+  {
+    url: string;
+  }
+>;
+
 export type OperationalGUIAction =
   | ClickAction
   | DoubleClickAction
@@ -187,8 +185,6 @@ export type OperationalGUIAction =
   | HotkeyAction
   | PressAction
   | ReleaseAction
-  | NavigateAction
-  | NavigateBackAction
   | LongPressAction
   | SwipeAction
   | HomeAction
@@ -218,8 +214,7 @@ export type SupportedActionType =
   | 'hotkey'
   | 'press'
   | 'release'
-  | 'navigate'
-  | 'navigate_back'
+  | 'open_url'
   | 'long_press'
   | 'swipe'
   | 'home'
@@ -228,7 +223,8 @@ export type SupportedActionType =
   | 'wait'
   | 'finished'
   | 'user_stop'
-  | 'error_env';
+  | 'error_env'
+  | 'call_user';
 
 export const ACTION_METADATA: Record<SupportedActionType, { category: string; description: string }> = {
   click: { category: 'mouse', description: 'Click on an element' },
@@ -249,8 +245,7 @@ export const ACTION_METADATA: Record<SupportedActionType, { category: string; de
   hotkey: { category: 'keyboard', description: 'Press hotkey combination' },
   press: { category: 'keyboard', description: 'Press a key' },
   release: { category: 'keyboard', description: 'Release a key' },
-  navigate: { category: 'navigation', description: 'Navigate to URL' },
-  navigate_back: { category: 'navigation', description: 'Navigate back' },
+  open_url: { category: 'navigation', description: 'Open URL in default browser' },
   long_press: { category: 'mobile', description: 'Long press on element' },
   swipe: { category: 'mobile', description: 'Swipe gesture' },
   home: { category: 'mobile', description: 'Go to home' },
@@ -260,6 +255,7 @@ export const ACTION_METADATA: Record<SupportedActionType, { category: string; de
   finished: { category: 'system', description: 'Mark task as finished' },
   user_stop: { category: 'system', description: 'User stopped the task' },
   error_env: { category: 'system', description: 'Environment error' },
+  call_user: { category: 'system', description: 'Call user for assistance' },
 };
 
 export function isSupportedActionType(type: string): type is SupportedActionType {

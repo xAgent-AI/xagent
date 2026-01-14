@@ -186,6 +186,44 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
   }
 
   /**
+   * Switch to ComputerOperator if needed
+   */
+  private async switchToComputerOperator(): Promise<void> {
+    // Clean up current operator if it's BrowserOperator
+    if (this.operator && (this.operator as any).cleanup) {
+      await this.operator.cleanup();
+    }
+    // Create new ComputerOperator
+    const computerOperator = new (await import('../operator/computer-operator.js')).ComputerOperator({
+      config: { headless: false },
+    });
+    this.operator = computerOperator as unknown as T;
+    await this.operator.doInitialize();
+  }
+
+  /**
+   * Check if an action type requires BrowserOperator
+   */
+  private requiresBrowserOperator(actionType: string): boolean {
+    const browserActions = ['navigate', 'navigate_back'];
+    return browserActions.includes(actionType);
+  }
+
+  /**
+   * Switch to the appropriate operator based on action type
+   */
+  private async switchOperatorForAction(actionType: string): Promise<void> {
+    const needsBrowserOperator = this.requiresBrowserOperator(actionType);
+    const isCurrentlyBrowserOperator = this.operator instanceof (await import('../operator/browser-operator.js')).BrowserOperator;
+
+    if (needsBrowserOperator && !isCurrentlyBrowserOperator) {
+      await this.switchToBrowserOperator();
+    } else if (!needsBrowserOperator && isCurrentlyBrowserOperator) {
+      await this.switchToComputerOperator();
+    }
+  }
+
+  /**
    * Run the GUI agent with a single instruction (UI-TARS style)
    * All operations are determined by the GUI model
    */
@@ -455,12 +493,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         });
 
         // Check if we need to switch operator based on first action
-        const firstAction = parsedPredictions[0];
-        if (firstAction && firstAction.action_type === 'navigate') {
-          // Navigate action requires BrowserOperator
-          await this.switchToBrowserOperator();
-        }
-
         // Execute actions
         for (const parsedPrediction of parsedPredictions) {
           const actionType = parsedPrediction.action_type;
@@ -468,6 +500,9 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           if (this.showAIDebugInfo) {
             this.logger.info('[GUIAgent] Action:', actionType);
           }
+
+          // Switch operator based on action type
+          await this.switchOperatorForAction(actionType);
 
           // Handle internal action spaces
           if (actionType === 'error_env') {

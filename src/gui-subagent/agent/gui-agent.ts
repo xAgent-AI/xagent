@@ -652,7 +652,20 @@ call_user()                                            # Need user's help
 
       // Ensure the returned status is correct (reassign)
       this.logger.info(`[GUIAgent] Finally: finalStatus=${finalStatus}, finalError=${finalError}, data.status=${data.status}, data.error=${data.error}`);
-      console.log(`\n${colors.error('✖')} ${finalError}\n`);
+
+      // Output meaningful status message
+      if (finalStatus === GUIAgentStatus.END) {
+        // Task completed successfully - no output (caller handles success message)
+      } else if (finalStatus === GUIAgentStatus.ERROR && finalError) {
+        console.log(`\n${colors.error('✖')} ${finalError}\n`);
+      } else if (finalStatus === GUIAgentStatus.CALL_USER) {
+        console.log(`\n${colors.warning('⚠')} Requires user assistance to continue\n`);
+      } else if (finalStatus === GUIAgentStatus.USER_STOPPED) {
+        console.log(`\n${colors.warning('⚠')} Task stopped by user\n`);
+      } else {
+        console.log(`\n${colors.warning('⚠')} Task ended with status: ${finalStatus}\n`);
+      }
+
       data.status = finalStatus;
       data.error = finalError;
     }

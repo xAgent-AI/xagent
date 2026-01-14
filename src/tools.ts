@@ -1168,6 +1168,14 @@ export class TaskTool implements Tool {
           message: `GUI task "${description}" stopped by user`,
           result: 'User stopped'
         };
+      } else if (result.status === 'call_user') {
+        const iterations = result.conversations.filter(c => c.from === 'human' && c.screenshotBase64).length;
+        console.log(`${indent}${colors.warning(`Requires user assistance (paused at iteration ${iterations})`)}`);
+        return {
+          success: false,
+          message: `GUI task "${description}" requires user assistance`,
+          result: 'Call user'
+        };
       } else {
         // status is 'error' or other non-success status
         const errorMsg = result.error || 'Unknown error';

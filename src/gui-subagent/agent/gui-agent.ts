@@ -107,6 +107,9 @@ export class GUIAgent<T extends Operator> {
   private readonly showAIDebugInfo: boolean;
   private readonly retry?: GUIAgentConfig<T>['retry'];
 
+  // Cache BrowserOperator instance to reuse within the same task
+  private browserOperatorInstance: any = null;
+
   private isPaused = false;
   private resumePromise: Promise<void> | null = null;
   private resolveResume: (() => void) | null = null;
@@ -132,12 +135,23 @@ export class GUIAgent<T extends Operator> {
   private buildSystemPrompt(): string {
     return `You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
 
+## BROWSER NAVIGATION RULES (IMPORTANT)
+- **Within a single task**, the browser maintains a single session with history.
+- When navigating between related pages (e.g., clicking links to go to another page), use **click** action on the link element.
+- Use **navigate** ONLY when the task explicitly requires opening a specific URL directly.
+- Use **navigate_back** when you need to return to the previous page in the browser history.
+- Do NOT use "open URL" or "visit website" as a reason to use navigate - click on visible links instead.
+
 ## CRITICAL INSTRUCTION
 When the user's request is to "open a website", "visit a URL", "navigate to", "go to", "access", etc.:
 - Use ONLY the "navigate" action
 - Do NOT click on browser icons or use keyboard shortcuts
 - Do NOT be distracted by screenshots showing browser icons on taskbar
 - The "navigate" action will automatically open the browser and visit the URL
+
+When the user's request is to "go back", "return to previous page", "navigate back", etc.:
+- Use ONLY the "navigate_back" action
+- Do NOT use browser back button or hotkeys
 
 ## Output Format
 \`
@@ -154,7 +168,8 @@ hotkey(key='ctrl c') # Split keys with a space and use lowercase. Also, do not u
 type(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content.
 scroll(point='<point>x1 y1</point>', direction='down or up or right or left') # Show more information on the \`direction\` side.
 wait() #Sleep for 5s and take a screenshot to check for any changes.
-navigate(url='https://xxx') # Use this when the task requires opening a URL in a browser.
+navigate(url='https://xxx') # Use this when you need to directly open a specific URL (not for clicking links).
+navigate_back() # Use this when you need to go back to the previous page in the browser.
 finished(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format.
 
 ## Note
@@ -172,16 +187,27 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
   /**
    * Switch to BrowserOperator if needed
+   * Reuses existing BrowserOperator instance to maintain browser history
    */
   private async switchToBrowserOperator(): Promise<void> {
+    const BrowserOperatorClass = (await import('../operator/browser-operator.js')).BrowserOperator;
+
+    // Reuse existing BrowserOperator instance if available
+    if (this.browserOperatorInstance) {
+      this.operator = this.browserOperatorInstance as unknown as T;
+      return;
+    }
+
     // Clean up current operator if it's ComputerOperator
     if (this.operator && (this.operator as any).cleanup) {
       await this.operator.cleanup();
     }
-    // Create new BrowserOperator
-    const browserOperator = new (await import('../operator/browser-operator.js')).BrowserOperator({
+
+    // Create new BrowserOperator and cache it
+    const browserOperator = new BrowserOperatorClass({
       config: { headless: false },
     });
+    this.browserOperatorInstance = browserOperator;
     this.operator = browserOperator as unknown as T;
     try {
       await this.operator.doInitialize();
@@ -194,13 +220,16 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
   /**
    * Switch to ComputerOperator if needed
+   * Preserves BrowserOperator instance to maintain browser session and history
    */
   private async switchToComputerOperator(): Promise<void> {
-    // Clean up current operator if it's BrowserOperator
-    if (this.operator && (this.operator as any).cleanup) {
-      await this.operator.cleanup();
+    // Cache current BrowserOperator instance before switching
+    const BrowserOperatorClass = (await import('../operator/browser-operator.js')).BrowserOperator;
+    if (this.operator instanceof BrowserOperatorClass) {
+      this.browserOperatorInstance = this.operator;
     }
-    // Create new ComputerOperator
+
+    // Create new ComputerOperator (ComputerOperator is stateless, so no need to cache)
     const computerOperator = new (await import('../operator/computer-operator.js')).ComputerOperator({
       config: { headless: false },
     });

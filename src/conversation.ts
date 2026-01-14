@@ -165,8 +165,6 @@ export class ConversationManager {
     conversation.updatedAt = Date.now();
 
     await this.saveConversation(conversation);
-
-    console.log('✅ Current conversation cleared');
   }
 
   async exportConversation(conversationId: string, outputPath: string): Promise<void> {

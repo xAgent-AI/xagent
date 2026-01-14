@@ -151,6 +151,15 @@ export class ComputerOperator extends Operator {
     const { parsedPrediction, screenWidth, screenHeight, scaleFactor } = params;
     const { action_type, action_inputs } = parsedPrediction;
 
+    // Empty or invalid action should return failed to avoid infinite loop
+    if (!action_type || action_type.trim() === '') {
+      this.logger.warn(`[ComputerOperator] Empty action, skipping step`);
+      return {
+        status: 'failed',
+        errorMessage: 'Empty or invalid action type'
+      };
+    }
+
     const startBoxStr = action_inputs?.start_box || '';
     const { x: startX, y: startY } = parseBoxToScreenCoords({
       boxStr: startBoxStr,
@@ -158,15 +167,16 @@ export class ComputerOperator extends Operator {
       screenHeight,
     });
 
-    this.logger.info('[ComputerOperator] execute', { action_type, startX, startY, scaleFactor });
-
     mouse.config.mouseSpeed = 3600;
+
+    // this.logger.info('[ComputerOperator] execute', { action_type, startX, startY, scaleFactor });
 
     try {
       const result = await this.executeAction(action_type, action_inputs, { startX, startY, screenWidth, screenHeight, scaleFactor });
       if (result === 'end') {
         return { status: 'end' };
       }
+
       return { status: 'success' };
     } catch (error) {
       this.logger.error(`Failed to execute action ${action_type}:`, error);

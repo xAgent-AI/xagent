@@ -88,6 +88,7 @@ export interface Conversation {
 // UI-TARS constants (aligned with @ui-tars/shared/constants)
 const MAX_LOOP_COUNT = 100;
 const MAX_SNAPSHOT_ERR_CNT = 5;
+const MAX_STEP_RETRIES = 3; // Max retries for a single action step before giving up
 const IMAGE_PLACEHOLDER = '{{IMG_PLACEHOLDER_0}}';
 
 export class GUIAgent<T extends Operator> {
@@ -481,27 +482,64 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
           // Execute action with retry
           if (!this.signal?.aborted && !this.isStopped) {
-            try {
-              await asyncRetry(
-                () =>
-                  this.operator.doExecute({
-                    prediction,
-                    parsedPrediction,
-                    screenWidth: screenContext.width,
-                    screenHeight: screenContext.height,
-                    scaleFactor: snapshot.scaleFactor ?? screenContext.scaleFactor,
-                    factors: [1000, 1000], // Default factors
-                  }),
-                {
-                  retries: this.retry?.execute?.maxRetries ?? 0,
-                  minTimeout: 5000,
-                  onRetry: this.retry?.execute?.onRetry,
+            let stepRetryCount = 0;
+            let stepSuccess = false;
+            let lastErrorMsg = '';
+
+            this.logger.info(`[GUIAgent] Executing action: ${actionType}, loopCnt: ${loopCnt}`);
+
+            while (stepRetryCount < MAX_STEP_RETRIES && !stepSuccess) {
+              try {
+                const executeResult = await this.operator.doExecute({
+                  prediction,
+                  parsedPrediction,
+                  screenWidth: screenContext.width,
+                  screenHeight: screenContext.height,
+                  scaleFactor: snapshot.scaleFactor ?? screenContext.scaleFactor,
+                  factors: [1000, 1000], // Default factors
+                });
+
+                if (executeResult.status === 'end') {
+                  // 'finished' action or explicit end
+                  stepSuccess = true;
+                  break;
                 }
-              );
-            } catch (executeError) {
-              this.logger.error('[GUIAgent] execute error', executeError);
+
+                // Any other status (success, failed, etc.) is considered success
+                stepSuccess = true;
+                break;
+              } catch (executeError) {
+                stepRetryCount++;
+                lastErrorMsg = executeError instanceof Error ? executeError.message : 'Unknown error';
+                this.logger.warn(`[GUIAgent] Action failed ${stepRetryCount}/${MAX_STEP_RETRIES}: ${lastErrorMsg}`);
+
+                if (stepRetryCount < MAX_STEP_RETRIES) {
+                  await sleep(1000);
+                  // Take new screenshot for retry
+                  const retrySnapshot = await this.operator.doScreenshot();
+                  if (retrySnapshot?.base64) {
+                    data.conversations.push({
+                      from: 'human',
+                      value: IMAGE_PLACEHOLDER,
+                      screenshotBase64: retrySnapshot.base64,
+                      screenshotContext: {
+                        size: {
+                          width: screenContext.width,
+                          height: screenContext.height,
+                        },
+                        scaleFactor: retrySnapshot.scaleFactor ?? screenContext.scaleFactor,
+                      },
+                    });
+                  }
+                }
+              }
+            }
+
+            if (!stepSuccess) {
+              // All retries exhausted
+              this.logger.error(`[GUIAgent] Action failed after ${MAX_STEP_RETRIES} attempts: ${lastErrorMsg}`);
               data.status = GUIAgentStatus.ERROR;
-              data.error = 'Action execution failed';
+              data.error = `Action failed after ${MAX_STEP_RETRIES} attempts: ${lastErrorMsg}`;
               break;
             }
           }

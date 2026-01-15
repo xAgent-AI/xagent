@@ -21,26 +21,29 @@ import {
 import { Jimp } from 'jimp';
 import type { OperatorConfig, ScreenContext, ScreenshotOutput, ExecuteParams, ExecuteOutput } from '../types/operator.js';
 import { Operator, type OperatorManual, parseBoxToScreenCoords } from './base-operator.js';
+import { getLogger } from '../../logger.js';
+
+const guiLogger = getLogger();
 
 export interface ComputerOperatorOptions {
   config?: OperatorConfig;
   computerConfig?: Record<string, any>;
-  logger?: Console;
+  logger?: any;
 }
 
 export class ComputerOperator extends Operator {
   private config: OperatorConfig;
-  private logger: Console;
+  private logger: any;
   private screenCtx: ScreenContext | null = null;
 
   constructor(options: ComputerOperatorOptions = {}) {
     super();
     this.config = options.config || {};
-    this.logger = options.logger || console;
+    this.logger = options.logger || guiLogger;
   }
 
   protected async initialize(): Promise<void> {
-    this.logger.info('Initializing computer operator...');
+    this.logger.debug('Initializing computer operator...');
 
     try {
       const { width, height, scaleFactor } = await this.getScreenSize();
@@ -50,7 +53,7 @@ export class ComputerOperator extends Operator {
         scaleFactor,
       };
 
-      this.logger.info(`Computer operator initialized: ${width}x${height} @ ${scaleFactor}x`);
+      this.logger.debug(`Computer operator initialized: ${width}x${height} @ ${scaleFactor}x`);
     } catch (error) {
       this.logger.error('Failed to initialize computer operator:', error);
       throw error;
@@ -94,6 +97,7 @@ export class ComputerOperator extends Operator {
       'hotkey',
       'press',
       'release',
+      'open_url',
       'wait',
       'finished',
       'user_stop',
@@ -131,7 +135,7 @@ export class ComputerOperator extends Operator {
         })
         .getBuffer('image/png');
 
-      this.logger.info(`[ComputerOperator] screenshot: ${width}x${height}, scaleFactor: ${scaleFactor}`);
+      this.logger.debug(`[ComputerOperator] screenshot: ${width}x${height}, scaleFactor: ${scaleFactor}`);
 
       return {
         status: 'success',
@@ -139,10 +143,11 @@ export class ComputerOperator extends Operator {
         scaleFactor,
       };
     } catch (error) {
-      this.logger.error('Screenshot failed:', error);
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.warn(`[ComputerOperator] Screenshot failed: ${errorMsg}`);
       return {
         status: 'failed',
-        errorMessage: (error as Error).message,
+        errorMessage: errorMsg,
       };
     }
   }
@@ -151,6 +156,15 @@ export class ComputerOperator extends Operator {
     const { parsedPrediction, screenWidth, screenHeight, scaleFactor } = params;
     const { action_type, action_inputs } = parsedPrediction;
 
+    // Empty or invalid action should return failed to avoid infinite loop
+    if (!action_type || action_type.trim() === '') {
+      this.logger.warn(`[ComputerOperator] Empty action, skipping step`);
+      return {
+        status: 'failed',
+        errorMessage: 'Empty or invalid action type'
+      };
+    }
+
     const startBoxStr = action_inputs?.start_box || '';
     const { x: startX, y: startY } = parseBoxToScreenCoords({
       boxStr: startBoxStr,
@@ -158,15 +172,16 @@ export class ComputerOperator extends Operator {
       screenHeight,
     });
 
-    this.logger.info('[ComputerOperator] execute', { action_type, startX, startY, scaleFactor });
-
     mouse.config.mouseSpeed = 3600;
+
+    // this.logger.debug('[ComputerOperator] execute', { action_type, startX, startY, scaleFactor });
 
     try {
       const result = await this.executeAction(action_type, action_inputs, { startX, startY, screenWidth, screenHeight, scaleFactor });
       if (result === 'end') {
         return { status: 'end' };
       }
+
       return { status: 'success' };
     } catch (error) {
       this.logger.error(`Failed to execute action ${action_type}:`, error);
@@ -225,7 +240,7 @@ export class ComputerOperator extends Operator {
               lowercaseKeyMap[k as Lowercase<keyof typeof Key>],
           )
           .filter(Boolean);
-        this.logger.info('[ComputerOperator] hotkey:', keys);
+        this.logger.debug('[ComputerOperator] hotkey:', keys);
         return keys;
       }
       return [];
@@ -233,20 +248,20 @@ export class ComputerOperator extends Operator {
 
     switch (actionType) {
       case 'wait':
-        this.logger.info('[ComputerOperator] wait', inputs);
+        this.logger.debug('[ComputerOperator] wait', inputs);
         await sleep(5000);
         break;
 
       case 'mouse_move':
       case 'hover':
-        this.logger.info('[ComputerOperator] mouse_move');
+        this.logger.debug('[ComputerOperator] mouse_move');
         await moveStraightTo(startX, startY);
         break;
 
       case 'click':
       case 'left_click':
       case 'left_single':
-        this.logger.info('[ComputerOperator] left_click');
+        this.logger.debug('[ComputerOperator] left_click');
         await moveStraightTo(startX, startY);
         await sleep(100);
         await mouse.click(Button.LEFT);
@@ -254,7 +269,7 @@ export class ComputerOperator extends Operator {
 
       case 'left_double':
       case 'double_click':
-        this.logger.info(`[ComputerOperator] ${actionType}(${startX}, ${startY})`);
+        this.logger.debug(`[ComputerOperator] ${actionType}(${startX}, ${startY})`);
         await moveStraightTo(startX, startY);
         await sleep(100);
         await mouse.doubleClick(Button.LEFT);
@@ -262,14 +277,14 @@ export class ComputerOperator extends Operator {
 
       case 'right_click':
       case 'right_single':
-        this.logger.info('[ComputerOperator] right_click');
+        this.logger.debug('[ComputerOperator] right_click');
         await moveStraightTo(startX, startY);
         await sleep(100);
         await mouse.click(Button.RIGHT);
         break;
 
       case 'middle_click':
-        this.logger.info('[ComputerOperator] middle_click');
+        this.logger.debug('[ComputerOperator] middle_click');
         await moveStraightTo(startX, startY);
         await mouse.click(Button.MIDDLE);
         break;
@@ -286,7 +301,7 @@ export class ComputerOperator extends Operator {
           });
 
           if (startX && startY && endX && endY) {
-            this.logger.info(
+            this.logger.debug(
               `[ComputerOperator] drag coordinates: startX=${startX}, startY=${startY}, endX=${endX}, endY=${endY}`,
             );
             await moveStraightTo(startX, startY);
@@ -299,7 +314,7 @@ export class ComputerOperator extends Operator {
 
       case 'type': {
         const content = inputs.content?.trim();
-        this.logger.info('[ComputerOperator] type', content);
+        this.logger.debug('[ComputerOperator] type', content);
         if (content) {
           const stripContent = content.replace(/\\n$/, '').replace(/\n$/, '');
           keyboard.config.autoDelayMs = 0;
@@ -372,11 +387,76 @@ export class ComputerOperator extends Operator {
         break;
       }
 
+      case 'open_url': {
+        let url = inputs?.url || inputs?.content;
+        if (!url) {
+          throw new Error('No URL specified for open_url action');
+        }
+
+        // Ensure URL has protocol
+        if (!/^https?:\/\//i.test(url)) {
+          url = 'https://' + url;
+        }
+
+        this.logger.debug(`[ComputerOperator] Opening URL: ${url}`);
+
+        // Use system command to open URL in default browser
+        const { exec } = await import('child_process');
+        const platform = process.platform;
+
+        if (platform === 'win32') {
+          // Windows: use start command
+          await new Promise<void>((resolve, reject) => {
+            exec(`start "" "${url}"`, (error) => {
+              if (error) {
+                this.logger.warn(`[ComputerOperator] Failed to open URL with start command: ${error.message}`);
+                // Fallback: try using PowerShell
+                exec(`powershell -Command "Start-Process '${url}'"`, (psError) => {
+                  if (psError) {
+                    reject(psError);
+                  } else {
+                    resolve();
+                  }
+                });
+              } else {
+                resolve();
+              }
+            });
+          });
+        } else if (platform === 'darwin') {
+          // macOS: use open command
+          await new Promise<void>((resolve, reject) => {
+            exec(`open "${url}"`, (error) => {
+              if (error) {
+                reject(error);
+              } else {
+                resolve();
+              }
+            });
+          });
+        } else {
+          // Linux: use xdg-open
+          await new Promise<void>((resolve, reject) => {
+            exec(`xdg-open "${url}"`, (error) => {
+              if (error) {
+                reject(error);
+              } else {
+                resolve();
+              }
+            });
+          });
+        }
+
+        // Wait for browser to open and page to load
+        await sleep(2000);
+        break;
+      }
+
       case 'error_env':
       case 'call_user':
       case 'finished':
       case 'user_stop':
-        this.logger.info(`[ComputerOperator] ${actionType}`);
+        this.logger.debug(`[ComputerOperator] ${actionType}`);
         return 'end';
 
       default:
@@ -385,28 +465,56 @@ export class ComputerOperator extends Operator {
   }
 
   async cleanup(): Promise<void> {
-    this.logger.info('Cleaning up computer operator...');
+    this.logger.debug('Cleaning up computer operator...');
   }
 
   async destroyInstance(): Promise<void> {
-    this.logger.info('Destroying computer operator instance...');
+    this.logger.debug('Destroying computer operator instance...');
     await this.cleanup();
   }
 
   static override get MANUAL(): OperatorManual {
     return {
       ACTION_SPACES: [
-        `click(start_box='[x1, y1, x2, y2]')`,
-        `left_double(start_box='[x1, y1, x2, y2]')`,
-        `right_single(start_box='[x1, y1, x2, y2]')`,
-        `drag(start_box='[x1, y1, x2, y2]', end_box='[x3, y3, x4, y4]')`,
-        `hotkey(key='')`,
-        `type(content='') #If you want to submit your input, use "\\n" at the end of \`content\`.`,
+        // Mouse actions
+        `click(start_box='[x1, y1, x2, y2]') # Single click (taskbar icons)`,
+        `left_double(start_box='[x1, y1, x2, y2]') # Double click (desktop icons/folders)`,
+        `right_single(start_box='[x1, y1, x2, y2]') # Right click`,
+        `drag(start_box='[x1, y1, x2, y2]', end_box='[x3, y3, x4, y4]') # Drag`,
+        
+        // Keyboard actions
+        `hotkey(key='') # e.g., 'ctrl c', 'alt tab' (max 3 keys)`,
+        `type(content='') # Use "\\n" at the end to submit`,
+        `press(key='') # Single key press: 'enter', 'esc', 'tab', 'win', etc.`,
+        
+        // Navigation
+        `open_url(url='https://xxx') # Open URL in default browser`,
+        
+        // Scroll
         `scroll(start_box='[x1, y1, x2, y2]', direction='down or up or right or left')`,
-        `wait() #Sleep for 5s and take a screenshot to check for any changes.`,
-        `finished()`,
-        `call_user() # Submit the task and call the user when the task is unsolvable, or when you need the user's help.`,
+        
+        // System
+        `wait() # Sleep 5s and take a screenshot`,
+        `finished() # Task completed`,
+        `call_user() # Need user's help`,
       ],
+      
+      KEY_SPACE: {
+        'enter': 'Enter key',
+        'esc': 'Escape key',
+        'tab': 'Tab key',
+        'win': 'Windows key (or Command on Mac)',
+        'delete': 'Delete key',
+        'backspace': 'Backspace key',
+        'page up': 'Page Up',
+        'page down': 'Page Down',
+        'home': 'Home key',
+        'end': 'End key',
+        'arrow up': 'Up arrow',
+        'arrow down': 'Down arrow',
+        'arrow left': 'Left arrow',
+        'arrow right': 'Right arrow',
+      },
     };
   }
 }

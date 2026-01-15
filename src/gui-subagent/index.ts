@@ -53,18 +53,13 @@ export async function createGUISubAgent<T extends Operator>(
 ): Promise<GUIAgent<T>> {
   const mergedConfig = { ...DEFAULT_GUI_CONFIG, ...config };
 
-  let agentOperator: T;
-
-  if (operator) {
-    agentOperator = operator;
-  } else {
-    const operatorOptions: ComputerOperatorOptions = {
-      config: {
-        headless: mergedConfig.headless,
-      },
-    };
-    agentOperator = new ComputerOperator(operatorOptions) as unknown as T;
-  }
+  // Default to ComputerOperator for initial screenshot
+  // The actual operator type will be determined by LLM in run()
+  const agentOperator = operator ?? new ComputerOperator({
+    config: {
+      headless: mergedConfig.headless,
+    },
+  }) as unknown as T;
 
   // Create AbortController for cancellation support
   const abortController = new AbortController();

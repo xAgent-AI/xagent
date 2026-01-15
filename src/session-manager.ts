@@ -9,8 +9,20 @@ export class SessionManager {
   private currentSessionId: string | null = null;
   private currentConversationId: string | null = null;
 
-  constructor() {
-    this.sessionsDir = path.join(os.homedir(), '.xagent', 'sessions');
+  constructor(projectRoot?: string) {
+    const resolvedProjectRoot = path.resolve(projectRoot || process.cwd());
+    const projectName = path.basename(resolvedProjectRoot);
+    // 获取相对路径部分（从用户目录开始的相对路径）
+    const homeDir = os.homedir();
+    let relativePath = path.relative(homeDir, resolvedProjectRoot);
+    // 如果项目不在用户目录下，使用完整路径
+    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+      relativePath = resolvedProjectRoot;
+    }
+    // 将路径分隔符替换为下划线，移除非法字符
+    const pathSegment = relativePath.replace(/[:\\\/]/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '');
+    // 构建项目区分的目录结构：路径信息_项目名
+    this.sessionsDir = path.join(homeDir, '.xagent', 'sessions', `${pathSegment}_${projectName}`);
   }
 
   async initialize(): Promise<void> {
@@ -266,11 +278,15 @@ export class SessionManager {
 }
 
 let sessionManagerInstance: SessionManager | null = null;
+let currentProjectRoot: string | null = null;
 
-export function getSessionManager(): SessionManager {
-  if (!sessionManagerInstance) {
-    sessionManagerInstance = new SessionManager();
+export function getSessionManager(projectRoot?: string): SessionManager {
+  const root = projectRoot || process.cwd();
+
+  if (!sessionManagerInstance || currentProjectRoot !== root) {
+    sessionManagerInstance = new SessionManager(root);
     sessionManagerInstance.initialize();
+    currentProjectRoot = root;
   }
   return sessionManagerInstance;
 }
@@ -278,9 +294,10 @@ export function getSessionManager(): SessionManager {
 export async function getOrCreateSession(
   conversationId: string,
   agent?: string,
-  executionMode?: string
+  executionMode?: string,
+  projectRoot?: string
 ): Promise<Session> {
-  const manager = getSessionManager();
+  const manager = getSessionManager(projectRoot);
   const currentSession = manager.getCurrentSession();
 
   if (currentSession && currentSession.status === 'active') {

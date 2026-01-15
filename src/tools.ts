@@ -52,9 +52,20 @@ export class ReadTool implements Tool {
 
   async execute(params: { filePath: string; offset?: number; limit?: number }): Promise<string> {
     const { filePath, offset = 0, limit } = params;
-    
+
     try {
-      const absolutePath = path.resolve(filePath);
+      // Handle ~ (user home directory) in file paths
+      let resolvedPath = filePath;
+      if (filePath.startsWith('~')) {
+        // On Windows, prefer USERPROFILE over HOME to avoid POSIX path issues
+        // Some tools like Git Bash may set HOME to a POSIX path on Windows
+        let homeDir = process.env.USERPROFILE || '';
+        if (!homeDir || homeDir.startsWith('/')) {
+          homeDir = process.env.HOME || process.env.USERPROFILE || '';
+        }
+        resolvedPath = path.join(homeDir, filePath.slice(1));
+      }
+      const absolutePath = path.resolve(resolvedPath);
       const content = await fs.readFile(absolutePath, 'utf-8');
       
       const lines = content.split('\n');
@@ -64,7 +75,17 @@ export class ReadTool implements Tool {
       
       return selectedLines.join('\n');
     } catch (error: any) {
-      throw new Error(`Failed to read file ${filePath}: ${error.message}`);
+      // Show user-friendly path in error message
+      let displayPath = filePath;
+      if (filePath.startsWith('~')) {
+        // On Windows, prefer USERPROFILE over HOME to avoid POSIX path issues
+        let homeDir = process.env.USERPROFILE || '';
+        if (!homeDir || homeDir.startsWith('/')) {
+          homeDir = process.env.HOME || process.env.USERPROFILE || '';
+        }
+        displayPath = path.join(homeDir, filePath.slice(1));
+      }
+      throw new Error(`Failed to read file ${displayPath}: ${error.message}`);
     }
   }
 }
@@ -1099,7 +1120,7 @@ export class TaskTool implements Tool {
         model: modelName,
         modelBaseUrl: baseUrl || undefined,
         modelApiKey: apiKey || undefined,
-        maxLoopCount: 25,
+        maxLoopCount: 30,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
       });
@@ -1148,9 +1169,11 @@ export class TaskTool implements Tool {
           result: 'User stopped'
         };
       } else {
+        // status is 'error' or other non-success status
+        const errorMsg = result.error || 'Unknown error';
         return {
           success: false,
-          message: `GUI task "${description}" failed: ${result.status} - ${result.error || 'Unknown error'}`
+          message: `GUI task "${description}" failed: ${errorMsg}`
         };
       }
     } catch (error: any) {

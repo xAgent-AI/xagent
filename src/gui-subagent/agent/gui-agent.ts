@@ -1,7 +1,7 @@
 /**
  * GUI Agent for xagent
- * Orchestrates browser/desktop automation with AI-powered action execution
- * Based on UI-TARS architecture with support for both browser and computer control
+ * Orchestrates desktop automation with AI-powered action execution
+ * Based on UI-TARS architecture with computer control only
  *
  * This implementation is aligned with packages/ui-tars/sdk/src/GUIAgent.ts
  */
@@ -16,8 +16,25 @@ import type {
 import type { Operator } from '../operator/base-operator.js';
 import { sleep, asyncRetry } from '../utils.js';
 import { actionParser } from '../action-parser/index.js';
+import { colors, icons, renderMarkdown } from '../../theme.js';
+import { getLogger } from '../../logger.js';
 
-const GUI_TOOL_NAME = 'gui_operate';
+/**
+ * Helper function to truncate long text
+ */
+function truncateText(text: string, maxLength: number = 200): string {
+  if (!text) return '';
+  return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+}
+
+/**
+ * Helper function to indent multiline text
+ */
+function indentMultiline(text: string, indent: string): string {
+  return text.split('\n').map(line => indent + line).join('\n');
+}
+
+const guiLogger = getLogger();
 
 // UI-TARS Status Enum
 export enum GUIAgentStatus {
@@ -38,7 +55,7 @@ export interface GUIAgentConfig<T extends Operator> {
   systemPrompt?: string;
   loopIntervalInMs?: number;
   maxLoopCount?: number;
-  logger?: Console;
+  logger?: any;
   signal?: AbortSignal;
   onData?: (data: GUIAgentData) => void;
   onError?: (error: Error) => void;
@@ -88,10 +105,11 @@ export interface Conversation {
 // UI-TARS constants (aligned with @ui-tars/shared/constants)
 const MAX_LOOP_COUNT = 100;
 const MAX_SNAPSHOT_ERR_CNT = 5;
+const MAX_STEP_RETRIES = 3; // Max retries for a single action step before giving up
 const IMAGE_PLACEHOLDER = '{{IMG_PLACEHOLDER_0}}';
 
 export class GUIAgent<T extends Operator> {
-  private readonly operator: T;
+  private operator: T;
   private readonly model: string;
   private readonly modelBaseUrl: string;
   private readonly modelApiKey: string;
@@ -117,7 +135,7 @@ export class GUIAgent<T extends Operator> {
     this.modelApiKey = config.modelApiKey || '';
     this.loopIntervalInMs = config.loopIntervalInMs || 0;
     this.maxLoopCount = config.maxLoopCount || MAX_LOOP_COUNT;
-    this.logger = config.logger || console;
+    this.logger = config.logger || guiLogger;
     this.signal = config.signal;
     this.onData = config.onData;
     this.onError = config.onError;
@@ -125,6 +143,69 @@ export class GUIAgent<T extends Operator> {
     this.retry = config.retry;
 
     this.systemPrompt = config.systemPrompt || this.buildSystemPrompt();
+  }
+
+  /**
+   * Display conversation results with formatting similar to session.ts (simplified)
+   */
+  private displayConversationResult(conversation: Conversation, iteration: number, indentLevel: number = 1): void {
+    const indent = '  '.repeat(indentLevel);
+    const innerIndent = '  '.repeat(indentLevel + 1);
+    const maxWidth = process.stdout.columns || 80;
+
+    if (conversation.from === 'assistant') {
+      // Display assistant response (action)
+      const content = conversation.value || '';
+      const timing = conversation.timing;
+
+      // Simplified: show step number and action
+      const actionSummary = content.replace(/Thought:[\s\S]*?Action:\s*/i, '').trim();
+      const actionType = conversation.predictionParsed?.[0]?.action_type || 'action';
+
+      console.log(`${indent}${colors.primaryBright(`[${iteration}]`)} ${colors.textMuted(actionType)}${timing ? colors.textDim(` (${timing.cost}ms)`) : ''}`);
+
+      // Optionally show action details on next line if verbose
+      if (this.showAIDebugInfo && actionSummary) {
+        const truncatedSummary = actionSummary.length > 60 ? actionSummary.substring(0, 60) + '...' : actionSummary;
+        console.log(`${innerIndent}${colors.textMuted(truncatedSummary)}`);
+      }
+    } else if (conversation.from === 'human' && conversation.screenshotBase64) {
+      // Show minimal indicator for screenshot
+      if (this.showAIDebugInfo) {
+        const timing = conversation.timing;
+        console.log(`${indent}${colors.textMuted(`${icons.loading} screenshot${timing ? ` (${timing.cost}ms)` : ''}`)}`);
+      }
+    }
+  }
+
+  /**
+   * Display status message
+   */
+  private displayStatus(data: GUIAgentData, iteration: number, indentLevel: number = 1): void {
+    const indent = '  '.repeat(indentLevel);
+    const status = data.status;
+
+    switch (status) {
+      case GUIAgentStatus.RUNNING:
+        console.log(`${indent}${colors.info(`${icons.loading} Step ${iteration}: Running...`)}`);
+        break;
+      case GUIAgentStatus.END:
+        // Handled by caller
+        break;
+      case GUIAgentStatus.ERROR:
+        if (data.error) {
+          console.log(`${indent}${colors.error(`${icons.cross} ${data.error}`)}`);
+        }
+        break;
+      case GUIAgentStatus.CALL_USER:
+        console.log(`${indent}${colors.warning(`${icons.warning} Needs user input`)}`);
+        break;
+      case GUIAgentStatus.USER_STOPPED:
+        console.log(`${indent}${colors.warning(`${icons.warning} Stopped`)}`);
+        break;
+      default:
+        break;
+    }
   }
 
   private buildSystemPrompt(): string {
@@ -144,8 +225,12 @@ drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')
 hotkey(key='ctrl c') # Split keys with a space and use lowercase. Also, do not use more than 3 keys in one hotkey action.
 type(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content. 
 scroll(point='<point>x1 y1</point>', direction='down or up or right or left') # Show more information on the \`direction\` side.
+open_url(url='https://xxx') # Open URL in browser
 wait() #Sleep for 5s and take a screenshot to check for any changes.
 finished(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format.
+
+
+
 
 ## Note
 - Use {language} in \`Thought\` part.
@@ -165,9 +250,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
    * All operations are determined by the GUI model
    */
   async run(instruction: string): Promise<GUIAgentData> {
-    await this.initialize();
-
-    const currentTime = Date.now();
     const data: GUIAgentData = {
       status: GUIAgentStatus.INIT,
       conversations: [
@@ -175,16 +257,39 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           from: 'human',
           value: instruction,
           timing: {
-            start: currentTime,
-            end: currentTime,
+            start: Date.now(),
+            end: Date.now(),
             cost: 0,
           },
         },
       ],
     };
 
+    // Initialize operator for initial screenshot
+    try {
+      await this.operator.doInitialize();
+    } catch (initError) {
+      const errorMsg = initError instanceof Error ? initError.message : 'Unknown error';
+      this.logger.error(`[GUIAgent] Failed to initialize operator: ${errorMsg}`);
+
+      // Check if it's an RDP-related issue
+      if (errorMsg.includes('screen') || errorMsg.includes('capture') || errorMsg.includes('display')) {
+        data.status = GUIAgentStatus.ERROR;
+        data.error = 'Failed to initialize screen capture. This may be caused by:\n' +
+          '  1. Remote Desktop session disconnected or minimized\n' +
+          '  2. Display driver issues\n' +
+          'Suggestion: Ensure your display is active and try again.';
+      } else {
+        data.status = GUIAgentStatus.ERROR;
+        data.error = `Failed to initialize operator: ${errorMsg}`;
+      }
+      return data;
+    }
+
+    const currentTime = Date.now();
+
     if (this.showAIDebugInfo) {
-      this.logger.info('[GUIAgent] run:', {
+      this.logger.debug('[GUIAgent] run:', {
         systemPrompt: this.systemPrompt,
         model: this.model,
         maxLoopCount: this.maxLoopCount,
@@ -197,13 +302,15 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     // Start running agent
     data.status = GUIAgentStatus.RUNNING;
     data.systemPrompt = this.systemPrompt;
+    console.log(`${colors.primaryBright(`${icons.rocket} GUI Agent started`)}`);
+    console.log('');
     await this.onData?.({ ...data, conversations: [] });
 
     try {
       // eslint-disable-next-line no-constant-condition
       while (true) {
         if (this.showAIDebugInfo) {
-          this.logger.info('[GUIAgent] loopCnt:', loopCnt);
+          this.logger.debug('[GUIAgent] loopCnt:', loopCnt);
         }
 
         // Check pause status
@@ -237,30 +344,38 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         // Check screenshot error limit
         if (snapshotErrCnt >= MAX_SNAPSHOT_ERR_CNT) {
           data.status = GUIAgentStatus.ERROR;
-          data.error = 'Too many screenshot failures';
+          data.error = 'Screenshot failed too many times. Stopping task.';
           break;
         }
 
         loopCnt += 1;
         const start = Date.now();
 
-        // Take screenshot with retry
+        // Take screenshot (single attempt - no retry to avoid infinite loops)
         let snapshot: ScreenshotOutput;
         try {
-          snapshot = await asyncRetry(
-            () => this.operator.doScreenshot(),
-            {
-              retries: this.retry?.screenshot?.maxRetries ?? 0,
-              minTimeout: 5000,
-              onRetry: this.retry?.screenshot?.onRetry,
-            }
-          );
+          snapshot = await this.operator.doScreenshot();
         } catch (screenshotError) {
-          this.logger.error('[GUIAgent] screenshot error', screenshotError);
-          loopCnt -= 1;
+          const errorMsg = screenshotError instanceof Error ? screenshotError.message : 'Unknown error';
+          this.logger.warn(`[GUIAgent] Screenshot exception: ${errorMsg}`);
           snapshotErrCnt += 1;
+          data.status = GUIAgentStatus.ERROR;
+          data.error = `Screenshot failed ${snapshotErrCnt} times. Stopping task.`;
+          this.logger.error(`[GUIAgent] ${data.error}`);
           await sleep(1000);
-          continue;
+          break;
+        }
+
+        // Check if screenshot returned failure status
+        if (snapshot.status === 'failed') {
+          const errorMsg = snapshot.errorMessage || 'Unknown error';
+          this.logger.warn(`[GUIAgent] Screenshot failed: ${errorMsg}`);
+          snapshotErrCnt += 1;
+          data.status = GUIAgentStatus.ERROR;
+          data.error = `Screenshot failed ${snapshotErrCnt} times. Stopping task.`;
+          this.logger.error(`[GUIAgent] ${data.error}`);
+          await sleep(1000);
+          break;
         }
 
         // Check abort immediately after screenshot
@@ -272,11 +387,16 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         // Validate screenshot
         const isValidImage = !!(snapshot?.base64);
         if (!isValidImage) {
-          loopCnt -= 1;
           snapshotErrCnt += 1;
+          data.status = GUIAgentStatus.ERROR;
+          data.error = `Screenshot failed ${snapshotErrCnt} times. Stopping task.`;
+          this.logger.error(`[GUIAgent] ${data.error}`);
           await sleep(1000);
-          continue;
+          break;
         }
+
+        // Reset error counter on successful screenshot
+        snapshotErrCnt = 0;
 
         const end = Date.now();
 
@@ -306,6 +426,12 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           ...data,
           conversations: data.conversations.slice(-1),
         });
+
+        // Display screenshot notification
+        const latestScreenshot = data.conversations[data.conversations.length - 1];
+        if (latestScreenshot && latestScreenshot.from === 'human' && latestScreenshot.screenshotBase64) {
+          this.displayConversationResult(latestScreenshot, loopCnt);
+        }
 
         // Build messages for model
         const messages = this.buildModelMessages(data.conversations, data.systemPrompt);
@@ -346,9 +472,43 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           prediction = modelResult.prediction;
           parsedPredictions = modelResult.parsedPredictions;
         } catch (modelError) {
-          // Silently handle model errors - will be caught by upstream
+          // Handle multimodal model API errors with specific error messages
           data.status = GUIAgentStatus.ERROR;
-          data.error = 'Model invocation failed: ' + (modelError instanceof Error ? modelError.message : String(modelError));
+          const errorMsg = modelError instanceof Error ? modelError.message : String(modelError);
+
+          // Provide specific error message based on error type
+          if (errorMsg.includes('401') || errorMsg.includes('authentication') || errorMsg.includes('API key') || errorMsg.includes('api_key') || errorMsg.includes('Unauthorized') || errorMsg.includes('invalid_api_key')) {
+            data.error = '[Multimodal Model Authentication Failed] The guiSubagentApiKey configuration is invalid.\n' +
+              'Error details: HTTP 401 - API key is invalid or expired\n' +
+              'Suggested action: Please check the guiSubagentApiKey configuration in ~/.xagent/settings.json and ensure a valid API key is set';
+          } else if (errorMsg.includes('429') || errorMsg.includes('rate limit') || errorMsg.includes('too many requests')) {
+            data.error = '[Multimodal Model Rate Limit Exceeded] API requests exceed rate limit.\n' +
+              'Error details: HTTP 429 - Too Many Requests\n' +
+              'Suggested action: Please retry later, or check your API account quota settings. Wait a few minutes before retrying';
+          } else if (errorMsg.includes('network') || errorMsg.includes('fetch') || errorMsg.includes('connection') || errorMsg.includes('ECONNREFUSED')) {
+            data.error = '[Multimodal Model Network Error] Cannot connect to API service.\n' +
+              'Error details: Network connection failed. Possible causes:\n' +
+              '  1. Network connection is lost\n' +
+              '  2. The guiSubagentBaseUrl configuration is incorrect\n' +
+              '  3. API service endpoint is unreachable\n' +
+              'Suggested action: Please check the guiSubagentBaseUrl configuration in ~/.xagent/settings.json and ensure network connectivity';
+          } else if (errorMsg.includes('404') || errorMsg.includes('not found') || errorMsg.includes('model not found') || errorMsg.includes('InvalidEndpointOrModel.NotFound')) {
+            // Extract model name
+            const modelMatch = errorMsg.match(/model[:\s]+([^\s,"]+)|"model[:"]+([^",}]+)/i);
+            const modelName = modelMatch ? (modelMatch[1] || modelMatch[2]) : 'Unknown';
+            data.error = '[Multimodal Model Configuration Error] The model specified in guiSubagentModel does not exist or is not accessible.\n' +
+              'Error details: HTTP 404 - Model or Endpoint not found\n' +
+              'Configured model name: ' + modelName + '\n' +
+              'Suggested action: Please check the guiSubagentModel configuration in ~/.xagent/settings.json, remove or replace with a valid model name';
+          } else {
+            data.error = '[Multimodal Model API Call Failed]\n' +
+              'Error details: ' + errorMsg + '\n' +
+              'Please check the following configuration items:\n' +
+              '  - guiSubagentApiKey: API key\n' +
+              '  - guiSubagentBaseUrl: API service URL\n' +
+              '  - guiSubagentModel: Model name\n' +
+              'Config file location: ~/.xagent/settings.json';
+          }
           break;
         }
 
@@ -359,13 +519,13 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         }
 
         if (!prediction) {
-          this.logger.error('[GUIAgent] Response Empty:', prediction);
+          this.logger.warn('[GUIAgent] Warning: Empty response from model, retrying...');
           continue;
         }
 
         if (this.showAIDebugInfo) {
-          this.logger.info('[GUIAgent] Response:', prediction);
-          this.logger.info('[GUIAgent] Parsed Predictions:', JSON.stringify(parsedPredictions));
+          this.logger.debug('[GUIAgent] Response:', prediction);
+          this.logger.debug('[GUIAgent] Parsed Predictions:', JSON.stringify(parsedPredictions));
         }
 
         const predictionSummary = this.getSummary(prediction);
@@ -393,12 +553,19 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           conversations: data.conversations.slice(-1),
         });
 
+        // Display assistant response
+        const latestAssistant = data.conversations[data.conversations.length - 1];
+        if (latestAssistant && latestAssistant.from === 'assistant') {
+          this.displayConversationResult(latestAssistant, loopCnt);
+        }
+
+        // Check if we need to switch operator based on first action
         // Execute actions
         for (const parsedPrediction of parsedPredictions) {
           const actionType = parsedPrediction.action_type;
 
           if (this.showAIDebugInfo) {
-            this.logger.info('[GUIAgent] Action:', actionType);
+            this.logger.debug('[GUIAgent] Action:', actionType);
           }
 
           // Handle internal action spaces
@@ -414,27 +581,64 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
           // Execute action with retry
           if (!this.signal?.aborted && !this.isStopped) {
-            try {
-              await asyncRetry(
-                () =>
-                  this.operator.doExecute({
-                    prediction,
-                    parsedPrediction,
-                    screenWidth: screenContext.width,
-                    screenHeight: screenContext.height,
-                    scaleFactor: snapshot.scaleFactor ?? screenContext.scaleFactor,
-                    factors: [1000, 1000], // Default factors
-                  }),
-                {
-                  retries: this.retry?.execute?.maxRetries ?? 0,
-                  minTimeout: 5000,
-                  onRetry: this.retry?.execute?.onRetry,
+            let stepRetryCount = 0;
+            let stepSuccess = false;
+            let lastErrorMsg = '';
+
+            this.logger.debug(`[GUIAgent] Executing action: ${actionType}, loopCnt: ${loopCnt}`);
+
+            while (stepRetryCount < MAX_STEP_RETRIES && !stepSuccess) {
+              try {
+                const executeResult = await this.operator.doExecute({
+                  prediction,
+                  parsedPrediction,
+                  screenWidth: screenContext.width,
+                  screenHeight: screenContext.height,
+                  scaleFactor: snapshot.scaleFactor ?? screenContext.scaleFactor,
+                  factors: [1000, 1000], // Default factors
+                });
+
+                if (executeResult.status === 'end') {
+                  // 'finished' action or explicit end
+                  stepSuccess = true;
+                  break;
                 }
-              );
-            } catch (executeError) {
-              this.logger.error('[GUIAgent] execute error', executeError);
+
+                // Any other status (success, failed, etc.) is considered success
+                stepSuccess = true;
+                break;
+              } catch (executeError) {
+                stepRetryCount++;
+                lastErrorMsg = executeError instanceof Error ? executeError.message : 'Unknown error';
+                this.logger.warn(`[GUIAgent] Action failed ${stepRetryCount}/${MAX_STEP_RETRIES}: ${lastErrorMsg}`);
+
+                if (stepRetryCount < MAX_STEP_RETRIES) {
+                  await sleep(1000);
+                  // Take new screenshot for retry
+                  const retrySnapshot = await this.operator.doScreenshot();
+                  if (retrySnapshot?.base64) {
+                    data.conversations.push({
+                      from: 'human',
+                      value: IMAGE_PLACEHOLDER,
+                      screenshotBase64: retrySnapshot.base64,
+                      screenshotContext: {
+                        size: {
+                          width: screenContext.width,
+                          height: screenContext.height,
+                        },
+                        scaleFactor: retrySnapshot.scaleFactor ?? screenContext.scaleFactor,
+                      },
+                    });
+                  }
+                }
+              }
+            }
+
+            if (!stepSuccess) {
+              // All retries exhausted
+              this.logger.error(`[GUIAgent] Action failed after ${MAX_STEP_RETRIES} attempts: ${lastErrorMsg}`);
               data.status = GUIAgentStatus.ERROR;
-              data.error = 'Action execution failed';
+              data.error = `Action failed after ${MAX_STEP_RETRIES} attempts: ${lastErrorMsg}`;
               break;
             }
           }
@@ -478,21 +682,43 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         data.error = error instanceof Error ? error.message : 'Unknown error';
       }
     } finally {
-      await this.onData?.({ ...data, conversations: [] });
+      // Save final status
+      const finalStatus = data.status;
+      const finalError = data.error;
 
-      if (data.status === GUIAgentStatus.ERROR) {
-        this.onError?.(
-          new Error(data.error || 'Unknown error occurred')
-        );
+      // Output error immediately if task failed
+      if (finalStatus === GUIAgentStatus.ERROR && finalError) {
+        console.log(`\n${colors.error('✖')} ${finalError}\n`);
+      }
+
+      // Call onData callback if set
+      // Note: Use Promise.resolve().then() to avoid modifying data in callback
+      const onDataCallback = this.onData;
+      if (onDataCallback) {
+        Promise.resolve().then(() => onDataCallback({ ...data, conversations: [] }));
+      }
+
+      // Call onError callback if status is error
+      if (finalStatus === GUIAgentStatus.ERROR && this.onError) {
+        this.onError(new Error(finalError || 'Unknown error occurred'));
       }
 
       if (this.showAIDebugInfo) {
-        this.logger.info('[GUIAgent] Final status:', {
-          status: data.status,
+        this.logger.debug('[GUIAgent] Final status:', {
+          status: finalStatus,
           loopCnt,
           totalConversations: data.conversations.length,
         });
       }
+
+      // Ensure the returned status is correct (reassign)
+      this.logger.debug(`[GUIAgent] Finally: finalStatus=${finalStatus}, finalError=${finalError}, data.status=${data.status}, data.error=${data.error}`);
+
+      // Log final status (only visible when showAIDebugInfo is enabled)
+      this.logger.debug(`[GUIAgent] Final status: ${finalStatus}${finalError ? `, Error: ${finalError}` : ''}, Steps: ${loopCnt}`);
+
+      data.status = finalStatus;
+      data.error = finalError;
     }
 
     return data;
@@ -629,22 +855,31 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         console.log('└─────────────────────────────────────────────────────────────┘');
       }
 
-      console.log('\n📤 Sending request to model API...\n');
+            console.log('\n📤 Sending request to model API...\n');
+
+          }
+
+      
+
+          let response;
+    try {
+      response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+        signal: this.signal,
+      });
+    } catch (fetchError) {
+      throw fetchError;
     }
 
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-      signal: this.signal,
-    });
-
+    // Handle non-200 responses
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Model API error: ${error}`);
+      const errorText = await response.text();
+      throw new Error(`Model API error: ${errorText}`);
     }
 
     const result = await response.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: any };
@@ -729,7 +964,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
   }
 
   async cleanup(): Promise<void> {
-    this.logger.info('Cleaning up GUI Agent...');
+    this.logger.debug('Cleaning up GUI Agent...');    
     await this.operator.cleanup();
 
     // Cleanup cancellation listener if attached

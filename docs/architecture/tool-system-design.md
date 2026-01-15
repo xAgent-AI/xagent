@@ -39,11 +39,7 @@ xAgent CLI provides a rich set of built-in tools plus support for external tools
 | `task` | Launch SubAgents | YOLO, ACCEPT_EDITS, PLAN, SMART |
 
 ### GUI Automation
-| Tool | Description | Permissions Required |
-|------|-------------|---------------------|
-| `gui_operate` | Browser automation | YOLO, ACCEPT_EDITS, SMART |
-| `gui_screenshot` | Take screenshots | YOLO, ACCEPT_EDITS, SMART |
-| `gui_cleanup` | Clean up GUI instances | YOLO, ACCEPT_EDITS, SMART |
+
 
 ## Tool Interface
 

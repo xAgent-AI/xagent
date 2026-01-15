@@ -7,6 +7,38 @@ import { getLogger } from './logger.js';
 
 const logger = getLogger();
 
+interface VLMProviderInfo {
+  name: string;
+  provider: string;
+  baseUrl: string;
+  defaultModel: string;
+  models: string[];
+}
+
+const VLM_PROVIDERS: VLMProviderInfo[] = [
+  {
+    name: 'OpenAI',
+    provider: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4o',
+    models: ['gpt-5', 'gpt-4o', 'gpt-4o-mini', 'gpt-5-mini']
+  },
+  {
+    name: 'Volcengine (Doubao)',
+    provider: 'volcengine',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    defaultModel: 'doubao-seed-1-8-251228',
+    models: ['doubao-seed-1-8-251228', 'doubao-1-5-ui-tars-250428', 'seed1.5-vl']
+  },
+  {
+    name: 'Anthropic',
+    provider: 'anthropic',
+    baseUrl: 'https://api.anthropic.com/v1',
+    defaultModel: 'claude-sonnet-4-5',
+    models: ['claude-sonnet-4-5', 'claude-opus-4-5', 'claude-sonnet-4', 'claude-opus-4']
+  }
+];
+
 interface ThirdPartyProvider {
   name: string;
   baseUrl: string;
@@ -344,8 +376,29 @@ export class AuthService {
         }
       );
       return response.status === 200;
-    } catch (error) {
-      console.error('API Key validation failed:', error);
+    } catch (error: any) {
+      // Provide user-friendly error messages without exposing stack traces
+      if (error.response) {
+        const status = error.response.status;
+        
+        if (status === 401) {
+          logger.error('API Key verification failed: Invalid or expired API Key', `Verify your API Key is correct and has not expired`);
+        } else if (status === 403) {
+          logger.error('API Key verification failed: Access denied', `Check if your API Key has permission to access`);
+        } else if (status === 404) {
+          logger.error('API request failed: API endpoint not found', `Verify your API Base URL is correct`);
+        } else if (status === 429) {
+          logger.error('API rate limit exceeded', `Please wait before retrying`);
+        } else {
+          logger.error(`API Key verification failed (HTTP ${status})`, `Verify your API Key and network connection`);
+        }
+      } else if (error.code === 'ECONNREFUSED') {
+        logger.error('Failed to connect to API server', `Verify your API Base URL and network connection`);
+      } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+        logger.error('API request timed out', `Check your network connection and try again`);
+      } else {
+        logger.error('API Key verification failed', `Verify your API Key and network connection`);
+      }
       return false;
     }
   }
@@ -395,6 +448,147 @@ export class AuthService {
 
   updateAuthConfig(config: Partial<AuthConfig>): void {
     this.authConfig = { ...this.authConfig, ...config };
+  }
+
+  /**
+   * Configure and validate VLM for GUI Agent
+   * Returns { model, baseUrl, apiKey } if successful, null if failed or cancelled
+   */
+  async configureAndValidateVLM(): Promise<{ model: string; baseUrl: string; apiKey: string } | null> {
+    logger.info('\n🔧 Configuring VLM for GUI Agent...', 'Vision-Language Model for browser/desktop automation\n');
+
+    const { provider } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'provider',
+        message: 'Select VLM provider for GUI automation:',
+        choices: VLM_PROVIDERS.map(p => ({
+          name: `${p.name}`,
+          value: p
+        }))
+      }
+    ]);
+
+    const selectedProvider = provider as VLMProviderInfo;
+
+    logger.info(`\nSelected: ${selectedProvider.name}`);
+    logger.info(`API URL: ${selectedProvider.baseUrl}`);
+    logger.info(`Available models: ${selectedProvider.models.join(', ')}`);
+
+    const { selectedModel } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'selectedModel',
+        message: 'Select VLM model:',
+        choices: selectedProvider.models.map(model => ({
+          name: model === selectedProvider.defaultModel ? `${model} (default)` : model,
+          value: model
+        }))
+      }
+    ]);
+
+    const { baseUrl } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'baseUrl',
+        message: 'Enter VLM API Base URL:',
+        default: selectedProvider.baseUrl,
+        validate: (input: string) => {
+          if (!input || input.trim().length === 0) {
+            return 'Base URL cannot be empty';
+          }
+          return true;
+        }
+      }
+    ]);
+
+    const { apiKey } = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'apiKey',
+        message: `Enter ${selectedProvider.name} API Key:`,
+        mask: '*',
+        validate: (input: string) => {
+          if (!input || input.trim().length === 0) {
+            return 'API Key cannot be empty';
+          }
+          return true;
+        }
+      }
+    ]);
+
+    const vlmConfig = {
+      model: selectedModel as string,
+      baseUrl: (baseUrl as string).trim(),
+      apiKey: (apiKey as string).trim()
+    };
+
+    const isValid = await this.validateVLMApiKey(vlmConfig.baseUrl, vlmConfig.apiKey);
+    if (isValid) {
+      logger.success(`${selectedProvider.name} VLM configured successfully!`, `Model: ${vlmConfig.model}`);
+      return vlmConfig;
+    } else {
+      return null;
+    }
+  }
+
+  private async validateVLMApiKey(baseUrl: string, apiKey: string): Promise<boolean> {
+    try {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json'
+      };
+
+      // Anthropic uses x-api-key header
+      if (baseUrl.includes('anthropic.com')) {
+        headers['x-api-key'] = apiKey;
+        headers['anthropic-version'] = '2023-06-01';
+      } else {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+
+      const response = await axios.get(
+        `${baseUrl}/models`,
+        { headers, timeout: 10000 }
+      );
+      return response.status === 200;
+    } catch (error: any) {
+      // Provide user-friendly error messages without exposing stack traces
+      // Distinguish between API Key errors and Base URL errors
+      
+      // Check if we received an HTTP response from server
+      if (error.response) {
+        const status = error.response.status;
+        
+        // Server responded but with error - API Key or permissions issue
+        if (status === 401 || status === 403) {
+          logger.error('VLM API authentication failed: Invalid API Key', `Verify your API Key is correct and has not expired`);
+        } else if (status === 429) {
+          logger.error('VLM API rate limit exceeded', `Please wait before retrying`);
+        } else if (status === 404) {
+          // 404 with valid response means base URL is valid but endpoint doesn't exist
+          logger.error('VLM API error: API endpoint not found (404)', `Verify your API Base URL is correct`);
+        } else {
+          logger.error(`VLM API request failed (HTTP ${status})`, `Verify your API Base URL and API Key`);
+        }
+        return false;
+      }
+      
+      // No HTTP response - server not reached or URL invalid
+      // These indicate Base URL issues
+      const networkErrors = ['ECONNREFUSED', 'ETIMEDOUT', 'ECONNABORTED', 'ENOTFOUND', 'EAI_AGAIN', 'EPROTO', 'ERR_INVALID_URL'];
+      
+      if (networkErrors.includes(error.code) || 
+          error.message?.includes('Invalid URL') ||
+          error.message?.includes('getaddrinfo') ||
+          error.message?.includes('socket hang up')) {
+        logger.error('VLM API connection failed: Unable to reach the server', `Verify your API Base URL is correct and accessible`);
+        return false;
+      }
+      
+      // Fallback for unknown errors
+      logger.error('VLM API request failed', `Verify your API Base URL and API Key`);
+      return false;
+    }
   }
 }
 

@@ -25,6 +25,7 @@ export class SlashCommandHandler {
   private contextCompressor: ContextCompressor;
   private conversationManager: ConversationManager;
   private conversationHistory: ChatMessage[] = [];
+  private onClearCallback: (() => void) | null = null;
 
   constructor() {
     this.configManager = getConfigManager(process.cwd());
@@ -34,6 +35,13 @@ export class SlashCommandHandler {
     this.checkpointManager = getCheckpointManager(process.cwd());
     this.contextCompressor = getContextCompressor();
     this.conversationManager = getConversationManager();
+  }
+
+  /**
+   * 设置清除对话的回调函数
+   */
+  setClearCallback(callback: () => void): void {
+    this.onClearCallback = callback;
   }
 
   /**
@@ -317,6 +325,17 @@ export class SlashCommandHandler {
   }
 
   private async handleClear(): Promise<void> {
+    // 清空本地对话历史
+    this.conversationHistory = [];
+
+    // 清空 ConversationManager 中的当前对话
+    await this.conversationManager.clearCurrentConversation();
+
+    // 调用回调通知 InteractiveSession 清空对话
+    if (this.onClearCallback) {
+      this.onClearCallback();
+    }
+
     logger.success('Conversation history cleared', 'Start a new conversation');
   }
 

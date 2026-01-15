@@ -2,7 +2,7 @@ import readline from 'readline';
 import chalk from 'chalk';
 import ora from 'ora';
 import inquirer from 'inquirer';
-import { ExecutionMode, ChatMessage, ToolCall } from './types.js';
+import { ExecutionMode, ChatMessage, ToolCall, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
@@ -52,8 +52,14 @@ export class InteractiveSession {
     this.mcpManager = getMCPManager();
     this.checkpointManager = getCheckpointManager(process.cwd());
     this.conversationManager = getConversationManager();
-    this.sessionManager = getSessionManager();
+    this.sessionManager = getSessionManager(process.cwd());
     this.slashCommandHandler = new SlashCommandHandler();
+    
+    // 注册 /clear 回调，清除对话时同步清空本地 conversation
+    this.slashCommandHandler.setClearCallback(() => {
+      this.conversation = [];
+    });
+    
     this.executionMode = ExecutionMode.DEFAULT;
     this.cancellationManager = getCancellationManager();
     this.indentLevel = indentLevel;
@@ -216,7 +222,37 @@ export class InteractiveSession {
     }
 
     const authConfig = authService.getAuthConfig();
-    await this.configManager.setAuthConfig(authConfig);
+
+    // Configure VLM for GUI Agent
+    console.log('');
+    const { configureVLM } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'configureVLM',
+        message: 'Do you want to configure VLM for GUI Agent (browser/desktop automation)?',
+        default: true
+      }
+    ]);
+
+    if (configureVLM) {
+      const vlmConfig = await authService.configureAndValidateVLM();
+      if (vlmConfig) {
+        // Both LLM and VLM configured successfully - save all at once
+        this.configManager.setAuthConfig(authConfig);
+        this.configManager.set('guiSubagentModel', vlmConfig.model);
+        this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
+        this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
+        await this.configManager.save('global');
+      } else {
+        console.log('');
+        console.log(colors.error('VLM configuration failed. Exiting...'));
+        console.log('');
+        process.exit(1);
+      }
+    } else {
+      // Only LLM configured - save LLM config
+      await this.configManager.setAuthConfig(authConfig);
+    }
   }
 
   private showWelcomeMessage(): void {
@@ -709,14 +745,18 @@ export class InteractiveSession {
       this.conversation.push({
         role: 'assistant',
         content,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        reasoningContent,
+        toolCalls: assistantMessage.tool_calls
       });
 
       // Record output to session manager
       await this.sessionManager.addOutput({
         role: 'assistant',
         content,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        reasoningContent,
+        toolCalls: assistantMessage.tool_calls
       });
 
       if (assistantMessage.tool_calls) {
@@ -832,6 +872,9 @@ export class InteractiveSession {
           console.log('');
           console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
           console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
+        } else if (result.success === false) {
+          // GUI task or other tool failed
+          console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
         } else {
           console.log(`${displayIndent}${colors.success(`${icons.check} Completed`)}`);
         }

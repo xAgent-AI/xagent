@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { Settings, AuthType, ExecutionMode, MCPServerConfig, CheckpointConfig, ThinkingConfig, CompressionConfig } from './types.js';
+import { Settings, AuthType, ExecutionMode, MCPServerConfig, CheckpointConfig, ThinkingConfig, CompressionConfig, LogLevel } from './types.js';
 import { getLogger } from './logger.js';
 
 const logger = getLogger();
@@ -41,7 +41,8 @@ const DEFAULT_SETTINGS: Settings = {
   autoUpdate: true,
   telemetryEnabled: true,
   showToolDetails: false,
-  showAIDebugInfo: false
+  showAIDebugInfo: false,
+  loggerLevel: LogLevel.INFO
 };
 
 export class ConfigManager {
@@ -180,6 +181,14 @@ export class ConfigManager {
 
   setLanguage(language: 'zh' | 'en'): void {
     this.settings.language = language;
+  }
+
+  getLoggerLevel(): LogLevel {
+    return this.settings.loggerLevel;
+  }
+
+  setLoggerLevel(level: LogLevel): void {
+    this.settings.loggerLevel = level;
   }
 
   private readConfigFile(filePath: string): Partial<Settings> {

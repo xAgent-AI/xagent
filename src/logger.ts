@@ -411,9 +411,24 @@ export class Logger {
 
 let loggerInstance: Logger | null = null;
 
+// 配置提供器函数，用于从配置文件读取 loggerLevel
+let configProvider: (() => { getLoggerLevel: () => string }) | null = null;
+
+export function setConfigProvider(provider: () => { getLoggerLevel: () => string }): void {
+  configProvider = provider;
+}
+
 export function getLogger(config?: Partial<LoggerConfig>): Logger {
   if (!loggerInstance) {
-    loggerInstance = new Logger(config);
+    // 从配置读取 loggerLevel
+    let minLevel = LogLevel.INFO;
+    if (configProvider) {
+      const levelStr = configProvider().getLoggerLevel();
+      if (levelStr && Object.values(LogLevel).includes(levelStr as LogLevel)) {
+        minLevel = levelStr as LogLevel;
+      }
+    }
+    loggerInstance = new Logger({ ...config, minLevel });
   }
   return loggerInstance;
 }

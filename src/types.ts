@@ -6,6 +6,14 @@ export enum ExecutionMode {
   SMART = 'smart'
 }
 
+export enum LogLevel {
+  ERROR = 'error',
+  WARN = 'warn',
+  SUCCESS = 'success',
+  INFO = 'info',
+  DEBUG = 'debug'
+}
+
 export enum AuthType {
   OAUTH_XAGENT = 'oauth-xagent',
   API_KEY = 'api_key',
@@ -91,6 +99,7 @@ export interface Settings {
   telemetryEnabled: boolean;
   showToolDetails: boolean;
   showAIDebugInfo: boolean;
+  loggerLevel: LogLevel;
 }
 
 export interface ChatMessage {
@@ -98,6 +107,8 @@ export interface ChatMessage {
   content: string;
   images?: string[];
   timestamp: number;
+  reasoningContent?: string;
+  toolCalls?: any[];
 }
 
 export interface Conversation {
@@ -146,6 +157,8 @@ export interface SessionOutput {
   toolResult?: any;
   timestamp: number;
   duration?: number;
+  reasoningContent?: string;
+  toolCalls?: any[];
 }
 
 export interface Session {

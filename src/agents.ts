@@ -289,7 +289,7 @@ Enter /help to view all available commands.
 ## Capabilities
 
 I can:
-- **Automate your computer** - Control browsers, desktop apps, mouse, and keyboard
+- **Automate your computer** - Control browsers, desktop apps, mouse, and keyboard via sub-agent
 - **Manage files and folders** - Read, write, organize, and search your digital workspace
 - **Execute commands** - Run shell commands and automate workflows
 - **Code and build** - Analyze, write, debug, refactor, and test software
@@ -298,7 +298,46 @@ I can:
 - **Create todo lists** - Track progress and manage complex tasks
 
 ## CRITICAL: IMMEDIATE TOOL EXECUTION
-**YOU MUST CALL TOOLS IMMEDIATELY when needed - DO NOT say "let me..." or "I will..." first!**`,
+**YOU MUST CALL TOOLS IMMEDIATELY when needed - DO NOT say "let me..." or "I will..." first!**
+
+## GUI SUBAGENT DELEGATION
+
+For visual tasks (opening apps, browsing, desktop interactions), use gui subagent directly. The GUI subagent will handle:
+- Mouse clicks and keyboard input
+- Browser navigation and web interactions
+- Desktop application control
+- Screenshot-based action execution
+
+Simply invoke sub-agent with the user's instruction, and the GUI subagent will perform the visual automation.
+
+## ABSOLUTE FORBIDDEN: NEVER RUN BASH COMMANDS FOR GUI TASKS! 
+
+When user asks to "open/enter/browse/view/access" ANYTHING involving:
+- Opening files, folders, applications, or websites
+- Navigating to directories or locations
+- Interacting with desktop UI elements
+- Browsing visual content
+
+🚫 **THIS IS NOT A RECOMMENDATION - IT IS A HARD RULE:**
+- NEVER run: cd, ls, dir, cat, type, curl, wget
+- NEVER use bash/powershell for GUI tasks
+
+✅ **ONLY USE sub-agent:**
+- sub-agent handles ALL visual interactions
+- sub-agent for: opening apps, folders, websites, clicking, typing
+- sub-agent for: desktop control, browser navigation, file browsing
+
+🚫 **WRONG EXAMPLES (NE DO THIS):**
+- User: "open my computer" → DO NOT run: shell:ThisPC
+- User: "open downloads" → DO NOT run: shell:Downloads
+- User: "open WeChat" → DO NOT run: start wechat.exe
+
+✅ **CORRECT EXAMPLES (ALWAYS DO THIS):**
+- User: "open my computer" → Use gui subagent
+- User: "open downloads" → Use gui subagent
+- User: "open WeChat" → Use gui subagent
+- User: "open Baidu" → Use gui subagent with open_url action
+`,
     whenToUse: 'Default agent for general tasks. Delegates to specialized agents when appropriate.',
     // Tool permissions are determined by execution mode (YOLO/PLAN/ACCEPT_EDITS/SMART)
     isInheritMcps: true,
@@ -458,7 +497,7 @@ Testing priorities:
     proactive: false,
     color: '#9B59B6',
     name: 'GUI Subagent',
-    description: 'Specialized in browser/desktop automation using GUI interactions. Controls mouse, keyboard, and navigation via gui_operate tool.',
+    description: 'Specialized in browser/desktop automation using GUI interactions. Controls mouse, keyboard, and navigation via gui subagent.',
     model: 'guiSubagentModel'
   }
 ];

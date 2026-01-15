@@ -210,7 +210,7 @@ export function parseBoxToScreenCoords(params: {
     .filter((n) => n.trim())
     .map((n) => parseFloat(n.trim()));
 
-  if (numbers.length < 2) {
+  if (numbers.length < 2 || numbers.some((n) => Number.isNaN(n))) {
     return { x: 0, y: 0 };
   }
 
@@ -220,12 +220,13 @@ export function parseBoxToScreenCoords(params: {
   const x2 = numbers.length > 2 ? numbers[2] : x1;
   const y2 = numbers.length > 3 ? numbers[3] : y1;
 
-  // Normalize to screen coordinates (0-1 range then multiply by screen size)
+  // Normalize to screen coordinates
   let normalizedX: number;
   let normalizedY: number;
 
+  // Check if coordinates are normalized (0-1 range) or absolute pixels (> 1)
   if (x1 >= 0 && x1 <= 1 && y1 >= 0 && y1 <= 1) {
-    // Already normalized coordinates
+    // Already normalized coordinates (0-1 range)
     normalizedX = (x1 + x2) / 2;
     normalizedY = (y1 + y2) / 2;
   } else if (x1 > 1 || y1 > 1) {
@@ -233,7 +234,7 @@ export function parseBoxToScreenCoords(params: {
     normalizedX = x1 / screenWidth;
     normalizedY = y1 / screenHeight;
   } else {
-    // Normalized 0-1 with single value
+    // Fallback: treat as normalized
     normalizedX = x1;
     normalizedY = y1;
   }

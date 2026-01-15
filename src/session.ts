@@ -745,14 +745,18 @@ export class InteractiveSession {
       this.conversation.push({
         role: 'assistant',
         content,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        reasoningContent,
+        toolCalls: assistantMessage.tool_calls
       });
 
       // Record output to session manager
       await this.sessionManager.addOutput({
         role: 'assistant',
         content,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        reasoningContent,
+        toolCalls: assistantMessage.tool_calls
       });
 
       if (assistantMessage.tool_calls) {

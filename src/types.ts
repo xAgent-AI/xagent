@@ -107,6 +107,8 @@ export interface ChatMessage {
   content: string;
   images?: string[];
   timestamp: number;
+  reasoningContent?: string;
+  toolCalls?: any[];
 }
 
 export interface Conversation {
@@ -155,6 +157,8 @@ export interface SessionOutput {
   toolResult?: any;
   timestamp: number;
   duration?: number;
+  reasoningContent?: string;
+  toolCalls?: any[];
 }
 
 export interface Session {

@@ -651,13 +651,13 @@ class DocumentSkillExecutor implements SkillExecutor {
     // Extract content based on skill type
     switch (skill.id) {
       case 'pptx':
-        return this.extractPptxContent(taskLower, fullContent, nextSteps);
+        return this.extractPptxContent(taskLower, fullContent, nextSteps, skill.skillsPath);
       case 'docx':
-        return this.extractDocxContent(taskLower, fullContent, nextSteps, params);
+        return this.extractDocxContent(taskLower, fullContent, nextSteps, params, skill.skillsPath);
       case 'pdf':
-        return this.extractPdfContent(taskLower, fullContent, nextSteps, params);
+        return this.extractPdfContent(taskLower, fullContent, nextSteps, params, skill.skillsPath);
       case 'xlsx':
-        return this.extractXlsxContent(taskLower, fullContent, nextSteps);
+        return this.extractXlsxContent(taskLower, fullContent, nextSteps, skill.skillsPath);
       default:
         return this.extractDefaultContent(skill, fullContent, nextSteps);
     }
@@ -666,8 +666,9 @@ class DocumentSkillExecutor implements SkillExecutor {
   /**
    * Extract PPTX-related content and generate steps
    */
-  private extractPptxContent(taskLower: string, fullContent: string, nextSteps: ExecutionStep[]): string {
+  private extractPptxContent(taskLower: string, fullContent: string, nextSteps: ExecutionStep[], skillPath: string): string {
     const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
+    const html2pptxPath = `${skillPath}/pptx/scripts/html2pptx.js`;
 
     // Check if using template
     const useTemplate = taskLower.includes('template') || taskLower.includes('template');
@@ -676,10 +677,10 @@ class DocumentSkillExecutor implements SkillExecutor {
       // Add template usage steps
       nextSteps.push({
         step: 1,
-        action: 'Read documentation',
-        description: 'Read html2pptx.md for template usage',
-        file: 'skills/skills/pptx/html2pptx.md',
-        reason: 'Understand how to create PPTX using templates'
+        action: 'Read documentation and script',
+        description: `Read pptx/html2pptx.md and ${html2pptxPath}`,
+        file: html2pptxPath,
+        reason: 'Understand html2pptx API and how to create PPTX using templates'
       });
       nextSteps.push({
         step: 2,
@@ -689,18 +690,24 @@ class DocumentSkillExecutor implements SkillExecutor {
       });
       nextSteps.push({
         step: 3,
-        action: 'Create JS file using html2pptx library',
-        description: 'Create create_ppt.js in workspace using dynamic import with absolute path: const { html2pptx } = await import("D:/xagent/xagent/skills/skills/pptx/scripts/html2pptx.js");',
-        reason: 'Use html2pptx library to convert HTML to PPTX (must use dynamic import with absolute path)'
+        action: 'Create PPTX conversion script',
+        description: `Create convert.js that uses require('${html2pptxPath}') to import html2pptx and call html2pptx() for each slide`,
+        reason: 'Write Node.js script that uses the existing html2pptx library'
       });
       nextSteps.push({
         step: 4,
         action: 'Run the script in workspace',
-        description: 'Execute: node create_ppt.js in workspace directory',
-        reason: 'Generate PPTX file in workspace'
+        description: 'Execute: node convert.js in workspace directory',
+        reason: 'Generate PPTX file in workspace using html2pptx'
       });
       nextSteps.push({
         step: 5,
+        action: 'Generate thumbnail grid for visual validation',
+        description: 'Run: python scripts/thumbnail.py output.pptx workspace/thumbnails --cols 4',
+        reason: 'Create thumbnail grid to verify slide layout and visual quality'
+      });
+      nextSteps.push({
+        step: 6,
         action: 'Copy output to target directory',
         description: 'Copy output.pptx from workspace to target directory',
         reason: 'Only save final file to specified path, keep workspace clean'
@@ -722,10 +729,10 @@ class DocumentSkillExecutor implements SkillExecutor {
     // Not using template
     nextSteps.push({
       step: 1,
-      action: 'Read documentation',
-      description: 'Read html2pptx.md for creation workflow',
-      file: 'skills/skills/pptx/html2pptx.md',
-      reason: 'Understand how to create PPTX presentations'
+      action: 'Read documentation and script',
+      description: `Read pptx/html2pptx.md and ${html2pptxPath}`,
+      file: html2pptxPath,
+      reason: 'Understand html2pptx API and how to create PPTX presentations'
     });
     nextSteps.push({
       step: 2,
@@ -735,18 +742,24 @@ class DocumentSkillExecutor implements SkillExecutor {
     });
     nextSteps.push({
       step: 3,
-      action: 'Create JS file using html2pptx library',
-      description: 'Create create_ppt.js in workspace using dynamic import with absolute path: const { html2pptx } = await import("D:/xagent/xagent/skills/skills/pptx/scripts/html2pptx.js");',
-      reason: 'Use html2pptx library to convert HTML to PPTX (must use dynamic import with absolute path)'
+      action: 'Create PPTX conversion script',
+      description: `Create convert.js that uses require('${html2pptxPath}') to import html2pptx and call html2pptx() for each slide`,
+      reason: 'Write Node.js script that uses the existing html2pptx library'
     });
     nextSteps.push({
       step: 4,
       action: 'Run the script in workspace',
-      description: 'Execute: node create_ppt.js in workspace directory',
-      reason: 'Generate PPTX file in workspace'
+      description: 'Execute: node convert.js in workspace directory',
+      reason: 'Generate PPTX file in workspace using html2pptx'
     });
     nextSteps.push({
       step: 5,
+      action: 'Generate thumbnail grid for visual validation',
+      description: 'Run: python scripts/thumbnail.py output.pptx workspace/thumbnails --cols 4',
+      reason: 'Create thumbnail grid to verify slide layout and visual quality'
+    });
+    nextSteps.push({
+      step: 6,
       action: 'Copy output to target directory',
       description: 'Copy output.pptx from workspace to target directory',
       reason: 'Only save final file to specified path, keep workspace clean'
@@ -774,9 +787,12 @@ class DocumentSkillExecutor implements SkillExecutor {
     taskLower: string,
     fullContent: string,
     nextSteps: ExecutionStep[],
-    params: SkillExecutionParams
+    params: SkillExecutionParams,
+    skillPath: string
   ): string {
     const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
+    const unpackScript = `${skillPath}/docx/ooxml/scripts/unpack.py`;
+    const packScript = `${skillPath}/docx/ooxml/scripts/pack.py`;
 
     const isNew = taskLower.includes('create') || taskLower.includes('new');
     const isEditing = taskLower.includes('edit') || taskLower.includes('modify') || taskLower.includes('modify');
@@ -787,14 +803,14 @@ class DocumentSkillExecutor implements SkillExecutor {
         step: 1,
         action: 'Read documentation',
         description: 'Read docx-js.md for API reference',
-        file: 'skills/skills/docx/docx-js.md',
+        file: `${skillPath}/docx/docx-js.md`,
         reason: 'Understand how to use docx-js library to create Word documents'
       });
       nextSteps.push({
         step: 2,
         action: 'Create script in workspace',
-        description: 'Create create_doc.js in workspace (~/.xagent/workspace/<task-id>/): const { Document, Paragraph, TextRun, Packer } = await import("docx");',
-        reason: 'Create Word document code in workspace using docx library with dynamic import'
+        description: `Create create_doc.js in workspace: const { Document, Paragraph, TextRun, Packer } = await import("docx");`,
+        reason: 'Create Word document code using docx library with dynamic import'
       });
       nextSteps.push({
         step: 3,
@@ -813,12 +829,12 @@ class DocumentSkillExecutor implements SkillExecutor {
     }
 
     if (isEditing) {
-      // Edit existing document
+      // Edit existing document - use existing scripts
       nextSteps.push({
         step: 1,
         action: 'Read documentation',
         description: 'Read ooxml.md for editing API',
-        file: 'skills/skills/docx/ooxml.md',
+        file: `${skillPath}/docx/ooxml.md`,
         reason: 'Understand how to edit existing Word documents'
       });
 
@@ -833,24 +849,24 @@ class DocumentSkillExecutor implements SkillExecutor {
         nextSteps.push({
           step: 3,
           action: 'Unpack document in workspace',
-          description: `Run: python skills/skills/docx/ooxml/scripts/unpack.py "${params.inputFile}" <workspace_dir>/docx_input`,
-          reason: 'Unpack DOCX file in workspace for editing'
+          description: `Run: python "${unpackScript}" "${params.inputFile}" <workspace_dir>/docx_input`,
+          reason: 'Unpack DOCX file using existing unpack.py script'
         });
       }
 
       nextSteps.push({
         step: 4,
         action: 'Create editing script in workspace',
-        description: 'Create edit_doc.py in workspace: from ooxml import Document; doc = Document("<workspace_dir>/docx_input");',
-        reason: 'Create Python editing script in workspace'
+        description: `Create edit_doc.py: from scripts.document import Document; doc = Document("<workspace_dir>/docx_input");`,
+        reason: 'Create Python editing script using existing Document library'
       });
 
       if (params.inputFile || params.outputFile) {
         nextSteps.push({
           step: 5,
           action: 'Pack document',
-          description: 'Run: python skills/skills/docx/ooxml/scripts/pack.py <workspace_dir>/docx_input <workspace_dir>/output.docx',
-          reason: 'Repack DOCX in workspace'
+          description: `Run: python "${packScript}" <workspace_dir>/docx_input <workspace_dir>/output.docx`,
+          reason: 'Repack DOCX using existing pack.py script'
         });
       }
 
@@ -888,19 +904,22 @@ class DocumentSkillExecutor implements SkillExecutor {
     taskLower: string,
     fullContent: string,
     nextSteps: ExecutionStep[],
-    params: SkillExecutionParams
+    params: SkillExecutionParams,
+    skillPath: string
   ): string {
     const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
+    const scriptsPath = `${skillPath}/pdf/scripts`;
 
     const isForm = taskLower.includes('form') || taskLower.includes('form');
     const isExtract = taskLower.includes('extract') || taskLower.includes('extract');
     const isMerge = taskLower.includes('merge') || taskLower.includes('merge');
+    const isConvert = taskLower.includes('convert') || taskLower.includes('image');
 
     nextSteps.push({
       step: 1,
       action: 'Read documentation',
       description: 'Read reference.md for PDF operations',
-      file: 'skills/skills/pdf/reference.md',
+      file: `${skillPath}/pdf/reference.md`,
       reason: 'Understand PDF operation methods'
     });
 
@@ -912,37 +931,58 @@ class DocumentSkillExecutor implements SkillExecutor {
     });
 
     if (isForm) {
+      // Check for fillable fields first
       nextSteps.push({
         step: 3,
+        action: 'Check form fields',
+        description: `Run: python "${scriptsPath}/check_fillable_fields.py" <input_pdf>`,
+        reason: 'Check if PDF has fillable form fields'
+      });
+      nextSteps.push({
+        step: 4,
         action: 'Create PDF form script in workspace',
-        description: 'Create pdf_script.py in workspace using pypdf or similar library for form fields',
-        reason: 'Create PDF form processing script in workspace'
+        description: `Use "${scriptsPath}/fill_fillable_fields.py" or "${scriptsPath}/fill_pdf_form_with_annotations.py"`,
+        reason: 'Create PDF form processing script using existing scripts'
       });
     } else if (isExtract) {
       nextSteps.push({
         step: 3,
         action: 'Create extraction script in workspace',
-        description: 'Create extract_script.py in workspace using markitdown or pypdf for text extraction',
-        reason: 'Create PDF content extraction script in workspace'
+        description: 'Create extract_script.py using pypdf or pdfplumber for text extraction',
+        reason: 'Create PDF content extraction script'
       });
     } else if (isMerge) {
       nextSteps.push({
         step: 3,
         action: 'Create merge script in workspace',
-        description: 'Create merge_script.py in workspace using pypdf.Merger to combine files',
-        reason: 'Create PDF merge script in workspace'
+        description: 'Create merge_script.py using pypdf to combine PDF files',
+        reason: 'Create PDF merge script'
+      });
+    } else if (isConvert) {
+      nextSteps.push({
+        step: 3,
+        action: 'Convert PDF to images',
+        description: `Run: python "${scriptsPath}/convert_pdf_to_images.py" <input_pdf> <output_dir>`,
+        reason: 'Convert PDF to images using existing script'
+      });
+    } else {
+      nextSteps.push({
+        step: 3,
+        action: 'Create PDF processing script in workspace',
+        description: 'Create pdf_script.py using pypdf for desired operations',
+        reason: 'Create PDF processing script'
       });
     }
 
     nextSteps.push({
-      step: 4,
+      step: 5,
       action: 'Run the script',
       description: 'Execute: python pdf_script.py in workspace',
       reason: 'Execute PDF operation script in workspace'
     });
 
     nextSteps.push({
-      step: 5,
+      step: 6,
       action: 'Copy output to target directory',
       description: 'Copy output.pdf from workspace to target directory',
       reason: 'Only save final file to specified path'
@@ -954,7 +994,7 @@ class DocumentSkillExecutor implements SkillExecutor {
   /**
    * Extract XLSX relevant content and generate steps
    */
-  private extractXlsxContent(taskLower: string, fullContent: string, nextSteps: ExecutionStep[]): string {
+  private extractXlsxContent(taskLower: string, fullContent: string, nextSteps: ExecutionStep[], skillPath: string): string {
     const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
 
     const hasFormulas = taskLower.includes('formula') || taskLower.includes('公式');
@@ -963,7 +1003,8 @@ class DocumentSkillExecutor implements SkillExecutor {
     nextSteps.push({
       step: 1,
       action: 'Read documentation',
-      description: 'Read openpyxl documentation for Excel operations',
+      description: 'Read xlsx/SKILL.md for Excel operations',
+      file: `${skillPath}/xlsx/SKILL.md`,
       reason: 'Understand Excel operation methods'
     });
 
@@ -997,12 +1038,33 @@ class DocumentSkillExecutor implements SkillExecutor {
       reason: 'Generate XLSX file in workspace'
     });
 
-    nextSteps.push({
-      step: 5,
-      action: 'Copy output to target directory',
-      description: 'Copy output.xlsx from workspace to target directory',
-      reason: 'Only save final file to specified path'
-    });
+    if (hasFormulas) {
+      nextSteps.push({
+        step: 5,
+        action: 'Recalculate formulas',
+        description: 'Run: python recalc.py output.xlsx to recalculate all formulas and check for errors',
+        reason: 'Recalculate formulas and verify no formula errors (#REF!, #DIV/0!, etc.)'
+      });
+      nextSteps.push({
+        step: 6,
+        action: 'Fix formula errors if any',
+        description: 'Check recalc.py output JSON for error locations and fix formula errors',
+        reason: 'Ensure ZERO formula errors before final output'
+      });
+      nextSteps.push({
+        step: 7,
+        action: 'Copy output to target directory',
+        description: 'Copy output.xlsx from workspace to target directory',
+        reason: 'Only save final file to specified path'
+      });
+    } else {
+      nextSteps.push({
+        step: 5,
+        action: 'Copy output to target directory',
+        description: 'Copy output.xlsx from workspace to target directory',
+        reason: 'Only save final file to specified path'
+      });
+    }
 
     return extractContent(content, ['Excel', 'xlsx', 'spreadsheet']);
   }
@@ -1017,7 +1079,7 @@ class DocumentSkillExecutor implements SkillExecutor {
     nextSteps.push({
       step: 1,
       action: 'Read SKILL.md',
-      description: `Read ${skill.skillsPath}/SKILL.md for full instructions`,
+      description: `Read ${skill.id}/SKILL.md for full instructions`,
       file: `${skill.skillsPath}/SKILL.md`,
       reason: 'Understand complete execution workflow'
     });
@@ -1165,24 +1227,31 @@ class FrontendSkillExecutor implements SkillExecutor {
       case 'webapp-testing':
         nextSteps.push({
           step: 3,
+          action: 'Read documentation and helper script',
+          description: 'Read webapp-testing/SKILL.md and scripts/with_server.py',
+          file: `${skill.skillsPath}/scripts/with_server.py`,
+          reason: 'Understand webapp testing workflow and with_server.py usage'
+        });
+        nextSteps.push({
+          step: 4,
           action: 'Create workspace directory',
           description: 'Create workspace directory: ~/.xagent/workspace/<task-id>/',
           reason: 'Create workspace directory for test files'
         });
         nextSteps.push({
-          step: 4,
+          step: 5,
           action: 'Write Playwright tests in workspace',
-          description: 'Create test scripts in workspace for web application',
+          description: 'Create test.py in workspace for web application testing',
           reason: 'Write test scripts in workspace'
         });
         nextSteps.push({
-          step: 5,
-          action: 'Run tests',
-          description: 'Execute: npx playwright test in workspace',
-          reason: 'Run tests'
+          step: 6,
+          action: 'Run tests with server',
+          description: 'Run: python scripts/with_server.py --server "<start_command>" --port <port> -- python test.py',
+          reason: 'Run tests with server using existing with_server.py helper'
         });
         nextSteps.push({
-          step: 6,
+          step: 7,
           action: 'Copy test reports to target directory',
           description: 'Copy test reports from workspace to target directory',
           reason: 'Only save test reports to specified path'

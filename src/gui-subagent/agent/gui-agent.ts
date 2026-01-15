@@ -16,8 +16,23 @@ import type {
 import type { Operator } from '../operator/base-operator.js';
 import { sleep, asyncRetry } from '../utils.js';
 import { actionParser } from '../action-parser/index.js';
-import { colors } from '../../theme.js';
+import { colors, icons, renderMarkdown } from '../../theme.js';
 import { getLogger } from '../../logger.js';
+
+/**
+ * Helper function to truncate long text
+ */
+function truncateText(text: string, maxLength: number = 200): string {
+  if (!text) return '';
+  return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+}
+
+/**
+ * Helper function to indent multiline text
+ */
+function indentMultiline(text: string, indent: string): string {
+  return text.split('\n').map(line => indent + line).join('\n');
+}
 
 const guiLogger = getLogger();
 
@@ -130,6 +145,69 @@ export class GUIAgent<T extends Operator> {
     this.systemPrompt = config.systemPrompt || this.buildSystemPrompt();
   }
 
+  /**
+   * Display conversation results with formatting similar to session.ts (simplified)
+   */
+  private displayConversationResult(conversation: Conversation, iteration: number, indentLevel: number = 1): void {
+    const indent = '  '.repeat(indentLevel);
+    const innerIndent = '  '.repeat(indentLevel + 1);
+    const maxWidth = process.stdout.columns || 80;
+
+    if (conversation.from === 'assistant') {
+      // Display assistant response (action)
+      const content = conversation.value || '';
+      const timing = conversation.timing;
+
+      // Simplified: show step number and action
+      const actionSummary = content.replace(/Thought:[\s\S]*?Action:\s*/i, '').trim();
+      const actionType = conversation.predictionParsed?.[0]?.action_type || 'action';
+
+      console.log(`${indent}${colors.primaryBright(`[${iteration}]`)} ${colors.textMuted(actionType)}${timing ? colors.textDim(` (${timing.cost}ms)`) : ''}`);
+
+      // Optionally show action details on next line if verbose
+      if (this.showAIDebugInfo && actionSummary) {
+        const truncatedSummary = actionSummary.length > 60 ? actionSummary.substring(0, 60) + '...' : actionSummary;
+        console.log(`${innerIndent}${colors.textMuted(truncatedSummary)}`);
+      }
+    } else if (conversation.from === 'human' && conversation.screenshotBase64) {
+      // Show minimal indicator for screenshot
+      if (this.showAIDebugInfo) {
+        const timing = conversation.timing;
+        console.log(`${indent}${colors.textMuted(`${icons.loading} screenshot${timing ? ` (${timing.cost}ms)` : ''}`)}`);
+      }
+    }
+  }
+
+  /**
+   * Display status message
+   */
+  private displayStatus(data: GUIAgentData, iteration: number, indentLevel: number = 1): void {
+    const indent = '  '.repeat(indentLevel);
+    const status = data.status;
+
+    switch (status) {
+      case GUIAgentStatus.RUNNING:
+        console.log(`${indent}${colors.info(`${icons.loading} Step ${iteration}: Running...`)}`);
+        break;
+      case GUIAgentStatus.END:
+        // Handled by caller
+        break;
+      case GUIAgentStatus.ERROR:
+        if (data.error) {
+          console.log(`${indent}${colors.error(`${icons.cross} ${data.error}`)}`);
+        }
+        break;
+      case GUIAgentStatus.CALL_USER:
+        console.log(`${indent}${colors.warning(`${icons.warning} Needs user input`)}`);
+        break;
+      case GUIAgentStatus.USER_STOPPED:
+        console.log(`${indent}${colors.warning(`${icons.warning} Stopped`)}`);
+        break;
+      default:
+        break;
+    }
+  }
+
   private buildSystemPrompt(): string {
     return `You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
 
@@ -224,6 +302,8 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     // Start running agent
     data.status = GUIAgentStatus.RUNNING;
     data.systemPrompt = this.systemPrompt;
+    console.log(`${colors.primaryBright(`${icons.rocket} GUI Agent started`)}`);
+    console.log('');
     await this.onData?.({ ...data, conversations: [] });
 
     try {
@@ -347,6 +427,12 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           conversations: data.conversations.slice(-1),
         });
 
+        // Display screenshot notification
+        const latestScreenshot = data.conversations[data.conversations.length - 1];
+        if (latestScreenshot && latestScreenshot.from === 'human' && latestScreenshot.screenshotBase64) {
+          this.displayConversationResult(latestScreenshot, loopCnt);
+        }
+
         // Build messages for model
         const messages = this.buildModelMessages(data.conversations, data.systemPrompt);
 
@@ -466,6 +552,12 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           ...data,
           conversations: data.conversations.slice(-1),
         });
+
+        // Display assistant response
+        const latestAssistant = data.conversations[data.conversations.length - 1];
+        if (latestAssistant && latestAssistant.from === 'assistant') {
+          this.displayConversationResult(latestAssistant, loopCnt);
+        }
 
         // Check if we need to switch operator based on first action
         // Execute actions
@@ -622,18 +714,8 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       // Ensure the returned status is correct (reassign)
       this.logger.debug(`[GUIAgent] Finally: finalStatus=${finalStatus}, finalError=${finalError}, data.status=${data.status}, data.error=${data.error}`);
 
-      // Output meaningful status message
-      if (finalStatus === GUIAgentStatus.END) {
-        // Task completed successfully - no output (caller handles success message)
-      } else if (finalStatus === GUIAgentStatus.ERROR && finalError) {
-        console.log(`\n${colors.error('✖')} ${finalError}\n`);
-      } else if (finalStatus === GUIAgentStatus.CALL_USER) {
-        console.log(`\n${colors.warning('⚠')} Requires user assistance to continue\n`);
-      } else if (finalStatus === GUIAgentStatus.USER_STOPPED) {
-        console.log(`\n${colors.warning('⚠')} Task stopped by user\n`);
-      } else {
-        console.log(`\n${colors.warning('⚠')} Task ended with status: ${finalStatus}\n`);
-      }
+      // Log final status (only visible when showAIDebugInfo is enabled)
+      this.logger.debug(`[GUIAgent] Final status: ${finalStatus}${finalError ? `, Error: ${finalError}` : ''}, Steps: ${loopCnt}`);
 
       data.status = finalStatus;
       data.error = finalError;

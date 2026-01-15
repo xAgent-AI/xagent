@@ -1168,66 +1168,6 @@ export class TaskTool implements Tool {
           message: `GUI task "${description}" stopped by user`,
           result: 'User stopped'
         };
-      } else if (result.status === 'call_user') {
-        // GUI agent requested user assistance - this is NOT a failure
-        // Print summary of what happened and why
-        console.log('');
-        console.log(`${indent}${colors.warning(`${icons.warning} GUI agent needs user assistance`)}`);
-        console.log(`${indent}${colors.border(icons.separator.repeat(60))}`);
-        
-        // Get the last few actions for context
-        const conversations = result.conversations || [];
-        const lastActions = conversations.filter((c: any) => c.from === 'assistant' && c.actionType).slice(-3);
-        
-        console.log(`${indent}${colors.primary('Summary:')}`);
-        console.log(`${indent}  - Task: ${description}`);
-        console.log(`${indent}  - Total iterations: ${conversations.filter((c: any) => c.from === 'human' && c.screenshotBase64).length}`);
-        console.log(`${indent}  - Last actions taken:`);
-        lastActions.forEach((action: any, idx: number) => {
-          const actionInfo = action.actionType ? `  ${idx + 1}. ${action.actionType}` : `  ${idx + 1}. Assistant response`;
-          console.log(`${indent}    ${actionInfo}`);
-        });
-        
-        console.log('');
-        console.log(`${indent}${colors.textDim('The GUI agent has actively attempted to complete the task but requires')}`);
-        console.log(`${indent}${colors.textDim('human intervention to proceed. This is not a failure - the agent tried its best.')}`);
-        console.log('');
-        
-        // Ask user for next action
-        console.log(`${indent}${colors.primary('Please choose next action:')}`);
-        console.log(`${indent}  [1] End task - I will continue manually (default)`);
-        console.log(`${indent}  [2] Let bash commands take over and continue automation`);
-        
-        // Get user input
-        const rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout
-        });
-        
-        const answer = await new Promise<string>((resolve) => {
-          rl.question(`${indent}Enter choice (1/2, default=1): `, (ans) => {
-            rl.close();
-            resolve(ans.trim());
-          });
-        });
-        
-        console.log('');
-        
-        if (answer === '2') {
-          // User chose to let bash take over
-          return {
-            success: false,
-            message: `GUI task "${description}" requested user assistance, falling back to bash`,
-            result: { fallbackToBash: true, originalRequest: description }
-          };
-        } else {
-          // User chose to end task (default)
-          return {
-            success: true,
-            message: `GUI task "${description}" requires user assistance - ended for manual operation`,
-            result: { userManual: true, originalRequest: description }
-          };
-        }
       } else {
         // status is 'error' or other non-success status
         const errorMsg = result.error || 'Unknown error';

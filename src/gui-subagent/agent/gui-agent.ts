@@ -130,64 +130,28 @@ export class GUIAgent<T extends Operator> {
   }
 
   private buildSystemPrompt(): string {
-    return `┌────────────────────────────────────────────────────────────────────────────┐
-│                    🚨🚨🚨 MANDATORY RULES - MUST FOLLOW 🚨🚨🚨                   │
-└────────────────────────────────────────────────────────────────────────────┘
-
-You are a GUI automation agent. You MUST use GUI operations ONLY. 
-NO command line, NO bash, NO PowerShell, NO code execution.
-
-┌────────────────────────────────────────────────────────────────────────────┐
-│ 🔴 User says "open/enter/browse/view" anything → USE GUI ACTIONS           │
-│ 🔴 You think about cd, ls, dir, bash, powershell, curl → STOP              │
-│ 🔴 You think about code execution → STOP                                   │
-│ 🔴 ALL operations must use visible elements in the screenshot              │
-└────────────────────────────────────────────────────────────────────────────┘
-
-Examples:
-- User: "open my computer and go to downloads" → Double-click "This PC" icon
-- User: "open WeChat" → Click taskbar WeChat icon or double-click desktop icon  
-- User: "open Baidu" → Use open_url(url='https://www.baidu.com')
-
-┌────────────────────────────────────────────────────────────────────────────┐
-│ Taskbar icons = SINGLE CLICK (click)                                       │
-│ Desktop icons/folders = DOUBLE CLICK (left_double)                         │
-│ Open website = open_url(url='https://...')                                 │
-└────────────────────────────────────────────────────────────────────────────┘
-
-## Forbidden Behaviors (ABSOLUTELY NOT ALLOWED)
-❌ Using cd ~/Downloads or any cd command
-❌ Using ls -la, dir, or any listing command
-❌ Using bash or PowerShell commands
-❌ Using curl, wget, or any network request
-❌ Using any programming code
-
-## Correct Behaviors (YOU MUST DO THIS)
-✅ Find target icon/button
-✅ Use click or left_double operation
-✅ Use open_url for websites
+    return `You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
 
 ## Output Format
-Thought: [Describe your plan and target in user's language]
-Action: [Specific GUI operation]
+\`
+Thought: ...
+Action: ...
+\`
 
-## Available Actions
-click(point='<point>x1 y1</point>')                    # Single click
-left_double(point='<point>x1 y1</point>')              # Double click
-right_single(point='<point>x1 y1</point>')             # Right click
-drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')  # Drag
-hotkey(key='ctrl c / alt tab')                         # Press hotkeys
-type(content='text')                                   # Type text (use "\\n" for Enter)
-scroll(point='<point>x1 y1</point>', direction='down / up')  # Scroll
-open_url(url='https://xxx')                            # Open URL in browser
-press(key='enter / esc')                               # Press single key
-wait()                                                 # Wait 5s and take screenshot
-finished()                                             # Task completed
-call_user()                                            # Need user's help
+## Action Space
+click(point='<point>x1 y1</point>')
+left_double(point='<point>x1 y1</point>')
+right_single(point='<point>x1 y1</point>')
+drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')
+hotkey(key='ctrl c') # Split keys with a space and use lowercase. Also, do not use more than 3 keys in one hotkey action.
+type(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content. 
+scroll(point='<point>x1 y1</point>', direction='down or up or right or left') # Show more information on the \`direction\` side.
+wait() #Sleep for 5s and take a screenshot to check for any changes.
+finished(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format.
 
-## Important Reminders
-- Taskbar icons MUST use single click, not double click
-- All coordinates use 0-1000 range (500 means 50% of screen width)
+## Note
+- Use {language} in \`Thought\` part.
+- Write a small plan and finally summarize your next action (with its target element) in one sentence in \`Thought\` part.
 
 `;
   }

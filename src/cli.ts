@@ -7,7 +7,7 @@ import { getConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { getAgentManager } from './agents.js';
 import { getMCPManager } from './mcp.js';
-import { getLogger } from './logger.js';
+import { getLogger, setConfigProvider } from './logger.js';
 import { theme, icons, colors } from './theme.js';
 import { getCancellationManager } from './cancellation.js';
 
@@ -15,6 +15,14 @@ const logger = getLogger();
 
 // Initialize CancellationManager early to set up ESC handler
 getCancellationManager();
+
+// Set up config provider for logger to read loggerLevel
+setConfigProvider(() => {
+  const configManager = getConfigManager();
+  return {
+    getLoggerLevel: () => configManager.getLoggerLevel()
+  };
+});
 
 const program = new Command();
 

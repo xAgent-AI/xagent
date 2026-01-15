@@ -17,6 +17,9 @@ import type { Operator } from '../operator/base-operator.js';
 import { sleep, asyncRetry } from '../utils.js';
 import { actionParser } from '../action-parser/index.js';
 import { colors } from '../../theme.js';
+import { getLogger } from '../../logger.js';
+
+const guiLogger = getLogger();
 
 const GUI_TOOL_NAME = 'gui_operate';
 
@@ -39,7 +42,7 @@ export interface GUIAgentConfig<T extends Operator> {
   systemPrompt?: string;
   loopIntervalInMs?: number;
   maxLoopCount?: number;
-  logger?: Console;
+  logger?: any;
   signal?: AbortSignal;
   onData?: (data: GUIAgentData) => void;
   onError?: (error: Error) => void;
@@ -119,7 +122,7 @@ export class GUIAgent<T extends Operator> {
     this.modelApiKey = config.modelApiKey || '';
     this.loopIntervalInMs = config.loopIntervalInMs || 0;
     this.maxLoopCount = config.maxLoopCount || MAX_LOOP_COUNT;
-    this.logger = config.logger || console;
+    this.logger = config.logger || guiLogger;
     this.signal = config.signal;
     this.onData = config.onData;
     this.onError = config.onError;
@@ -206,7 +209,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     const currentTime = Date.now();
 
     if (this.showAIDebugInfo) {
-      this.logger.info('[GUIAgent] run:', {
+      this.logger.debug('[GUIAgent] run:', {
         systemPrompt: this.systemPrompt,
         model: this.model,
         maxLoopCount: this.maxLoopCount,
@@ -225,7 +228,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       // eslint-disable-next-line no-constant-condition
       while (true) {
         if (this.showAIDebugInfo) {
-          this.logger.info('[GUIAgent] loopCnt:', loopCnt);
+          this.logger.debug('[GUIAgent] loopCnt:', loopCnt);
         }
 
         // Check pause status
@@ -433,8 +436,8 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         }
 
         if (this.showAIDebugInfo) {
-          this.logger.info('[GUIAgent] Response:', prediction);
-          this.logger.info('[GUIAgent] Parsed Predictions:', JSON.stringify(parsedPredictions));
+          this.logger.debug('[GUIAgent] Response:', prediction);
+          this.logger.debug('[GUIAgent] Parsed Predictions:', JSON.stringify(parsedPredictions));
         }
 
         const predictionSummary = this.getSummary(prediction);
@@ -468,7 +471,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           const actionType = parsedPrediction.action_type;
 
           if (this.showAIDebugInfo) {
-            this.logger.info('[GUIAgent] Action:', actionType);
+            this.logger.debug('[GUIAgent] Action:', actionType);
           }
 
           // Handle internal action spaces
@@ -488,7 +491,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
             let stepSuccess = false;
             let lastErrorMsg = '';
 
-            this.logger.info(`[GUIAgent] Executing action: ${actionType}, loopCnt: ${loopCnt}`);
+            this.logger.debug(`[GUIAgent] Executing action: ${actionType}, loopCnt: ${loopCnt}`);
 
             while (stepRetryCount < MAX_STEP_RETRIES && !stepSuccess) {
               try {
@@ -607,7 +610,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       }
 
       if (this.showAIDebugInfo) {
-        this.logger.info('[GUIAgent] Final status:', {
+        this.logger.debug('[GUIAgent] Final status:', {
           status: finalStatus,
           loopCnt,
           totalConversations: data.conversations.length,
@@ -615,7 +618,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       }
 
       // Ensure the returned status is correct (reassign)
-      this.logger.info(`[GUIAgent] Finally: finalStatus=${finalStatus}, finalError=${finalError}, data.status=${data.status}, data.error=${data.error}`);
+      this.logger.debug(`[GUIAgent] Finally: finalStatus=${finalStatus}, finalError=${finalError}, data.status=${data.status}, data.error=${data.error}`);
 
       // Output meaningful status message
       if (finalStatus === GUIAgentStatus.END) {
@@ -877,7 +880,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
   }
 
   async cleanup(): Promise<void> {
-    this.logger.info('Cleaning up GUI Agent...');
+    this.logger.debug('Cleaning up GUI Agent...');    
     await this.operator.cleanup();
 
     // Cleanup cancellation listener if attached

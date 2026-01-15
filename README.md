@@ -218,6 +218,7 @@ Customize xAgent by editing `~/.xagent/settings.json`:
   "telemetryEnabled": true,
   "showToolDetails": false,
   "showAIDebugInfo": false,
+  "loggerLevel": "info",
   "contextCompress": {
     "enabled": false,
     "autoTrigger": false,

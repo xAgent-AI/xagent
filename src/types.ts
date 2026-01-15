@@ -6,6 +6,14 @@ export enum ExecutionMode {
   SMART = 'smart'
 }
 
+export enum LogLevel {
+  ERROR = 'error',
+  WARN = 'warn',
+  SUCCESS = 'success',
+  INFO = 'info',
+  DEBUG = 'debug'
+}
+
 export enum AuthType {
   OAUTH_XAGENT = 'oauth-xagent',
   API_KEY = 'api_key',
@@ -91,6 +99,7 @@ export interface Settings {
   telemetryEnabled: boolean;
   showToolDetails: boolean;
   showAIDebugInfo: boolean;
+  loggerLevel: LogLevel;
 }
 
 export interface ChatMessage {

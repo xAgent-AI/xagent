@@ -21,26 +21,29 @@ import {
 import { Jimp } from 'jimp';
 import type { OperatorConfig, ScreenContext, ScreenshotOutput, ExecuteParams, ExecuteOutput } from '../types/operator.js';
 import { Operator, type OperatorManual, parseBoxToScreenCoords } from './base-operator.js';
+import { getLogger } from '../../logger.js';
+
+const guiLogger = getLogger();
 
 export interface ComputerOperatorOptions {
   config?: OperatorConfig;
   computerConfig?: Record<string, any>;
-  logger?: Console;
+  logger?: any;
 }
 
 export class ComputerOperator extends Operator {
   private config: OperatorConfig;
-  private logger: Console;
+  private logger: any;
   private screenCtx: ScreenContext | null = null;
 
   constructor(options: ComputerOperatorOptions = {}) {
     super();
     this.config = options.config || {};
-    this.logger = options.logger || console;
+    this.logger = options.logger || guiLogger;
   }
 
   protected async initialize(): Promise<void> {
-    this.logger.info('Initializing computer operator...');
+    this.logger.debug('Initializing computer operator...');
 
     try {
       const { width, height, scaleFactor } = await this.getScreenSize();
@@ -50,7 +53,7 @@ export class ComputerOperator extends Operator {
         scaleFactor,
       };
 
-      this.logger.info(`Computer operator initialized: ${width}x${height} @ ${scaleFactor}x`);
+      this.logger.debug(`Computer operator initialized: ${width}x${height} @ ${scaleFactor}x`);
     } catch (error) {
       this.logger.error('Failed to initialize computer operator:', error);
       throw error;
@@ -132,7 +135,7 @@ export class ComputerOperator extends Operator {
         })
         .getBuffer('image/png');
 
-      this.logger.info(`[ComputerOperator] screenshot: ${width}x${height}, scaleFactor: ${scaleFactor}`);
+      this.logger.debug(`[ComputerOperator] screenshot: ${width}x${height}, scaleFactor: ${scaleFactor}`);
 
       return {
         status: 'success',
@@ -171,7 +174,7 @@ export class ComputerOperator extends Operator {
 
     mouse.config.mouseSpeed = 3600;
 
-    // this.logger.info('[ComputerOperator] execute', { action_type, startX, startY, scaleFactor });
+    // this.logger.debug('[ComputerOperator] execute', { action_type, startX, startY, scaleFactor });
 
     try {
       const result = await this.executeAction(action_type, action_inputs, { startX, startY, screenWidth, screenHeight, scaleFactor });
@@ -237,7 +240,7 @@ export class ComputerOperator extends Operator {
               lowercaseKeyMap[k as Lowercase<keyof typeof Key>],
           )
           .filter(Boolean);
-        this.logger.info('[ComputerOperator] hotkey:', keys);
+        this.logger.debug('[ComputerOperator] hotkey:', keys);
         return keys;
       }
       return [];
@@ -245,20 +248,20 @@ export class ComputerOperator extends Operator {
 
     switch (actionType) {
       case 'wait':
-        this.logger.info('[ComputerOperator] wait', inputs);
+        this.logger.debug('[ComputerOperator] wait', inputs);
         await sleep(5000);
         break;
 
       case 'mouse_move':
       case 'hover':
-        this.logger.info('[ComputerOperator] mouse_move');
+        this.logger.debug('[ComputerOperator] mouse_move');
         await moveStraightTo(startX, startY);
         break;
 
       case 'click':
       case 'left_click':
       case 'left_single':
-        this.logger.info('[ComputerOperator] left_click');
+        this.logger.debug('[ComputerOperator] left_click');
         await moveStraightTo(startX, startY);
         await sleep(100);
         await mouse.click(Button.LEFT);
@@ -266,7 +269,7 @@ export class ComputerOperator extends Operator {
 
       case 'left_double':
       case 'double_click':
-        this.logger.info(`[ComputerOperator] ${actionType}(${startX}, ${startY})`);
+        this.logger.debug(`[ComputerOperator] ${actionType}(${startX}, ${startY})`);
         await moveStraightTo(startX, startY);
         await sleep(100);
         await mouse.doubleClick(Button.LEFT);
@@ -274,14 +277,14 @@ export class ComputerOperator extends Operator {
 
       case 'right_click':
       case 'right_single':
-        this.logger.info('[ComputerOperator] right_click');
+        this.logger.debug('[ComputerOperator] right_click');
         await moveStraightTo(startX, startY);
         await sleep(100);
         await mouse.click(Button.RIGHT);
         break;
 
       case 'middle_click':
-        this.logger.info('[ComputerOperator] middle_click');
+        this.logger.debug('[ComputerOperator] middle_click');
         await moveStraightTo(startX, startY);
         await mouse.click(Button.MIDDLE);
         break;
@@ -298,7 +301,7 @@ export class ComputerOperator extends Operator {
           });
 
           if (startX && startY && endX && endY) {
-            this.logger.info(
+            this.logger.debug(
               `[ComputerOperator] drag coordinates: startX=${startX}, startY=${startY}, endX=${endX}, endY=${endY}`,
             );
             await moveStraightTo(startX, startY);
@@ -311,7 +314,7 @@ export class ComputerOperator extends Operator {
 
       case 'type': {
         const content = inputs.content?.trim();
-        this.logger.info('[ComputerOperator] type', content);
+        this.logger.debug('[ComputerOperator] type', content);
         if (content) {
           const stripContent = content.replace(/\\n$/, '').replace(/\n$/, '');
           keyboard.config.autoDelayMs = 0;
@@ -395,7 +398,7 @@ export class ComputerOperator extends Operator {
           url = 'https://' + url;
         }
 
-        this.logger.info(`[ComputerOperator] Opening URL: ${url}`);
+        this.logger.debug(`[ComputerOperator] Opening URL: ${url}`);
 
         // Use system command to open URL in default browser
         const { exec } = await import('child_process');
@@ -453,7 +456,7 @@ export class ComputerOperator extends Operator {
       case 'call_user':
       case 'finished':
       case 'user_stop':
-        this.logger.info(`[ComputerOperator] ${actionType}`);
+        this.logger.debug(`[ComputerOperator] ${actionType}`);
         return 'end';
 
       default:
@@ -462,11 +465,11 @@ export class ComputerOperator extends Operator {
   }
 
   async cleanup(): Promise<void> {
-    this.logger.info('Cleaning up computer operator...');
+    this.logger.debug('Cleaning up computer operator...');
   }
 
   async destroyInstance(): Promise<void> {
-    this.logger.info('Destroying computer operator instance...');
+    this.logger.debug('Destroying computer operator instance...');
     await this.cleanup();
   }
 

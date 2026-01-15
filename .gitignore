@@ -31,6 +31,7 @@ out/
 *.swo
 *~
 .cache/
+workspace/
 
 # 编辑器
 .vscode/

@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS: Settings = {
   guiSubagentBaseUrl: 'https://apis.xagent.cn/v1',
   guiSubagentApiKey: '',
   searchApiKey: '',
+  skillsPath: '',  // Will be auto-detected if not set
   executionMode: ExecutionMode.SMART,
   approvalMode: ExecutionMode.SMART,
   checkpointing: {
@@ -189,6 +190,14 @@ export class ConfigManager {
 
   setLoggerLevel(level: LogLevel): void {
     this.settings.loggerLevel = level;
+  }
+  
+  getSkillsPath(): string | undefined {
+    return this.settings.skillsPath;
+  }
+
+  setSkillsPath(path: string): void {
+    this.settings.skillsPath = path;
   }
 
   private readConfigFile(filePath: string): Partial<Settings> {

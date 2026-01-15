@@ -1,8 +1,11 @@
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
 import axios from 'axios';
 import { AgentConfig, MCPServerConfig } from './types.js';
+import { SkillLoader, getSkillLoader } from './skill-loader.js';
+import { getConfigManager } from './config.js';
 
 export interface WorkflowConfig {
   id: string;
@@ -34,6 +37,64 @@ export class WorkflowManager {
     
     if (this.projectWorkflowsPath) {
       await this.loadWorkflowsFromDirectory(this.projectWorkflowsPath, 'project');
+    }
+
+    // Load skills from the skills folder
+    await this.loadSkills();
+  }
+
+  private async findSkillsPath(): Promise<string | null> {
+    // First, try to get from config
+    const configManager = getConfigManager();
+    const configuredPath = configManager.getSkillsPath();
+
+    if (configuredPath) {
+      return configuredPath;
+    }
+
+    // Fallback: auto-detect relative to script location
+    const scriptDir = path.dirname(process.argv[1]);
+    const possiblePaths = [
+      path.join(scriptDir, '..', 'skills', 'skills'),
+      path.join(scriptDir, '..', '..', 'skills', 'skills'),
+      path.join(scriptDir, 'skills', 'skills'),
+      path.join(scriptDir, '..', '..', '..', 'skills', 'skills'),
+      path.join(process.cwd(), 'skills', 'skills')
+    ];
+
+    for (const p of possiblePaths) {
+      try {
+        const resolvedPath = path.resolve(p);
+        const stat = await fs.stat(resolvedPath);
+        if (stat.isDirectory()) {
+          return resolvedPath;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  async loadSkills(): Promise<void> {
+    try {
+      const skillsPath = await this.findSkillsPath();
+      if (!skillsPath) return;
+
+      const skillLoader = getSkillLoader({ skillsRootPath: skillsPath });
+      await skillLoader.loadAllSkills();
+
+      const workflows = await skillLoader.convertAllToWorkflows();
+      for (const workflow of workflows) {
+        this.installedWorkflows.set(workflow.id, workflow);
+      }
+
+      if (workflows.length > 0) {
+        console.log(`✅ Loaded ${workflows.length} skills from skills folder`);
+      }
+    } catch (error) {
+      // Skills folder is optional, so we silently ignore errors
     }
   }
 
@@ -259,8 +320,54 @@ export class WorkflowManager {
     return Array.from(this.installedWorkflows.values());
   }
 
+  async listSkills(): Promise<{ id: string; name: string; description: string; category: string }[]> {
+    try {
+      const skillsPath = await this.findSkillsPath();
+      if (!skillsPath) return [];
+
+      const skillLoader = getSkillLoader({ skillsRootPath: skillsPath });
+      const skills = await skillLoader.loadAllSkills();
+      
+      return skills.map(skill => ({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        category: skill.category
+      }));
+    } catch (error) {
+      console.error('Failed to list skills:', error);
+      return [];
+    }
+  }
+
   getWorkflow(workflowId: string): WorkflowConfig | undefined {
     return this.installedWorkflows.get(workflowId);
+  }
+
+  async getSkillDetails(skillId: string): Promise<{ id: string; name: string; description: string; content: string; category: string } | null> {
+    try {
+      const skillsPath = await this.findSkillsPath();
+      if (!skillsPath) return null;
+
+      const skillLoader = getSkillLoader({ skillsRootPath: skillsPath });
+      
+      // Reload skills to ensure we have the latest
+      await skillLoader.loadAllSkills();
+      
+      const skill = skillLoader.getSkill(skillId);
+      if (!skill) return null;
+
+      return {
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        content: skill.markdown,
+        category: skill.category
+      };
+    } catch (error) {
+      console.error(`Failed to get skill details for ${skillId}:`, error);
+      return null;
+    }
   }
 
   async listOnlineWorkflows(): Promise<WorkflowConfig[]> {

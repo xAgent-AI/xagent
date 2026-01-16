@@ -532,7 +532,7 @@ export class InteractiveSession {
       const toolRegistry = getToolRegistry();
       const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
-      const enhancedSystemPrompt = systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
+      const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
       const result: CompressionResult = await this.contextCompressor.compressContext(
         this.conversation,
@@ -664,7 +664,7 @@ export class InteractiveSession {
 
       const baseSystemPrompt = this.currentAgent?.systemPrompt;
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
-      const enhancedSystemPrompt = systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
+      const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
       const messages: Message[] = [
         { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}` },

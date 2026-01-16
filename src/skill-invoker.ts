@@ -4,6 +4,54 @@ import os from 'os';
 import { getSkillLoader, SkillInfo, SkillLoader } from './skill-loader.js';
 import { getToolRegistry } from './tools.js';
 import { ExecutionMode, Tool } from './types.js';
+import { getConfigManager } from './config.js';
+
+// Re-export SkillInfo for other modules
+export type { SkillInfo };
+
+/**
+ * Track skill execution history for tracking failures
+ */
+export class SkillExecutionHistory {
+  private history: Map<string, number> = new Map();
+
+  /**
+   * Get failure count for a task
+   */
+  getFailureCount(taskKey: string): number {
+    return this.history.get(taskKey) || 0;
+  }
+
+  /**
+   * Increment failure count for a task
+   */
+  incrementFailure(taskKey: string): number {
+    const count = this.getFailureCount(taskKey) + 1;
+    this.history.set(taskKey, count);
+    return count;
+  }
+
+  /**
+   * Reset failure count for a task (e.g., after success)
+   */
+  reset(taskKey: string): void {
+    this.history.delete(taskKey);
+  }
+
+  /**
+   * Check if threshold reached
+   */
+  shouldUseFallback(taskKey: string, threshold: number = 2): boolean {
+    return this.getFailureCount(taskKey) >= threshold;
+  }
+}
+
+// Singleton execution history
+const executionHistory = new SkillExecutionHistory();
+
+export function getExecutionHistory(): SkillExecutionHistory {
+  return executionHistory;
+}
 
 export interface SkillExecutionParams {
   skillId: string;
@@ -11,13 +59,38 @@ export interface SkillExecutionParams {
   inputFile?: string;
   outputFile?: string;
   options?: Record<string, any>;
+  /** Task ID for workspace directory naming */
+  taskId?: string;
 }
 
+/**
+ * Execution step interface - tells Agent what to do next
+ */
+export interface ExecutionStep {
+  step: number;
+  action: string;
+  description: string;
+  command?: string;
+  file?: string;
+  reason: string;
+}
+
+/**
+ * Skill execution result - contains guidance and next actions
+ */
 export interface SkillExecutionResult {
   success: boolean;
   output?: string;
   error?: string;
   files?: string[];
+  /** Tells Agent what to do next */
+  nextSteps?: ExecutionStep[];
+  /** Skill type for determining if manual execution is needed */
+  requiresManualExecution?: boolean;
+  /** Workspace directory used, for cleanup */
+  workspaceDir?: string;
+  /** Files to preserve (relative paths), skipped during cleanup */
+  preserveFiles?: string[];
 }
 
 export interface SkillMatcherResult {
@@ -27,7 +100,239 @@ export interface SkillMatcherResult {
   category: string;
 }
 
-// 技能类别到关键词的映射
+// ============================================================
+// Workspace Utility Functions
+// ============================================================
+
+/**
+ * Get workspace directory path
+ * @param taskId Task ID for creating unique workspace directory
+ * @returns Absolute path to workspace directory
+ */
+export function getWorkspaceDir(taskId: string): string {
+  // Try to get from config first
+  try {
+    const configManager = getConfigManager();
+    const config = configManager.getSettings?.();
+    if (config?.workspacePath) {
+      return path.join(config.workspacePath, taskId);
+    }
+  } catch {
+    // Config not available, use default
+  }
+
+  // Default to ~/.xagent/workspace
+  return path.join(os.homedir(), '.xagent', 'workspace', taskId);
+}
+
+/**
+ * Get base workspace directory (without task-id)
+ */
+export function getBaseWorkspaceDir(): string {
+  try {
+    const configManager = getConfigManager();
+    const config = configManager.getSettings?.();
+    if (config?.workspacePath) {
+      return config.workspacePath;
+    }
+  } catch {
+    // Config not available, use default
+  }
+
+  return path.join(os.homedir(), '.xagent', 'workspace');
+}
+
+/**
+ * Get workspace directory description for AI
+ * Returns the actual workspace path from config, or default path
+ */
+export function getWorkspaceDescription(): string {
+  try {
+    const configManager = getConfigManager();
+    const config = configManager.getSettings?.();
+    if (config?.workspacePath) {
+      return config.workspacePath;
+    }
+  } catch {
+    // Config not available, use default
+  }
+
+  return path.join(os.homedir(), '.xagent', 'workspace');
+}
+
+/**
+ * Ensure workspace directory exists
+ * @param workspaceDir Workspace directory path
+ */
+export async function ensureWorkspaceDir(workspaceDir: string): Promise<void> {
+  await fs.mkdir(workspaceDir, { recursive: true });
+}
+
+/**
+ * Clean up workspace directory
+ * @param workspaceDir Workspace directory path
+ * @param preserveFiles Files to preserve (relative paths)
+ */
+export async function cleanupWorkspace(workspaceDir: string, preserveFiles: string[] = []): Promise<void> {
+  try {
+    const entries = await fs.readdir(workspaceDir, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = path.join(workspaceDir, entry.name);
+
+      // Skip files to preserve
+      if (preserveFiles.includes(entry.name)) {
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        // Recursively delete subdirectories
+        await fs.rm(fullPath, { recursive: true, force: true });
+      } else {
+        // Delete files
+        await fs.unlink(fullPath);
+      }
+    }
+  } catch (error: any) {
+    if (error.code !== 'ENOENT') {
+      console.warn(`Workspace cleanup failed: ${error.message}`);
+    }
+  }
+}
+
+/**
+ * Determine if workspace should be auto-cleaned based on ExecutionMode
+ * @param executionMode Execution mode
+ * @returns Whether auto-cleanup should happen
+ */
+export function shouldAutoCleanup(executionMode: ExecutionMode): boolean {
+  // YOLO mode: fully automatic, clean up directly
+  if (executionMode === ExecutionMode.YOLO) {
+    return true;
+  }
+  // Other modes require user confirmation
+  return false;
+}
+
+/**
+ * Generate cleanup prompt message
+ * @param workspaceDir Workspace directory path
+ */
+export async function getCleanupInfo(workspaceDir: string): Promise<{ files: string[]; totalSize: string }> {
+  try {
+    const entries = await fs.readdir(workspaceDir, { withFileTypes: true });
+    const files: string[] = [];
+
+    for (const entry of entries) {
+      files.push(entry.name);
+    }
+
+    // Calculate total size
+    let totalSize = 0;
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        const stats = await fs.stat(path.join(workspaceDir, entry.name));
+        totalSize += stats.size;
+      }
+    }
+
+    const formatSize = (bytes: number): string => {
+      if (bytes < 1024) return `${bytes} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+    };
+
+    return { files, totalSize: formatSize(totalSize) };
+  } catch {
+    return { files: [], totalSize: '0 B' };
+  }
+}
+
+// ============================================================
+// Shared Content Extraction Utilities
+// ============================================================
+
+/**
+ * Remove Markdown formatting (bold, italic, etc.)
+ */
+export function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, '$1')  // Remove bold **
+    .replace(/\*(.+?)\*/g, '$1')      // Remove italic *
+    .replace(/`(.+?)`/g, '$1')        // Remove inline code `
+    .trim();
+}
+
+/**
+ * Extract content related to keywords (for SKILL.md content matching)
+ * @param content SKILL.md full content
+ * @param keywords Keyword list
+ * @param maxLength Maximum return length
+ * @returns Extracted relevant content
+ */
+export function extractContent(content: string, keywords: string[], maxLength: number = 5000): string {
+  const lines = content.split('\n');
+  const relevantLines: string[] = [];
+  let inRelevantSection = false;
+  let sectionDepth = 0;
+  let found = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Detect headings
+    if (line.match(/^#{1,6}\s/)) {
+      const strippedLine = stripMarkdown(line);
+      const lowerLine = strippedLine.toLowerCase();
+
+      // Check if contains keywords
+      const hasKeyword = keywords.some(kw => lowerLine.includes(kw.toLowerCase()));
+
+      if (hasKeyword) {
+        inRelevantSection = true;
+        found = true;
+        sectionDepth = line.match(/^(#+)/)?.[1].length || 1;
+      } else if (inRelevantSection) {
+        // Check if same level or higher heading (end current section)
+        const currentDepth = line.match(/^(#+)/)?.[1].length || 1;
+        if (currentDepth <= sectionDepth) {
+          inRelevantSection = false;
+        }
+      }
+    }
+
+    if (inRelevantSection || found) {
+      relevantLines.push(line);
+    }
+
+    // Limit content length
+    if (relevantLines.join('\n').length > maxLength) {
+      relevantLines.push('\n...(content truncated for brevity)...');
+      break;
+    }
+  }
+
+  if (relevantLines.length > 0) {
+    return relevantLines.join('\n').trim();
+  }
+
+  // If still not found, return first 100 lines
+  return lines.slice(0, 100).join('\n').trim() + '\n\n...(See SKILL.md for full instructions)';
+}
+
+/**
+ * Read SKILL.md and extract relevant content based on task
+ */
+export async function readSkillContent(skillPath: string, keywords: string[], maxLength: number = 5000): Promise<string> {
+  const skillMdPath = path.join(skillPath, 'SKILL.md');
+  const content = await fs.readFile(skillMdPath, 'utf-8');
+  return extractContent(content, keywords, maxLength);
+}
+
+// ============================================================
+// SKILL Trigger Keywords Mapping
+// ============================================================
+
 const SKILL_TRIGGERS: Record<string, { skillId: string; keywords: string[]; category: string }> = {
   docx: {
     skillId: 'docx',
@@ -161,6 +466,10 @@ const SKILL_TRIGGERS: Record<string, { skillId: string; keywords: string[]; cate
   }
 };
 
+// ============================================================
+// SkillInvoker Main Class
+// ============================================================
+
 export class SkillInvoker {
   private skillLoader: SkillLoader;
   private initialized: boolean = false;
@@ -182,7 +491,7 @@ export class SkillInvoker {
   }
 
   /**
-   * 获取所有可用的技能列表
+   * Get list of all available skills
    */
   async listAvailableSkills(): Promise<SkillInfo[]> {
     await this.initialize();
@@ -190,7 +499,7 @@ export class SkillInvoker {
   }
 
   /**
-   * 根据用户输入匹配最相关的技能
+   * Match the most relevant skill based on user input
    */
   async matchSkill(userInput: string): Promise<SkillMatcherResult | null> {
     await this.initialize();
@@ -198,7 +507,7 @@ export class SkillInvoker {
     const lowerInput = userInput.toLowerCase();
     let bestMatch: SkillMatcherResult | null = null;
 
-    // 首先检查预定义的触发词
+    // First check predefined trigger keywords
     for (const trigger of Object.values(SKILL_TRIGGERS)) {
       const matchedKeywords = trigger.keywords.filter(kw => lowerInput.includes(kw.toLowerCase()));
 
@@ -225,7 +534,7 @@ export class SkillInvoker {
   }
 
   /**
-   * 获取技能详情
+   * Get skill details
    */
   async getSkillDetails(skillId: string): Promise<SkillInfo | null> {
     await this.initialize();
@@ -233,7 +542,7 @@ export class SkillInvoker {
   }
 
   /**
-   * 执行技能
+   * Execute skill
    */
   async executeSkill(params: SkillExecutionParams): Promise<SkillExecutionResult> {
     const skill = this.skillCache.get(params.skillId);
@@ -245,10 +554,21 @@ export class SkillInvoker {
       };
     }
 
+    // Generate task ID (if not provided)
+    const taskId = params.taskId || `${params.skillId}-${Date.now()}`;
+
     try {
-      // 根据技能类型执行相应的处理逻辑
-      const executor = this.getSkillExecutor(skill.category);
-      return await executor.execute(skill, params);
+      // Execute based on skillId
+      const executor = this.getSkillExecutor(skill.id);
+      const result = await executor.execute(skill, { ...params, taskId });
+
+      // Add workspaceDir to result
+      if (result.success && result.nextSteps && result.nextSteps.length > 0) {
+        result.workspaceDir = getWorkspaceDir(taskId);
+        await ensureWorkspaceDir(result.workspaceDir);
+      }
+
+      return result;
     } catch (error: any) {
       return {
         success: false,
@@ -258,25 +578,73 @@ export class SkillInvoker {
   }
 
   /**
-   * 获取技能对应的执行器
+   * Clean up workspace based on execution result
+   * @param result Skill execution result
+   * @param executionMode Execution mode
+   * @returns Whether cleanup was performed
    */
-  private getSkillExecutor(category: string): SkillExecutor {
-    switch (category) {
-      case 'Document Processing':
-        return new DocumentSkillExecutor();
-      case 'Frontend & Web Development':
-        return new FrontendSkillExecutor();
-      case 'Visual & Creative Design':
-        return new VisualDesignSkillExecutor();
-      case 'Communication & Documentation':
-        return new DocumentationSkillExecutor();
-      default:
-        return new DefaultSkillExecutor();
+  async cleanupAfterExecution(result: SkillExecutionResult, executionMode: ExecutionMode): Promise<boolean> {
+    if (!result.workspaceDir) {
+      return false;
     }
+
+    // YOLO mode: auto cleanup
+    if (executionMode === ExecutionMode.YOLO) {
+      await cleanupWorkspace(result.workspaceDir, result.preserveFiles || []);
+      return true;
+    }
+
+    // Other modes: don't auto cleanup, let user decide
+    return false;
   }
 
   /**
-   * 生成技能调用说明（用于 system prompt）
+   * Get cleanup prompt (for asking user)
+   */
+  async getCleanupPrompt(result: SkillExecutionResult): Promise<string | null> {
+    if (!result.workspaceDir) {
+      return null;
+    }
+
+    const info = await getCleanupInfo(result.workspaceDir);
+    if (info.files.length === 0) {
+      return null;
+    }
+
+    return `Task completed! Workspace directory contains the following files:\n` +
+      `📁 ${result.workspaceDir}\n` +
+      `Files: ${info.files.join(', ')}\n` +
+      `Size: ${info.totalSize}\n\n` +
+      `Do you want to clean up these temporary files?`;
+  }
+
+  /**
+   * Get executor for skill
+   * Determine which executor to use based on skill.id
+   */
+  private getSkillExecutor(skillId: string): SkillExecutor {
+    const docProcessingSkills = ['docx', 'pdf', 'pptx', 'xlsx'];
+    const frontendSkills = ['frontend-design', 'web-artifacts-builder', 'webapp-testing'];
+    const visualDesignSkills = ['canvas-design', 'algorithmic-art', 'theme-factory', 'brand-guidelines', 'slack-gif-creator'];
+    const docSkills = ['doc-coauthoring', 'internal-comms'];
+
+    if (docProcessingSkills.includes(skillId)) {
+      return new DocumentSkillExecutor();
+    }
+    if (frontendSkills.includes(skillId)) {
+      return new FrontendSkillExecutor();
+    }
+    if (visualDesignSkills.includes(skillId)) {
+      return new VisualDesignSkillExecutor();
+    }
+    if (docSkills.includes(skillId)) {
+      return new DocumentationSkillExecutor();
+    }
+    return new DefaultSkillExecutor();
+  }
+
+  /**
+   * Generate skill invocation instructions (for system prompt)
    */
   generateSkillInstructions(): string {
     const categories = new Map<string, { skillId: string; name: string; description: string }[]>();
@@ -301,7 +669,7 @@ export class SkillInvoker {
       instructions += `### ${category}\n`;
       for (const skill of skills) {
         instructions += `**${skill.name}** (${skill.skillId}): ${skill.description}\n`;
-        instructions += `  → Use: InvokeSkill(skillId="${skill.skillId}", taskDescription="...")\n`;
+        instructions += `  �?Use: InvokeSkill(skillId="${skill.skillId}", taskDescription="...")\n`;
       }
       instructions += '\n';
     }
@@ -310,40 +678,53 @@ export class SkillInvoker {
   }
 }
 
+// ============================================================
+// Skill Executor Interface and Implementation
+// ============================================================
+
 interface SkillExecutor {
   execute(skill: SkillInfo, params: SkillExecutionParams): Promise<SkillExecutionResult>;
 }
 
+/**
+ * Document Processing Skill Executor
+ */
 class DocumentSkillExecutor implements SkillExecutor {
   async execute(skill: SkillInfo, params: SkillExecutionParams): Promise<SkillExecutionResult> {
     const outputMessages: string[] = [];
     const files: string[] = [];
+    const nextSteps: ExecutionStep[] = [];
 
-    outputMessages.push(`## ${skill.name} Skill\n`);
+    outputMessages.push(`## 🧠 ${skill.name} Skill - Autonomous Mode\n`);
+
     outputMessages.push(`**Task**: ${params.taskDescription}\n`);
 
-    // 读取技能文档完整内容
     try {
+      // Generate task ID
+      const taskId = params.taskId || `${skill.id}-${Date.now()}`;
+
+      // Read complete skill documentation
       const skillPath = skill.skillsPath;
       const skillMdPath = path.join(skillPath, 'SKILL.md');
       files.push(skillMdPath);
 
-      // 读取 SKILL.md 内容
-      const fs = await import('fs/promises');
+      // Read SKILL.md content
       const skillContent = await fs.readFile(skillMdPath, 'utf-8');
 
-      // 根据任务类型提取相关内容
-      const taskContent = this.extractRelevantContent(skill, params, skillContent);
+      // Extract relevant content based on task type and generate execution steps
+      const taskContent = await this.extractRelevantContent(skill, params, skillContent, nextSteps, taskId);
       outputMessages.push(taskContent);
 
-      // 如果有 input/output 文件，也加入文件列表
+      // Add input/output files to list if they exist
       if (params.inputFile) files.push(params.inputFile);
       if (params.outputFile) files.push(params.outputFile);
 
       return {
         success: true,
         output: outputMessages.join('\n'),
-        files: files
+        files: files,
+        nextSteps: nextSteps,
+        requiresManualExecution: true
       };
     } catch (error: any) {
       return {
@@ -354,254 +735,1149 @@ class DocumentSkillExecutor implements SkillExecutor {
   }
 
   /**
-   * 根据任务类型提取相关的 skill 内容
+   * Extract relevant skill content based on task type
    */
-  private extractRelevantContent(skill: SkillInfo, params: SkillExecutionParams, fullContent: string): string {
+  private async extractRelevantContent(
+    skill: SkillInfo,
+    params: SkillExecutionParams,
+    fullContent: string,
+    nextSteps: ExecutionStep[],
+    taskId: string
+  ): Promise<string> {
     const taskLower = params.taskDescription.toLowerCase();
-    let relevantSections: string[] = [];
+    const workspaceBase = getWorkspaceDescription();
+    const taskWorkspace = `${workspaceBase}/${taskId}`;
 
-    // 根据 skill 类型和任务描述提取相关内容
+    // Determine required files based on skill type
+    let requiredFiles: string[] = [];
+
     switch (skill.id) {
       case 'pptx':
-        return this.extractPptxContent(taskLower, fullContent);
+        requiredFiles = ['skills/pptx/SKILL.md', 'skills/pptx/html2pptx.md', 'skills/pptx/scripts/html2pptx.js'];
+        break;
       case 'docx':
-        return this.extractDocxContent(taskLower, fullContent);
+        requiredFiles = ['skills/docx/SKILL.md', 'skills/docx/docx-js.md', 'skills/docx/ooxml.md'];
+        break;
       case 'pdf':
-        return this.extractPdfContent(taskLower, fullContent);
+        requiredFiles = ['skills/pdf/SKILL.md', 'skills/pdf/reference.md', 'skills/pdf/forms.md'];
+        break;
       case 'xlsx':
-        return this.extractXlsxContent(taskLower, fullContent);
+        requiredFiles = ['skills/xlsx/SKILL.md', 'skills/xlsx/recalc.py'];
+        break;
+      case 'frontend-design':
+        requiredFiles = ['skills/frontend-design/SKILL.md'];
+        break;
+      case 'web-artifacts-builder':
+        requiredFiles = ['skills/web-artifacts-builder/SKILL.md'];
+        break;
+      case 'webapp-testing':
+        requiredFiles = ['skills/webapp-testing/SKILL.md', 'skills/webapp-testing/examples/'];
+        break;
+      case 'canvas-design':
+        requiredFiles = ['skills/canvas-design/SKILL.md'];
+        break;
+      case 'algorithmic-art':
+        requiredFiles = ['skills/algorithmic-art/SKILL.md', 'skills/algorithmic-art/templates/generator_template.js'];
+        break;
+      case 'theme-factory':
+        requiredFiles = ['skills/theme-factory/SKILL.md', 'skills/theme-factory/themes/'];
+        break;
+      case 'brand-guidelines':
+        requiredFiles = ['skills/brand-guidelines/SKILL.md'];
+        break;
+      case 'internal-comms':
+        requiredFiles = ['skills/internal-comms/SKILL.md', 'skills/internal-comms/examples/'];
+        break;
+      case 'doc-coauthoring':
+        requiredFiles = ['skills/doc-coauthoring/SKILL.md'];
+        break;
+      case 'mcp-builder':
+        requiredFiles = ['skills/mcp-builder/SKILL.md', 'skills/mcp-builder/reference/'];
+        break;
+      case 'skill-creator':
+        requiredFiles = ['skills/skill-creator/SKILL.md'];
+        break;
+      case 'slack-gif-creator':
+        requiredFiles = ['skills/slack-gif-creator/SKILL.md', 'skills/slack-gif-creator/core/'];
+        break;
       default:
-        return this.extractDefaultContent(skill, fullContent);
-    }
-  }
-
-  private extractPptxContent(taskLower: string, fullContent: string): string {
-    let content = '### PPTX Creation Workflow\n\n';
-
-    // 检测是否使用模板
-    const useTemplate = taskLower.includes('template') || taskLower.includes('模板');
-
-    if (useTemplate) {
-      content += this.extractSection(fullContent, 'Using a template') ||
-        '1. Extract template text: `python -m markitdown template.pptx > template-content.md`\n' +
-        '2. Create thumbnail grid: `python scripts/thumbnail.py template.pptx`\n' +
-        '3. Analyze and save template inventory\n' +
-        '4. Create presentation outline based on template layouts\n' +
-        '5. Duplicate/reorder slides: `python scripts/rearrange.py template.pptx working.pptx 0,34,50,...`\n' +
-        '6. Extract text inventory: `python scripts/inventory.py working.pptx text-inventory.json`\n' +
-        '7. Generate replacements: Create JSON with new text for each shape\n' +
-        '8. Apply replacements: `python scripts/replace.py working.pptx replacement-text.json output.pptx`\n';
-    } else {
-      content += this.extractSection(fullContent, 'Without a template') ||
-        this.extractSection(fullContent, 'Creating a new PowerPoint') ||
-        '### Creating New Presentation\n\n' +
-        '**Step 1**: Create HTML slides (720pt × 405pt for 16:9)\n' +
-        '```html\n' +
-        '<html>\n<body style="width: 720pt; height: 405pt;">\n' +
-        '  <h1>Title</h1>\n' +
-        '  <p>Content here</p>\n' +
-        '</body>\n</html>\n' +
-        '```\n\n' +
-        '**Step 2**: Convert using html2pptx\n' +
-        '```javascript\n' +
-        'const pptx = new PptxGenJS();\n' +
-        'pptx.layout = "LAYOUT_16x9";\n' +
-        'const { slide } = await html2pptx("slide.html", pptx);\n' +
-        'await pptx.writeFile({ fileName: "presentation.pptx" });\n' +
-        '```\n\n' +
-        '**Critical Rules**:\n' +
-        '- Text MUST be in <p>, <h1>-<h6>, <ul>, <ol> tags\n' +
-        '- Use web-safe fonts: Arial, Helvetica, Times New Roman, Georgia, Courier New\n' +
-        '- No manual bullets (•, -, *) - use <ul> or <ol>\n' +
-        '- Rasterize gradients/icons to PNG first using Sharp\n' +
-        '- Use class="placeholder" for charts/tables\n';
+        requiredFiles = [`skills/${skill.id}/SKILL.md`];
     }
 
-    return content;
-  }
+    nextSteps.push({
+      step: 1,
+      action: 'Read skill documentation',
+      description: `Read: ${requiredFiles.join(', ')}`,
+      reason: 'Understand the skill workflow and best practices'
+    });
 
-  private extractDocxContent(taskLower: string, fullContent: string): string {
-    let content = '### DOCX Creation/Editing Workflow\n\n';
+    nextSteps.push({
+      step: 2,
+      action: 'Analyze documentation and design approach',
+      description: `Based on SKILL.md, determine the best approach for: ${taskWorkspace}`,
+      reason: 'Plan your execution based on the documentation'
+    });
 
-    const isEditing = taskLower.includes('edit') || taskLower.includes('修改');
-    const isCreating = taskLower.includes('create') || taskLower.includes('创建');
+    nextSteps.push({
+      step: 3,
+      action: 'Execute your plan',
+      description: 'Create workspace, write code, run scripts, verify output',
+      reason: 'Execute the task using your own understanding'
+    });
 
-    if (isEditing) {
-      content += '1. Unpack DOCX: `python ooxml/scripts/unpack.py document.docx output_dir/`\n' +
-        '2. Edit XML files (document.xml, etc.)\n' +
-        '3. Validate: `python ooxml/scripts/validate.py output_dir`\n' +
-        '4. Repack: `python ooxml/scripts/pack.py output_dir document-edited.docx`\n';
-    } else if (isCreating) {
-      content += this.extractSection(fullContent, 'Creating a new Word') ||
-        '1. Create Word document using docx-js library\n' +
-        '2. Add paragraphs, headings, tables, images as needed\n' +
-        '3. Use tracked changes for collaborative editing\n' +
-        '4. Add comments for review notes\n';
-    }
-
-    return content;
-  }
-
-  private extractPdfContent(taskLower: string, fullContent: string): string {
-    let content = '### PDF Workflow\n\n';
-
-    const isForm = taskLower.includes('form') || taskLower.includes('表单');
-    const isExtract = taskLower.includes('extract') || taskLower.includes('提取');
-    const isMerge = taskLower.includes('merge') || taskLower.includes('合并');
-
-    if (isForm) {
-      content += '1. Unpack PDF: `python ooxml/scripts/unpack.py document.pdf output_dir/`\n' +
-        '2. Edit form fields in XML\n' +
-        '3. Validate changes\n' +
-        '4. Repack PDF\n';
-    } else if (isExtract) {
-      content += 'Extract text: `python -m markitdown document.pdf`\n';
-    } else if (isMerge) {
-      content += 'Use PDF library to merge multiple PDFs\n';
-    } else {
-      content += this.extractSection(fullContent, 'Creating') ||
-        '1. Create PDF using PDF library (reportlab, fpdf, etc.)\n' +
-        '2. Add text, images, shapes as needed\n' +
-        '3. Save to file\n';
-    }
-
-    return content;
-  }
-
-  private extractXlsxContent(taskLower: string, fullContent: string): string {
-    let content = '### XLSX Workflow\n\n';
-
-    const hasFormulas = taskLower.includes('formula') || taskLower.includes('公式');
-    const hasData = taskLower.includes('data') || taskLower.includes('数据分析');
-
-    if (hasFormulas || hasData) {
-      content += '1. Create workbook using xlsx library (xlsx-js or similar)\n' +
-        '2. Add worksheets with data\n' +
-        '3. Define formulas where needed\n' +
-        '4. Apply formatting (headers, borders, colors)\n' +
-        '5. Save: `workbook.save("output.xlsx")`\n\n' +
-        '**Formulas Format**: Excel-style formulas like "=SUM(A1:A10)", "=B2*C2"\n';
-    } else {
-      content += '1. Create Excel workbook\n' +
-        '2. Add data to worksheets\n' +
-        '3. Apply formatting as needed\n' +
-        '4. Save to file\n';
-    }
-
-    return content;
-  }
-
-  private extractDefaultContent(skill: SkillInfo, fullContent: string): string {
-    // 提取 skill 的主要内容（移除 YAML frontmatter）
-    const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
-    const firstLines = content.split('\n').slice(0, 50).join('\n');
-    return `### ${skill.name}\n\n${firstLines}\n\n(See ${skill.skillsPath}/SKILL.md for full instructions)`;
+    return `### Skill Execution\n\n` +
+           `**Your task**: ${params.taskDescription}\n\n` +
+           `**Read these files first**:\n` +
+           requiredFiles.map(f => `- ${f}`).join('\n') + '\n\n' +
+           `Then analyze the documentation and create your own execution plan.\n\n` +
+           `**Workspace**: \`${taskWorkspace}\`\n\n` +
+           `**⚠️ Windows Path Execution**: Use absolute paths, NOT \`cd && command\`:\n` +
+           `  - ✅ Correct: \`node "${taskWorkspace}/script.js"\`\n` +
+           `  - ❌ Wrong: \`cd "${taskWorkspace}" && node script.js\` (fails in PowerShell 5.1)\n` +
+           `  - ✅ Correct: \`python "${taskWorkspace}/script.py"\`\n\n` +
+           `**📦 Dependency Reuse**: Check existing libraries before downloading:\n` +
+           `  - Node.js: pptxgenjs, playwright, sharp, docx are globally available\n` +
+           `  - Python: pypdf, openpyxl, python-pptx, fitz are available\n` +
+           `  - Use \`require("pptxgenjs")\` NOT \`npm install pptxgenjs\`\n` +
+           `  - Use \`from openpyxl import Workbook\` NOT \`pip install openpyxl\`\n\n` +
+           `**🧹 Cleanup**: Delete all intermediate/temporary files when task completes:\n` +
+           `  - Remove: all files generated during the task\n` +
+           `  - Keep: Only the final output file (output.pptx/docx/xlsx/pdf)\n\n` +
+           `**Instructions**: read_file the documentation, understand the API, and create your own execution plan.\n` +
+           `**If you encounter issues**: Explain what went wrong and suggest a different approach.\n`;
   }
 
   /**
-   * 从完整内容中提取指定标题下的内容
+   * Extract PPTX-related content and generate steps
    */
-  private extractSection(fullContent: string, sectionTitle: string): string {
-    const lines = fullContent.split('\n');
-    let found = false;
-    let sectionLines: string[] = [];
-    let headingLevel = 0;
+  private extractPptxContent(taskLower: string, fullContent: string, nextSteps: ExecutionStep[], skillPath: string, taskWorkspace: string): string {
+    const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
+    const html2pptxPath = `${skillPath}/scripts/html2pptx.js`;
+    const scriptsPath = `${skillPath}/scripts`;
 
-    for (const line of lines) {
-      if (line.match(/^#{1,6}\s/)) {
-        const currentLevel = line.match(/^(#+)/)?.[1].length || 0;
-        const currentTitle = line.replace(/^#+\s*/, '').toLowerCase();
+    // Check if using template
+    const useTemplate = taskLower.includes('template') || taskLower.includes('template');
 
-        if (found && currentLevel <= headingLevel) {
-          break; // 结束当前 section
-        }
+    if (useTemplate) {
+      // Add template usage steps
+      nextSteps.push({
+        step: 1,
+        action: 'Read documentation and script',
+        description: `Read pptx/html2pptx.md and ${html2pptxPath} - CRITICAL: Read the USAGE section at the top of html2pptx.js to understand the correct API: const { slide, placeholders } = await html2pptx('slide.html', pptx);`,
+        file: html2pptxPath,
+        reason: 'Understand html2pptx API - MUST read the usage example in the file header'
+      });
+      nextSteps.push({
+        step: 2,
+        action: 'Create workspace directory',
+        description: `Create directory: ${taskWorkspace}`,
+        reason: 'Create workspace directory for this task'
+      });
+      nextSteps.push({
+        step: 3,
+        action: 'Create HTML slide file in workspace',
+        description: `Create slide.html inside ${taskWorkspace}/ (720pt × 405pt for 16:9)`,
+        reason: 'Create slide HTML file in workspace to avoid polluting target directory'
+      });
+      nextSteps.push({
+        step: 4,
+        action: 'Create PPTX conversion script in workspace',
+        description: `Create convert.js inside ${taskWorkspace}/ using CommonJS: const { slide, placeholders } = await html2pptx('slide.html', pptx); // slide is already added, use slide.addChart()/addText() for content`,
+        reason: 'Write Node.js script - MUST use destructured { slide, placeholders } from html2pptx()'
+      });
+      nextSteps.push({
+        step: 5,
+        action: 'Run the script',
+        description: `node "${taskWorkspace.replace(/\\/g, '/')}/convert.js"`,
+        reason: 'Generate PPTX file using html2pptx (use absolute path for Windows compatibility)'
+      });
+      nextSteps.push({
+        step: 6,
+        action: 'Generate thumbnail grid for visual validation',
+        description: `Run: python "${scriptsPath}/thumbnail.py" ${taskWorkspace}/output.pptx ${taskWorkspace}/thumbnails --cols 4`,
+        reason: 'Create thumbnail grid to verify slide layout and visual quality'
+      });
+      nextSteps.push({
+        step: 7,
+        action: 'Copy output to target directory',
+        description: `Copy ${taskWorkspace}/output.pptx to target directory`,
+        reason: 'Only save final file to specified path, keep workspace clean'
+      });
 
-        if (currentTitle.includes(sectionTitle.toLowerCase()) ||
-            sectionTitle.toLowerCase().includes(currentTitle)) {
-          found = true;
-          headingLevel = currentLevel;
-          sectionLines.push(line);
-        }
-      } else if (found) {
-        sectionLines.push(line);
-        // 限制提取的字符数
-        if (sectionLines.join('\n').length > 3000) {
-          sectionLines.push('\n...(content truncated for brevity)...');
-          break;
+      const patterns = [
+        /##\s*Creating\s*a\s*new\s*PowerPoint\s*presentation\s*\*\*using\s*a\s*template\*\*[\s\S]*?(?=##\s+)/i,
+        /##\s*Using\s*a\s*template[\s\S]*?(?=##\s+)/i
+      ];
+
+      for (const pattern of patterns) {
+        const match = content.match(pattern);
+        if (match) {
+          return `### Using a Template\n\n${match[0].trim()}`;
         }
       }
     }
 
-    return sectionLines.length > 0 ? sectionLines.join('\n') : '';
+    // Not using template
+    nextSteps.push({
+      step: 1,
+      action: 'Read documentation and script',
+      description: `Read pptx/html2pptx.md and ${html2pptxPath} - CRITICAL: Read the USAGE section at the top of html2pptx.js to understand the correct API: const { slide, placeholders } = await html2pptx('slide.html', pptx);`,
+      file: html2pptxPath,
+      reason: 'Understand html2pptx API - MUST read the usage example in the file header'
+    });
+    nextSteps.push({
+      step: 2,
+      action: 'Create workspace directory',
+      description: `Create directory: ${taskWorkspace}`,
+      reason: 'Create workspace directory for this task'
+    });
+    nextSteps.push({
+      step: 3,
+      action: 'Create HTML slide file in workspace',
+      description: `Create slide.html inside ${taskWorkspace}/ (720pt × 405pt for 16:9)`,
+      reason: 'Create slide HTML file in workspace to avoid polluting target directory'
+    });
+    nextSteps.push({
+      step: 4,
+      action: 'Create PPTX conversion script in workspace',
+      description: `Create convert.js inside ${taskWorkspace}/ using CommonJS: const { slide, placeholders } = await html2pptx('slide.html', pptx); // slide is already added, use slide.addChart()/addText() for content`,
+      reason: 'Write Node.js script - MUST use destructured { slide, placeholders } from html2pptx()'
+    });
+    nextSteps.push({
+      step: 5,
+      action: 'Run the script',
+      description: `node "${taskWorkspace.replace(/\\/g, '/')}/convert.js"`,
+      reason: 'Generate PPTX file using html2pptx (use absolute path for Windows compatibility)'
+    });
+    nextSteps.push({
+      step: 6,
+      action: 'Generate thumbnail grid for visual validation',
+      description: `Run: python "${scriptsPath}/thumbnail.py" ${taskWorkspace}/output.pptx ${taskWorkspace}/thumbnails --cols 4`,
+      reason: 'Create thumbnail grid to verify slide layout and visual quality'
+    });
+    nextSteps.push({
+      step: 7,
+      action: 'Copy output to target directory',
+      description: `Copy ${taskWorkspace}/output.pptx to target directory`,
+      reason: 'Only save final file to specified path, keep workspace clean'
+    });
+
+    const patterns = [
+      /##\s*Creating\s*a\s*new\s*PowerPoint[\s\S]*?(?=##\s+)/i,
+      /###\s*Workflow[\s\S]*?(?=###\s+|$)/i
+    ];
+
+    for (const pattern of patterns) {
+      const match = content.match(pattern);
+      if (match) {
+        return `### Creating New Presentation\n\n${match[0].trim()}`;
+      }
+    }
+
+    return extractContent(content, ['html2pptx', 'Creating', 'Workflow']);
+  }
+
+  /**
+   * Extract DOCX-related content and generate steps
+   */
+  private extractDocxContent(
+    taskLower: string,
+    fullContent: string,
+    nextSteps: ExecutionStep[],
+    params: SkillExecutionParams,
+    skillPath: string,
+    taskWorkspace: string
+  ): string {
+    const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
+    const unpackScript = `${skillPath}/ooxml/scripts/unpack.py`;
+    const packScript = `${skillPath}/ooxml/scripts/pack.py`;
+    const scriptsPath = `${skillPath}/scripts`;
+
+    const isNew = taskLower.includes('create') || taskLower.includes('new');
+    const isEditing = taskLower.includes('edit') || taskLower.includes('modify') || taskLower.includes('modify');
+
+    if (isNew) {
+      // Create new document
+      nextSteps.push({
+        step: 1,
+        action: 'Read documentation',
+        description: 'Read docx-js.md for API reference',
+        file: `${skillPath}/docx-js.md`,
+        reason: 'Understand how to use docx-js library to create Word documents'
+      });
+      nextSteps.push({
+        step: 2,
+        action: 'Create script in workspace',
+        description: `Create create_doc.js in ${taskWorkspace}: const { Document, Paragraph, TextRun, Packer } = await import("docx");`,
+        reason: 'Create Word document code using docx library with dynamic import'
+            });
+          nextSteps.push({
+            step: 3,
+            action: 'Run the script',
+            description: `node "${taskWorkspace.replace(/\\/g, '/')}/create_doc.js"`,
+            reason: 'Generate DOCX file in workspace (use absolute path for Windows compatibility)'
+          });
+          nextSteps.push({        step: 4,
+        action: 'Copy output to target directory',
+        description: `Copy ${taskWorkspace}/output.docx to target directory`,
+        reason: 'Only save final file to specified path, keep workspace clean'
+      });
+
+      return extractContent(content, ['Creating', 'docx-js', 'Workflow']);
+    }
+
+    if (isEditing) {
+      // Edit existing document - use existing scripts
+      nextSteps.push({
+        step: 1,
+        action: 'Read documentation',
+        description: 'Read ooxml.md for editing API',
+        file: `${skillPath}/ooxml.md`,
+        reason: 'Understand how to edit existing Word documents'
+      });
+
+      nextSteps.push({
+        step: 2,
+        action: 'Create workspace directory',
+        description: `Create workspace directory: ${taskWorkspace}/`,
+        reason: 'Create workspace directory for intermediate files'
+      });
+
+      if (params.inputFile) {
+        nextSteps.push({
+          step: 3,
+          action: 'Unpack document in workspace',
+          description: `Run: python "${unpackScript}" "${params.inputFile}" ${taskWorkspace}/docx_input`,
+          reason: 'Unpack DOCX file using existing unpack.py script'
+        });
+      }
+
+      nextSteps.push({
+        step: 4,
+        action: 'Create editing script in workspace',
+        description: `Create edit_doc.py in ${taskWorkspace}: from scripts.document import Document; doc = Document("${taskWorkspace}/docx_input");`,
+        reason: 'Create Python editing script using existing Document library'
+      });
+
+      if (params.inputFile || params.outputFile) {
+        nextSteps.push({
+          step: 5,
+          action: 'Pack document',
+          description: `Run: python "${packScript}" ${taskWorkspace}/docx_input ${taskWorkspace}/output.docx`,
+          reason: 'Repack DOCX using existing pack.py script'
+        });
+      }
+
+      nextSteps.push({
+        step: 6,
+        action: 'Copy output to target directory',
+        description: `Copy ${taskWorkspace}/output.docx to target directory`,
+        reason: 'Only save final file to specified path'
+      });
+
+      return extractContent(content, ['Editing', 'redlining', 'ooxml']);
+    }
+
+    // Default case
+    nextSteps.push({
+      step: 1,
+      action: 'Read documentation',
+      description: 'Read ooxml.md or docx-js.md',
+      reason: 'Understand document processing methods'
+    });
+    nextSteps.push({
+      step: 2,
+      action: 'Create or edit document',
+      description: 'Write code using appropriate library',
+      reason: 'Perform document operations'
+    });
+
+    return extractContent(content, ['Creating', 'Editing', 'document', 'docx']);
+  }
+
+  /**
+   * Extract PDF-related content and generate steps
+   */
+  private extractPdfContent(
+    taskLower: string,
+    fullContent: string,
+    nextSteps: ExecutionStep[],
+    params: SkillExecutionParams,
+    skillPath: string,
+    taskWorkspace: string
+  ): string {
+    const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
+    const scriptsPath = `${skillPath}/scripts`;
+
+    const isForm = taskLower.includes('form') || taskLower.includes('form');
+    const isExtract = taskLower.includes('extract') || taskLower.includes('extract');
+    const isMerge = taskLower.includes('merge') || taskLower.includes('merge');
+    const isConvert = taskLower.includes('convert') || taskLower.includes('image');
+
+    nextSteps.push({
+      step: 1,
+      action: 'Read documentation',
+      description: 'Read reference.md for PDF operations',
+      file: `${skillPath}/reference.md`,
+      reason: 'Understand PDF operation methods'
+    });
+
+    nextSteps.push({
+      step: 2,
+      action: 'Create workspace directory',
+      description: `Create workspace directory: ${taskWorkspace}/`,
+      reason: 'Create workspace directory for intermediate files'
+    });
+
+    if (isForm) {
+      // Check for fillable fields first
+      nextSteps.push({
+        step: 3,
+        action: 'Check form fields',
+        description: `Run: python "${scriptsPath}/check_fillable_fields.py" <input_pdf>`,
+        reason: 'Check if PDF has fillable form fields'
+      });
+      nextSteps.push({
+        step: 4,
+        action: 'Create PDF form script in workspace',
+        description: `Create form_script.py in ${taskWorkspace}: use "${scriptsPath}/fill_fillable_fields.py" or "${scriptsPath}/fill_pdf_form_with_annotations.py"`,
+        reason: 'Create PDF form processing script using existing scripts'
+      });
+    } else if (isExtract) {
+      nextSteps.push({
+        step: 3,
+        action: 'Create extraction script in workspace',
+        description: `Create extract_script.py in ${taskWorkspace}: use pypdf or pdfplumber for text extraction`,
+        reason: 'Create PDF content extraction script'
+      });
+    } else if (isMerge) {
+      nextSteps.push({
+        step: 3,
+        action: 'Create merge script in workspace',
+        description: `Create merge_script.py in ${taskWorkspace}: use pypdf to combine PDF files`,
+        reason: 'Create PDF merge script'
+      });
+    } else if (isConvert) {
+      nextSteps.push({
+        step: 3,
+        action: 'Convert PDF to images',
+        description: `Run: python "${scriptsPath}/convert_pdf_to_images.py" <input_pdf> ${taskWorkspace}/images`,
+        reason: 'Convert PDF to images using existing script'
+      });
+    } else {
+      nextSteps.push({
+        step: 3,
+        action: 'Create PDF processing script in workspace',
+        description: `Create pdf_script.py in ${taskWorkspace}: use pypdf for desired operations`,
+        reason: 'Create PDF processing script'
+      });
+    }
+
+    nextSteps.push({
+      step: 5,
+      action: 'Run the script',
+      description: `python "${taskWorkspace.replace(/\\/g, '/')}/pdf_script.py"`,
+      reason: 'Execute PDF operation script in workspace (use absolute path for Windows compatibility)'
+    });
+
+    nextSteps.push({
+      step: 6,
+      action: 'Copy output to target directory',
+      description: `Copy ${taskWorkspace}/output.pdf to target directory`,
+      reason: 'Only save final file to specified path'
+    });
+
+    return extractContent(content, ['Creating', 'pdf', 'PDF']);
+  }
+
+  /**
+   * Extract XLSX relevant content and generate steps
+   */
+  private extractXlsxContent(taskLower: string, fullContent: string, nextSteps: ExecutionStep[], skillPath: string, taskWorkspace: string): string {
+    const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
+
+    const hasFormulas = taskLower.includes('formula') || taskLower.includes('公式');
+    const hasData = taskLower.includes('data') || taskLower.includes('数据分析');
+
+    nextSteps.push({
+      step: 1,
+      action: 'Read documentation',
+      description: 'Read SKILL.md for Excel operations',
+      file: `${skillPath}/SKILL.md`,
+      reason: 'Understand Excel operation methods'
+    });
+
+    nextSteps.push({
+      step: 2,
+      action: 'Create workspace directory',
+      description: `Create workspace directory: ${taskWorkspace}/`,
+      reason: 'Create workspace directory for intermediate files'
+    });
+
+    if (hasFormulas || hasData) {
+      nextSteps.push({
+        step: 3,
+        action: 'Create spreadsheet script in workspace',
+        description: `Create create_xlsx.py in ${taskWorkspace}: use openpyxl to create workbook with formulas`,
+        reason: 'Create spreadsheet script with formulas in workspace'
+      });
+    } else {
+      nextSteps.push({
+        step: 3,
+        action: 'Create spreadsheet script in workspace',
+        description: `Create create_xlsx.py in ${taskWorkspace}: use openpyxl to create workbook`,
+        reason: 'Create spreadsheet script in workspace'
+      });
+    }
+
+    nextSteps.push({
+      step: 4,
+      action: 'Run the script',
+      description: `python "${taskWorkspace.replace(/\\/g, '/')}/create_xlsx.py"`,
+      reason: 'Generate XLSX file in workspace (use absolute path for Windows compatibility)'
+    });
+
+    if (hasFormulas) {
+      nextSteps.push({
+        step: 5,
+        action: 'Recalculate formulas',
+        description: `Run: python "${skillPath}/recalc.py" ${taskWorkspace}/output.xlsx to recalculate all formulas and check for errors`,
+        reason: 'Recalculate formulas and verify no formula errors (#REF!, #DIV/0!, etc.)'
+      });
+      nextSteps.push({
+        step: 6,
+        action: 'Fix formula errors if any',
+        description: `Check recalc.py output JSON for error locations and fix formula errors in ${taskWorkspace}`,
+        reason: 'Ensure ZERO formula errors before final output'
+      });
+      nextSteps.push({
+        step: 7,
+        action: 'Copy output to target directory',
+        description: `Copy ${taskWorkspace}/output.xlsx to target directory`,
+        reason: 'Only save final file to specified path'
+      });
+    } else {
+      nextSteps.push({
+        step: 5,
+        action: 'Copy output to target directory',
+        description: `Copy ${taskWorkspace}/output.xlsx to target directory`,
+        reason: 'Only save final file to specified path'
+      });
+    }
+
+    return extractContent(content, ['Excel', 'xlsx', 'spreadsheet']);
+  }
+
+  /**
+   * Extract default content
+   */
+  private extractDefaultContent(skill: SkillInfo, fullContent: string, nextSteps: ExecutionStep[]): string {
+    const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
+    const firstLines = content.split('\n').slice(0, 100).join('\n');
+
+    nextSteps.push({
+      step: 1,
+      action: 'Read SKILL.md',
+      description: `Read ${skill.id}/SKILL.md for full instructions`,
+      file: `${skill.skillsPath}/SKILL.md`,
+      reason: 'Understand complete execution workflow'
+    });
+
+    return `### ${skill.name}\n\n${firstLines}\n\n(See ${skill.skillsPath}/SKILL.md for full instructions)`;
   }
 }
 
+/**
+ * Frontend Development Skill Executor
+ */
 class FrontendSkillExecutor implements SkillExecutor {
   async execute(skill: SkillInfo, params: SkillExecutionParams): Promise<SkillExecutionResult> {
     const outputMessages: string[] = [];
+    const files: string[] = [];
+    const nextSteps: ExecutionStep[] = [];
 
-    outputMessages.push(`Executing skill: ${skill.name}`);
-    outputMessages.push(`Task: ${params.taskDescription}`);
-    outputMessages.push(`Category: Frontend & Web Development`);
+    outputMessages.push(`## ${skill.name} Skill - Execution Guide\n`);
+    outputMessages.push(`**Task**: ${params.taskDescription}\n`);
 
-    outputMessages.push(`\nThis skill requires creating a frontend interface.`);
-    outputMessages.push(`Key considerations:`);
-    outputMessages.push(`- Design thinking and aesthetic direction`);
-    outputMessages.push(`- Production-grade, functional code`);
-    outputMessages.push(`- Distinctive visual design avoiding generic AI aesthetics`);
+    // Get or generate task ID
+    const taskId = params.taskId || `${skill.id}-${Date.now()}`;
 
-    return {
-      success: true,
-      output: outputMessages.join('\n')
-    };
+    try {
+      // Read SKILL.md content
+      const skillMdPath = path.join(skill.skillsPath, 'SKILL.md');
+      files.push(skillMdPath);
+      const skillContent = await fs.readFile(skillMdPath, 'utf-8');
+
+      // Generate execution steps
+      const taskContent = await this.extractFrontendContent(skill, params, skillContent, nextSteps, taskId);
+      outputMessages.push(taskContent);
+
+      // Add input/output files to list if they exist
+      if (params.inputFile) files.push(params.inputFile);
+      if (params.outputFile) files.push(params.outputFile);
+
+      return {
+        success: true,
+        output: outputMessages.join('\n'),
+        files: files,
+        nextSteps: nextSteps,
+        requiresManualExecution: true
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Extract relevant content based on frontend skill type and generate steps
+   */
+  private async extractFrontendContent(
+    skill: SkillInfo,
+    params: SkillExecutionParams,
+    fullContent: string,
+    nextSteps: ExecutionStep[],
+    taskId: string
+  ): Promise<string> {
+    const taskLower = params.taskDescription.toLowerCase();
+    const workspaceBase = getWorkspaceDescription();
+    const taskWorkspace = `${workspaceBase}/${taskId}`;
+
+    // Add common steps
+    nextSteps.push({
+      step: 1,
+      action: 'Design Thinking',
+      description: 'Understand requirements, define aesthetic direction',
+      reason: 'Clarify design direction and goals'
+    });
+    nextSteps.push({
+      step: 2,
+      action: 'Create implementation',
+      description: 'Write production-grade HTML/CSS/JS or React code',
+      reason: 'Implement frontend interface'
+    });
+
+    switch (skill.id) {
+      case 'frontend-design':
+        nextSteps.push({
+          step: 3,
+          action: 'Create workspace directory',
+          description: `Create workspace directory: ${taskWorkspace}/`,
+          reason: 'Create workspace directory for frontend files'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Create frontend files in workspace',
+          description: `Create index.html, styles.css, app.js in ${taskWorkspace}`,
+          reason: 'Create frontend files in workspace'
+        });
+        if (taskLower.includes('landing')) {
+          nextSteps.push({
+            step: 5,
+            action: 'Focus areas',
+            description: 'Hero section, features, pricing, testimonials, footer',
+            reason: 'Implement landing page sections'
+          });
+        } else if (taskLower.includes('dashboard')) {
+          nextSteps.push({
+            step: 5,
+            action: 'Focus areas',
+            description: 'Charts, data visualization, navigation panels',
+            reason: 'Implement dashboard functionality'
+          });
+        }
+        nextSteps.push({
+          step: 6,
+          action: 'Verify in browser',
+          description: `Open files in ${taskWorkspace} to verify`,
+          reason: 'Verify in browser'
+        });
+        nextSteps.push({
+          step: 7,
+          action: 'Copy files to target directory',
+          description: `Copy frontend files from ${taskWorkspace} to target directory`,
+          reason: 'Only save final files to specified path'
+        });
+        return extractContent(fullContent, ['frontend', 'design', 'web', 'interface']);
+
+      case 'web-artifacts-builder':
+        nextSteps.push({
+          step: 3,
+          action: 'Create workspace directory',
+          description: `Create workspace directory: ${taskWorkspace}/`,
+          reason: 'Create workspace directory for component files'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Build React artifact in workspace',
+          description: `Create React component files in ${taskWorkspace} using shadcn/ui`,
+          reason: 'Build React component in workspace'
+        });
+        nextSteps.push({
+          step: 5,
+          action: 'Test artifact',
+          description: `Test the artifact in ${taskWorkspace}`,
+          reason: 'Test component functionality'
+        });
+        nextSteps.push({
+          step: 6,
+          action: 'Copy artifact to target directory',
+          description: `Copy component files from ${taskWorkspace} to target directory`,
+          reason: 'Only save final files to specified path'
+        });
+        return extractContent(fullContent, ['Web Artifacts Builder', 'React', 'Quick Start']);
+
+      case 'webapp-testing':
+        const scriptsPath = `${skill.skillsPath}/scripts`;
+        nextSteps.push({
+          step: 3,
+          action: 'Read documentation and helper script',
+          description: 'Read SKILL.md and scripts/with_server.py',
+          file: `${scriptsPath}/with_server.py`,
+          reason: 'Understand webapp testing workflow and with_server.py usage'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Create workspace directory',
+          description: `Create workspace directory: ${taskWorkspace}/`,
+          reason: 'Create workspace directory for test files'
+        });
+        nextSteps.push({
+          step: 5,
+          action: 'Write Playwright tests in workspace',
+          description: `Create test.py in ${taskWorkspace} for web application testing`,
+          reason: 'Write test scripts in workspace'
+        });
+        nextSteps.push({
+          step: 6,
+          action: 'Run tests with server',
+          description: `Run: python "${scriptsPath}/with_server.py" --server "<start_command>" --port <port> -- python ${taskWorkspace}/test.py`,
+          reason: 'Run tests with server using existing with_server.py helper'
+        });
+        nextSteps.push({
+          step: 7,
+          action: 'Copy test reports to target directory',
+          description: `Copy test reports from ${taskWorkspace} to target directory`,
+          reason: 'Only save test reports to specified path'
+        });
+        return extractContent(fullContent, ['test', 'web', 'playwright', 'testing']);
+
+      default:
+        return extractContent(fullContent, ['frontend', 'design', 'web']);
+    }
   }
 }
 
+/**
+ * Visual Design Skill Executor
+ */
 class VisualDesignSkillExecutor implements SkillExecutor {
   async execute(skill: SkillInfo, params: SkillExecutionParams): Promise<SkillExecutionResult> {
     const outputMessages: string[] = [];
+    const files: string[] = [];
+    const nextSteps: ExecutionStep[] = [];
 
-    outputMessages.push(`Executing skill: ${skill.name}`);
-    outputMessages.push(`Task: ${params.taskDescription}`);
-    outputMessages.push(`Category: Visual & Creative Design`);
+    outputMessages.push(`## ${skill.name} Skill - Execution Guide\n`);
+    outputMessages.push(`**Task**: ${params.taskDescription}\n`);
 
-    outputMessages.push(`\nThis skill creates visual art. Process:`);
-    outputMessages.push(`1. Create a design philosophy (.md file)`);
-    outputMessages.push(`2. Express visually on canvas (.pdf or .png)`);
-    outputMessages.push(`3. Ensure museum-quality craftsmanship`);
+    // Get or generate task ID
+    const taskId = params.taskId || `${skill.id}-${Date.now()}`;
 
-    return {
-      success: true,
-      output: outputMessages.join('\n')
-    };
+    try {
+      // Read SKILL.md content
+      const skillMdPath = path.join(skill.skillsPath, 'SKILL.md');
+      files.push(skillMdPath);
+      const skillContent = await fs.readFile(skillMdPath, 'utf-8');
+
+      // Generate execution steps
+      const taskContent = await this.extractVisualContent(skill, params, skillContent, nextSteps, taskId);
+      outputMessages.push(taskContent);
+
+      // Add input/output files to list if they exist
+      if (params.inputFile) files.push(params.inputFile);
+      if (params.outputFile) files.push(params.outputFile);
+
+      return {
+        success: true,
+        output: outputMessages.join('\n'),
+        files: files,
+        nextSteps: nextSteps,
+        requiresManualExecution: true
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Extract relevant content based on visual design skill type and generate steps
+   */
+  private async extractVisualContent(
+    skill: SkillInfo,
+    params: SkillExecutionParams,
+    fullContent: string,
+    nextSteps: ExecutionStep[],
+    taskId: string
+  ): Promise<string> {
+    const taskLower = params.taskDescription.toLowerCase();
+    const workspaceBase = getWorkspaceDescription();
+    const taskWorkspace = `${workspaceBase}/${taskId}`;
+
+    switch (skill.id) {
+      case 'canvas-design':
+        // Canvas Design: Two-step process
+        nextSteps.push({
+          step: 1,
+          action: 'Create workspace directory',
+          description: `Create workspace directory: ${taskWorkspace}/`,
+          reason: 'Create workspace directory for design files'
+        });
+        nextSteps.push({
+          step: 2,
+          action: 'Design Philosophy Creation',
+          description: `Create manifesto/md file in ${taskWorkspace} defining aesthetic movement`,
+          reason: 'Create design philosophy document in workspace'
+        });
+        nextSteps.push({
+          step: 3,
+          action: 'Canvas Creation',
+          description: `Express philosophy visually using PDF/PNG output in ${taskWorkspace}`,
+          reason: 'Express philosophy visually on canvas in workspace'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Copy output to target directory',
+          description: `Copy output files from ${taskWorkspace} to target directory`,
+          reason: 'Only save final files to specified path'
+        });
+        return extractContent(fullContent, ['design', 'art', 'visual', 'philosophy']);
+
+      case 'algorithmic-art':
+        // Algorithmic Art
+        nextSteps.push({
+          step: 1,
+          action: 'Create workspace directory',
+          description: `Create workspace directory: ${taskWorkspace}/`,
+          reason: 'Create workspace directory for generative art files'
+        });
+        nextSteps.push({
+          step: 2,
+          action: 'Algorithmic Philosophy',
+          description: `Define generative art philosophy in ${taskWorkspace}`,
+          reason: 'Create generative art philosophy in workspace'
+        });
+        nextSteps.push({
+          step: 3,
+          action: 'P5.js Implementation',
+          description: `Write p5.js code in ${taskWorkspace} for generative art`,
+          reason: 'Implement generative art code in workspace'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Generate artwork',
+          description: `Run p5.js code in ${taskWorkspace} to generate artwork`,
+          reason: 'Run generative art code'
+        });
+        nextSteps.push({
+          step: 5,
+          action: 'Copy output to target directory',
+          description: `Copy output files from ${taskWorkspace} to target directory`,
+          reason: 'Only save final files to specified path'
+        });
+        return extractContent(fullContent, ['generative', 'algorithmic', 'art']);
+
+      case 'theme-factory':
+        // Theme Factory
+        nextSteps.push({
+          step: 1,
+          action: 'Create workspace directory',
+          description: `Create workspace directory: ${taskWorkspace}/`,
+          reason: 'Create workspace directory for theme files'
+        });
+        nextSteps.push({
+          step: 2,
+          action: 'Select theme',
+          description: `Choose from available themes or create custom in ${taskWorkspace}`,
+          reason: 'Select or create theme in workspace'
+        });
+        nextSteps.push({
+          step: 3,
+          action: 'Apply theme',
+          description: `Apply colors, fonts to design in ${taskWorkspace}`,
+          reason: 'Apply theme to design in workspace'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Copy output to target directory',
+          description: `Copy theme files from ${taskWorkspace} to target directory`,
+          reason: 'Only save final files to specified path'
+        });
+        return extractContent(fullContent, ['Theme Factory', 'Themes', 'apply']);
+
+      case 'brand-guidelines':
+        // Brand Guidelines
+        nextSteps.push({
+          step: 1,
+          action: 'Create workspace directory',
+          description: `Create workspace directory: ${taskWorkspace}/`,
+          reason: 'Create workspace directory for brand files'
+        });
+        nextSteps.push({
+          step: 2,
+          action: 'Apply brand colors',
+          description: `Use Anthropic brand colors and typography in ${taskWorkspace}`,
+          reason: 'Apply brand colors in workspace'
+        });
+        nextSteps.push({
+          step: 3,
+          action: 'Follow guidelines',
+          description: `Apply brand styling consistently in ${taskWorkspace}`,
+          reason: 'Follow brand guidelines in workspace'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Copy output to target directory',
+          description: `Copy brand files from ${taskWorkspace} to target directory`,
+          reason: 'Only save final files to specified path'
+        });
+        return extractContent(fullContent, ['Brand Guidelines', 'Colors', 'Typography']);
+
+      default:
+        nextSteps.push({
+          step: 1,
+          action: 'Create workspace directory',
+          description: `Create workspace directory: ${taskWorkspace}/`,
+          reason: 'Create workspace directory for design files'
+        });
+        nextSteps.push({
+          step: 2,
+          action: 'Create visual design',
+          description: `Write design code or use canvas in ${taskWorkspace}`,
+          reason: 'Create visual design in workspace'
+        });
+        nextSteps.push({
+          step: 3,
+          action: 'Copy output to target directory',
+          description: `Copy output files from ${taskWorkspace} to target directory`,
+          reason: 'Only save final files to specified path'
+        });
+        return extractContent(fullContent, ['design', 'art', 'visual']);
+    }
   }
 }
 
+/**
+ * Documentation Skill Executor
+ */
 class DocumentationSkillExecutor implements SkillExecutor {
   async execute(skill: SkillInfo, params: SkillExecutionParams): Promise<SkillExecutionResult> {
     const outputMessages: string[] = [];
+    const files: string[] = [];
+    const nextSteps: ExecutionStep[] = [];
 
-    outputMessages.push(`Executing skill: ${skill.name}`);
-    outputMessages.push(`Task: ${params.taskDescription}`);
-    outputMessages.push(`Category: Communication & Documentation`);
+    outputMessages.push(`## ${skill.name} Skill - Execution Guide\n`);
+    outputMessages.push(`**Task**: ${params.taskDescription}\n`);
 
-    return {
-      success: true,
-      output: outputMessages.join('\n')
-    };
+    // Get or generate task ID
+    const taskId = params.taskId || `${skill.id}-${Date.now()}`;
+
+    try {
+      // Read SKILL.md content
+      const skillMdPath = path.join(skill.skillsPath, 'SKILL.md');
+      files.push(skillMdPath);
+      const skillContent = await fs.readFile(skillMdPath, 'utf-8');
+
+      // Generate execution steps
+      const taskContent = await this.extractDocContent(skill, params, skillContent, nextSteps, taskId);
+      outputMessages.push(taskContent);
+
+      // Add input/output files to list if they exist
+      if (params.inputFile) files.push(params.inputFile);
+      if (params.outputFile) files.push(params.outputFile);
+
+      return {
+        success: true,
+        output: outputMessages.join('\n'),
+        files: files,
+        nextSteps: nextSteps,
+        requiresManualExecution: true
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Extract relevant content based on documentation skill type and generate steps
+   */
+  private async extractDocContent(
+    skill: SkillInfo,
+    params: SkillExecutionParams,
+    fullContent: string,
+    nextSteps: ExecutionStep[],
+    taskId: string
+  ): Promise<string> {
+    const taskLower = params.taskDescription.toLowerCase();
+    const workspaceBase = getWorkspaceDescription();
+    const taskWorkspace = `${workspaceBase}/${taskId}`;
+
+    switch (skill.id) {
+      case 'internal-comms':
+        // Internal Comms
+        if (taskLower.includes('status') || taskLower.includes('report')) {
+          nextSteps.push({
+            step: 1,
+            action: 'Gather information',
+            description: 'Collect progress, plans, problems',
+            reason: 'Gather status information'
+          });
+          nextSteps.push({
+            step: 2,
+            action: 'Write update',
+            description: 'Draft 3P update format',
+            reason: 'Write status update'
+          });
+        } else if (taskLower.includes('newsletter')) {
+          nextSteps.push({
+            step: 1,
+            action: 'Create newsletter',
+            description: 'Write company newsletter content',
+            reason: 'Create company newsletter'
+          });
+        }
+        return extractContent(fullContent, ['documentation', 'writing', 'internal']);
+
+      case 'doc-coauthoring':
+        // Doc Co-Authoring: Three-stage process
+        nextSteps.push({
+          step: 1,
+          action: 'Create workspace directory',
+          description: `Create workspace directory: ${taskWorkspace}/`,
+          reason: 'Create workspace directory for document drafts'
+        });
+        nextSteps.push({
+          step: 2,
+          action: 'Stage 1: Context Gathering',
+          description: 'Gather requirements and initial questions',
+          reason: 'Gather document background and requirements'
+        });
+        nextSteps.push({
+          step: 3,
+          action: 'Stage 2: Refinement',
+          description: `Structure and draft content in ${taskWorkspace}`,
+          reason: 'Structure and draft document in workspace'
+        });
+        nextSteps.push({
+          step: 4,
+          action: 'Stage 3: Reader Testing',
+          description: `Test with fresh Claude and refine in ${taskWorkspace}`,
+          reason: 'Test and refine document in workspace'
+        });
+        nextSteps.push({
+          step: 5,
+          action: 'Copy final document to target directory',
+          description: `Copy final document from ${taskWorkspace} to target directory`,
+          reason: 'Only save final document to specified path'
+        });
+        return extractContent(fullContent, ['documentation', 'coauthor', 'workflow']);
+
+      default:
+        return extractContent(fullContent, ['documentation', 'writing', 'guide']);
+    }
   }
 }
 
+/**
+ * Default Skill Executor
+ */
 class DefaultSkillExecutor implements SkillExecutor {
   async execute(skill: SkillInfo, params: SkillExecutionParams): Promise<SkillExecutionResult> {
-    return {
-      success: true,
-      output: `Executing skill: ${skill.name}\nTask: ${params.taskDescription}`
-    };
+    const outputMessages: string[] = [];
+    const files: string[] = [];
+    const nextSteps: ExecutionStep[] = [];
+
+    outputMessages.push(`## ${skill.name} Skill - Execution Guide\n`);
+    outputMessages.push(`**Task**: ${params.taskDescription}\n`);
+
+    try {
+      // Read SKILL.md content
+      const skillMdPath = path.join(skill.skillsPath, 'SKILL.md');
+      files.push(skillMdPath);
+      const skillContent = await fs.readFile(skillMdPath, 'utf-8');
+
+      // Generate execution steps
+      const taskContent = this.extractDefaultContent(skill, skillContent, nextSteps);
+      outputMessages.push(taskContent);
+
+      // Add input/output files to list if they exist
+      if (params.inputFile) files.push(params.inputFile);
+      if (params.outputFile) files.push(params.outputFile);
+
+      return {
+        success: true,
+        output: outputMessages.join('\n'),
+        files: files,
+        nextSteps: nextSteps,
+        requiresManualExecution: true
+      };
+    } catch (error: any) {
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Extract default skill content and generate steps
+   */
+  private extractDefaultContent(skill: SkillInfo, fullContent: string, nextSteps: ExecutionStep[]): string {
+    nextSteps.push({
+      step: 1,
+      action: 'Read SKILL.md',
+      description: `Read ${skill.skillsPath}/SKILL.md for full instructions`,
+      reason: 'Understand complete execution workflow'
+    });
+    nextSteps.push({
+      step: 2,
+      action: 'Follow workflow',
+      description: 'Execute according to SKILL.md instructions',
+      reason: 'Follow SKILL.md guidance for execution'
+    });
+
+    return extractContent(fullContent, ['skill', 'guide', 'how to', skill.name]);
   }
 }
 
-// 单例实例
+// ============================================================
+// ============================================================
+
+/**
+ * Execute skill - LLM analyzes SKILL.md and generates its own steps
+ * @param skill Skill to execute
+ * @param params Execution parameters
+ * @returns Execution result with guidance
+ */
+export async function executeSkill(
+  skill: SkillInfo,
+  params: SkillExecutionParams
+): Promise<SkillExecutionResult> {
+  const executor = new DocumentSkillExecutor();
+  return executor.execute(skill, params);
+}
+
+// ============================================================
+// Singleton Instance and Exports
+// ============================================================
+
 let skillInvokerInstance: SkillInvoker | null = null;
 
 export function getSkillInvoker(): SkillInvoker {

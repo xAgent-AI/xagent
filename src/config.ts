@@ -17,6 +17,7 @@ const DEFAULT_SETTINGS: Settings = {
   guiSubagentApiKey: '',
   searchApiKey: '',
   skillsPath: '',  // Will be auto-detected if not set
+  workspacePath: '',  // Will be auto-detected if not set
   executionMode: ExecutionMode.SMART,
   approvalMode: ExecutionMode.SMART,
   checkpointing: {
@@ -210,6 +211,18 @@ export class ConfigManager {
       }
       return {};
     }
+  }
+
+  getWorkspacePath(): string | undefined {
+    return this.settings.workspacePath;
+  }
+
+  setWorkspacePath(path: string): void {
+    this.settings.workspacePath = path;
+  }
+
+  getSettings(): Settings | undefined {
+    return this.settings;
   }
 
   async resetToDefaults(): Promise<void> {

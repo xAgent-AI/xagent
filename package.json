@@ -53,7 +53,10 @@
     "node-pty": "^1.0.0",
     "open": "^10.0.0",
     "ora": "^8.0.0",
+    "playwright": "^1.57.0",
+    "pptxgenjs": "^4.0.1",
     "puppeteer": "^23.11.1",
+    "sharp": "^0.34.5",
     "string-width": "^7.0.0",
     "strip-ansi": "^7.1.0",
     "terminal-link": "^3.0.0",
@@ -73,5 +76,10 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  }
+  },
+  "directories": {
+    "doc": "docs",
+    "test": "test"
+  },
+  "types": "./dist/index.d.ts"
 }

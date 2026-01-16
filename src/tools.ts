@@ -329,12 +329,28 @@ export class BashTool implements Tool {
   }): Promise<{ stdout: string; stderr: string; exitCode: number; taskId?: string }> {
     const { command, cwd, description, timeout = 120, run_in_bg = false } = params;
     
+    // Determine effective working directory
+    // Only use cwd if the command doesn't contain 'cd' (let LLM control directory)
+    let effectiveCwd: string | undefined;
+    const hasCdCommand = /cd\s+["']?[^"&|;]+["']?/.test(command);
+    
+    if (cwd && !hasCdCommand) {
+      // Command doesn't control its own directory, use provided cwd
+      effectiveCwd = cwd;
+    } else if (cwd && hasCdCommand) {
+      // Command uses cd, ignore cwd to let cd take effect
+      effectiveCwd = undefined;
+    } else {
+      // No cwd provided, use default
+      effectiveCwd = undefined;
+    }
+    
     try {
       if (run_in_bg) {
         const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
         const childProcess = spawn(command, {
-          cwd: cwd || process.cwd(),
+          cwd: effectiveCwd || process.cwd(),
           shell: true,
           detached: true
         });
@@ -370,7 +386,7 @@ export class BashTool implements Tool {
         };
       } else {
         const { stdout, stderr } = await execAsync(command, {
-          cwd: cwd || process.cwd(),
+          cwd: effectiveCwd || process.cwd(),
           maxBuffer: 1024 * 1024 * 10,
           timeout: timeout * 1000
         });
@@ -1348,7 +1364,7 @@ export class TaskTool implements Tool {
     };
     
     const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, mode, agent);
-    const enhancedSystemPrompt = systemPromptGenerator.generateEnhancedSystemPrompt(agent.systemPrompt);
+    const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(agent.systemPrompt);
     
     const fullPrompt = constraints.length > 0
       ? `${prompt}\n\nConstraints:\n${constraints.map(c => `- ${c}`).join('\n')}`
@@ -2200,7 +2216,7 @@ export class SkillTool implements Tool {
 # Best Practices
 - Skills are pre-configured workflows from the marketplace
 - Check if a relevant skill exists first`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: { skill: string }): Promise<{ success: boolean; message: string; result?: any }> {
     const { skill } = params;
@@ -2289,7 +2305,7 @@ export class InvokeSkillTool implements Tool {
 - Include relevant file paths when working with existing files
 - Match the skill to the domain (e.g., don't use frontend-design for Word docs)
 - Skills will guide you through their specific workflows`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: {
     skillId: string;
@@ -2304,6 +2320,16 @@ export class InvokeSkillTool implements Tool {
     task: string;
     result?: any;
     files?: string[];
+    /** 告诉 Agent 接下来要做什么 */
+    nextSteps?: Array<{
+      step: number;
+      action: string;
+      description: string;
+      command?: string;
+      file?: string;
+      reason: string;
+    }>;
+    guidance?: string;
   }> {
     const { skillId, taskDescription, inputFile, outputFile, options } = params;
 
@@ -2329,7 +2355,8 @@ export class InvokeSkillTool implements Tool {
               category: match.category,
               confidence: match.confidence,
               matchedKeywords: match.matchedKeywords
-            }
+            },
+            guidance: '请按照匹配到的技能继续执行任务。'
           };
         }
         throw new Error(`Skill not found: ${skillId}`);
@@ -2344,13 +2371,34 @@ export class InvokeSkillTool implements Tool {
       });
 
       if (result.success) {
+        // 生成指导信息，告诉 Agent 接下来要做什么
+        let guidance = '';
+        if (result.nextSteps && result.nextSteps.length > 0) {
+          guidance = `\n## 🎯 下一步操作\n\n请按照以下步骤继续执行任务：\n\n`;
+          for (const step of result.nextSteps) {
+            guidance += `### 步骤 ${step.step}: ${step.action}\n`;
+            guidance += `- **描述**: ${step.description}\n`;
+            guidance += `- **原因**: ${step.reason}\n`;
+            if (step.command) {
+              guidance += `- **命令**: \`${step.command}\`\n`;
+            }
+            if (step.file) {
+              guidance += `- **文件**: ${step.file}\n`;
+            }
+            guidance += '\n';
+          }
+          guidance += `---\n**重要**: 上述步骤是根据 SKILL.md 自动生成的执行指南。请按照这些步骤继续完成任务，而不是结束对话。\n`;
+        }
+
         return {
           success: true,
-          message: `Successfully invoked skill: ${skillDetails.name}`,
+          message: `技能已激活: ${skillDetails.name}`,
           skill: skillId,
           task: taskDescription,
-          result: result.output,
-          files: result.files
+          result: result.output + (guidance ? guidance : ''),
+          files: result.files,
+          nextSteps: result.nextSteps,
+          guidance: guidance
         };
       } else {
         throw new Error(result.error);
@@ -2370,7 +2418,7 @@ export class ListSkillsTool implements Tool {
 
 This returns a list of all skills with their names, descriptions, and categories.`;
 
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(): Promise<{ success: boolean; skills: any[] }> {
     try {

@@ -40,8 +40,19 @@ if (fs.existsSync(configFile)) {
 // Update skillsPath
 config.skillsPath = skillsPath;
 
+// Determine and update workspacePath (default: ~/.xagent/workspace)
+const workspacePath = path.join(process.env.HOME || process.env.USERPROFILE, '.xagent', 'workspace');
+config.workspacePath = workspacePath;
+
+// Ensure workspace directory exists
+if (!fs.existsSync(workspacePath)) {
+  fs.mkdirSync(workspacePath, { recursive: true });
+  console.log(`✅ Workspace directory created: ${workspacePath}`);
+}
+
 // Write back to config file
 fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
 
 console.log(`✅ Skills path initialized: ${skillsPath}`);
+console.log(`✅ Workspace path initialized: ${workspacePath}`);
 console.log(`   Config saved to: ${configFile}`);

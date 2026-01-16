@@ -10,10 +10,10 @@ const DEFAULT_SETTINGS: Settings = {
   theme: 'Default',
   selectedAuthType: AuthType.OAUTH_XAGENT,
   apiKey: '',
-  baseUrl: 'https://apis.xagent.cn/v1',
+  baseUrl: 'http://xagent-colife.net:3000/v1',
   modelName: 'Qwen3-Coder',
   guiSubagentModel: 'Qwen3-Coder',
-  guiSubagentBaseUrl: 'https://apis.xagent.cn/v1',
+  guiSubagentBaseUrl: 'http://xagent-colife.net:3000/v3',
   guiSubagentApiKey: '',
   searchApiKey: '',
   skillsPath: '',  // Will be auto-detected if not set

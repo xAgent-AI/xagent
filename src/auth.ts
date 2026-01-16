@@ -149,32 +149,15 @@ export class AuthService {
 
   private async authenticateWithXAgent(): Promise<boolean> {
     logger.info('Authenticating with xAgent...', 'Please complete the authentication in your browser');
+
     try {
-      const authUrl = 'https://xagent.cn/auth/cli';
-      const callbackUrl = 'http://localhost:8080/callback';
+      // 1. 先启动 HTTP 服务器接收回调
+      const token = await this.retrieveXAgentToken();
 
-      logger.info('Opening browser for authentication...');
-      await open(`${authUrl}?callback=${encodeURIComponent(callbackUrl)}`);
+      // 2. 设置认证配置
+      this.authConfig.baseUrl = 'http://xagent-colife.net:3000/v1';
+      this.authConfig.apiKey = token;
 
-      const answers = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'confirm',
-          message: 'Have you completed the authentication in your browser?',
-          default: false
-        }
-      ]);
-
-      const confirm = answers.confirm as boolean;
-
-      if (!confirm) {
-        logger.warn('Authentication cancelled.', 'Run /auth again to retry');
-        return false;
-      }
-
-      this.authConfig.baseUrl = 'https://apis.xagent.cn/v1';
-      this.authConfig.apiKey = await this.retrieveXAgentToken();
-      
       logger.success('Successfully authenticated with xAgent!', 'You can now start using xAgent CLI');
       return true;
     } catch (error) {
@@ -404,6 +387,11 @@ export class AuthService {
   }
 
   private async retrieveXAgentToken(): Promise<string> {
+    // 使用前端登录页面（支持 callback 参数）
+    const authUrl = 'http://xagent-colife.net:3000/login';
+    const callbackUrl = 'http://localhost:8080/callback';
+
+    // 启动 HTTP 服务器接收回调，然后打开浏览器
     return new Promise((resolve, reject) => {
       const server = http.createServer((req: any, res: any) => {
         if (req.url.startsWith('/callback')) {
@@ -431,8 +419,11 @@ export class AuthService {
         }
       });
 
-      server.listen(8080, () => {
-        logger.info('Waiting for authentication callback on http://localhost:8080...', 'Complete the authentication in your browser');
+      server.listen(8080, async () => {
+        logger.info('Waiting for authentication...', 'Opening browser for login...');
+
+        // 服务器启动后，打开浏览器
+        await open(`${authUrl}?callback=${encodeURIComponent(callbackUrl)}`);
       });
 
       setTimeout(() => {
@@ -599,9 +590,8 @@ export async function selectAuthType(): Promise<AuthType> {
       name: 'authType',
       message: 'Select authentication method:',
       choices: [
-        { name: 'Login with xAgent account (recommended)', value: AuthType.OAUTH_XAGENT },
-        { name: 'Use xAgent API Key', value: AuthType.API_KEY },
-        { name: 'Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)', value: AuthType.OPENAI_COMPATIBLE }
+        { name: 'Log in with xAgent – Start your free trial', value: AuthType.OAUTH_XAGENT },
+        { name: 'Use third-party model APIs (e.g., Zhipu GLM-4.7, MiniMax)', value: AuthType.OPENAI_COMPATIBLE }
       ]
     }
   ]);

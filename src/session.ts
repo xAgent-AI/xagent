@@ -223,36 +223,14 @@ export class InteractiveSession {
 
     const authConfig = authService.getAuthConfig();
 
-    // Configure VLM for GUI Agent
+    // VLM configuration is optional - skip for now, can be configured later with /vlm command
     console.log('');
-    const { configureVLM } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'configureVLM',
-        message: 'Do you want to configure VLM for GUI Agent (browser/desktop automation)?',
-        default: true
-      }
-    ]);
+    console.log(colors.info(`${icons.info} VLM configuration is optional.`));
+    console.log(colors.info(`You can configure it later using the /vlm command if needed.`));
+    console.log('');
 
-    if (configureVLM) {
-      const vlmConfig = await authService.configureAndValidateVLM();
-      if (vlmConfig) {
-        // Both LLM and VLM configured successfully - save all at once
-        this.configManager.setAuthConfig(authConfig);
-        this.configManager.set('guiSubagentModel', vlmConfig.model);
-        this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
-        this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
-        await this.configManager.save('global');
-      } else {
-        console.log('');
-        console.log(colors.error('VLM configuration failed. Exiting...'));
-        console.log('');
-        process.exit(1);
-      }
-    } else {
-      // Only LLM configured - save LLM config
-      await this.configManager.setAuthConfig(authConfig);
-    }
+    // Save LLM config only, skip VLM for now
+    await this.configManager.setAuthConfig(authConfig);
   }
 
   private showWelcomeMessage(): void {

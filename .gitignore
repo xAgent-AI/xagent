@@ -75,3 +75,6 @@ docs/generated/
 IFLOW*
 XAGENT*
 UI-TARS-desktop-main/
+
+xagent-web/*
+*.png

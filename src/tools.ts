@@ -308,12 +308,28 @@ export class BashTool implements Tool {
   }): Promise<{ stdout: string; stderr: string; exitCode: number; taskId?: string }> {
     const { command, cwd, description, timeout = 120, run_in_bg = false } = params;
     
+    // Determine effective working directory
+    // Only use cwd if the command doesn't contain 'cd' (let LLM control directory)
+    let effectiveCwd: string | undefined;
+    const hasCdCommand = /cd\s+["']?[^"&|;]+["']?/.test(command);
+    
+    if (cwd && !hasCdCommand) {
+      // Command doesn't control its own directory, use provided cwd
+      effectiveCwd = cwd;
+    } else if (cwd && hasCdCommand) {
+      // Command uses cd, ignore cwd to let cd take effect
+      effectiveCwd = undefined;
+    } else {
+      // No cwd provided, use default
+      effectiveCwd = undefined;
+    }
+    
     try {
       if (run_in_bg) {
         const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
         const childProcess = spawn(command, {
-          cwd: cwd || process.cwd(),
+          cwd: effectiveCwd || process.cwd(),
           shell: true,
           detached: true
         });
@@ -349,7 +365,7 @@ export class BashTool implements Tool {
         };
       } else {
         const { stdout, stderr } = await execAsync(command, {
-          cwd: cwd || process.cwd(),
+          cwd: effectiveCwd || process.cwd(),
           maxBuffer: 1024 * 1024 * 10,
           timeout: timeout * 1000
         });

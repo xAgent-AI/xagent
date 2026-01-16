@@ -95,7 +95,8 @@ export class MemoryManager {
   }
 
   private processImports(content: string): string {
-    const importRegex = /@([^\s\n]+)/g;
+    // Only match actual import statements: import ... from '@xxx' or import '@xxx'
+    const importRegex = /import\s+(?:(?:\{[^}]*\}|\* as \w+|\w+)\s+from\s+)?['"](@[^'"]+)['"]/g;
     let processedContent = content;
     const visitedFiles = new Set<string>();
 

@@ -61,6 +61,7 @@ export interface MCPServerConfig {
   excludeTools?: string[];
   url?: string;
   transport?: 'stdio' | 'sse' | 'http';
+  type?: 'stdio' | 'sse' | 'http';  // Alternative field name for transport (MCP spec compatibility)
   authToken?: string;
   headers?: Record<string, string>;
 }
@@ -96,6 +97,7 @@ export interface Settings {
   contextCompression: CompressionConfig;
   contextFileName: string | string[];
   mcpServers: Record<string, MCPServerConfig>;
+  mcpToolPreferences: Record<string, 'mcp' | 'local'>;
   language: 'zh' | 'en';
   autoUpdate: boolean;
   telemetryEnabled: boolean;

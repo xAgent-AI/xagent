@@ -3044,6 +3044,93 @@ export class ToolRegistry {
   }
 
   async execute(toolName: string, params: any, executionMode: ExecutionMode, indent: string = ''): Promise<any> {
+    // Check if this is an MCP tool (format: serverName__toolName)
+    if (toolName.includes('__')) {
+      return await this.executeMCPTool(toolName, params, executionMode, indent);
+    }
+
+    // Check if there's an MCP tool with the same name
+    const { getMCPManager } = await import('./mcp.js');
+    const mcpManager = getMCPManager();
+    const allMcpTools = mcpManager.getAllTools();
+    const mcpToolExists = allMcpTools.has(toolName);
+
+    // If no MCP tool with this name, use local tool directly
+    if (!mcpToolExists) {
+      return await this.executeLocalTool(toolName, params, executionMode, indent);
+    }
+
+    // Check if user explicitly specified which tool to use
+    const useTool = params._useTool;
+    if (useTool === 'mcp') {
+      return await this.executeMCPTool(toolName, params, executionMode, indent);
+    }
+    if (useTool === 'local') {
+      // Remove the _useTool parameter before execution
+      const filteredParams = { ...params };
+      delete filteredParams._useTool;
+      return await this.executeLocalTool(toolName, filteredParams, executionMode, indent);
+    }
+
+    // Both local and MCP tools exist - let LLM decide
+    return this.generateLlmToolChoiceGuidance(toolName, params, executionMode, indent);
+  }
+
+  /**
+   * Generate guidance for LLM to choose between local and MCP tools
+   * This returns a message that the LLM can analyze to decide which tool to use
+   */
+  private generateLlmToolChoiceGuidance(toolName: string, params: any, executionMode: ExecutionMode, indent: string): Promise<any> {
+    const modeLabel = executionMode === ExecutionMode.YOLO ? 'YOLO' :
+                      executionMode === ExecutionMode.SMART ? 'SMART' :
+                      executionMode === ExecutionMode.ACCEPT_EDITS ? 'ACCEPT_EDITS' : 'DEFAULT';
+
+    return Promise.resolve({
+      success: false,
+      needsLlmDecision: true,
+      toolName,
+      mode: modeLabel,
+      message: `
+## Tool Choice Decision Required (${modeLabel} Mode)
+
+Both **local** and **MCP** versions of "${toolName}" are available. Please analyze the requirements and decide which tool to use.
+
+### Local Tool
+- **Pros**: No network latency, always available, no external dependencies
+- **Best for**: Filesystem operations, project-specific tasks, command execution
+
+### MCP Tool
+- **Pros**: Extended capabilities (e.g., GitHub API, database access, cloud services)
+- **Best for**: External API calls, database operations, cloud service integration
+
+### How to Specify Your Choice
+Retry the tool call with the \`_useTool\` parameter:
+
+**To use MCP tool:**
+\`\`\`json
+{"_useTool": "mcp", ...otherParams}
+\`\`\`
+
+**To use local tool:**
+\`\`\`json
+{"_useTool": "local", ...otherParams}
+\`\`\`
+
+### Decision Criteria
+Consider:
+1. Does the task require external API access?
+2. Is network latency a concern?
+3. Does the MCP tool have features not available locally?
+4. Is the local tool sufficient for the task?
+
+Make your decision based on the user's request and the above criteria.`
+    });
+  }
+
+  /**
+   * Execute local tool (extracted for reuse)
+   */
+  private async executeLocalTool(toolName: string, params: any, executionMode: ExecutionMode, indent: string): Promise<any> {
     const tool = this.get(toolName);
 
     if (!tool) {
@@ -3129,6 +3216,62 @@ export class ToolRegistry {
 
     // Other modes execute directly
     return await tool.execute(params, executionMode);
+  }
+
+  /**
+   * Execute an MCP tool call
+   */
+  private async executeMCPTool(toolName: string, params: any, executionMode: ExecutionMode, indent: string = ''): Promise<any> {
+    const { getMCPManager } = await import('./mcp.js');
+    const cancellationManager = getCancellationManager();
+    const mcpManager = getMCPManager();
+
+    // Parse the tool name (format: serverName__toolName)
+    const [serverName, actualToolName] = toolName.split('__');
+    
+    // Get server info for display
+    const server = mcpManager.getServer(serverName);
+    const serverTools = server?.getToolNames() || [];
+    
+    // Display tool call info
+    console.log('');
+    console.log(`${indent}${colors.warning(`${icons.tool} MCP Tool Call: ${serverName}::${actualToolName}`)}`);
+
+    // Smart approval mode for MCP tools
+    if (executionMode === ExecutionMode.SMART) {
+      const debugMode = process.env.DEBUG === 'smart-approval';
+      const { getSmartApprovalEngine } = await import('./smart-approval.js');
+      const approvalEngine = getSmartApprovalEngine(debugMode);
+
+      // Evaluate MCP tool call
+      const result = await approvalEngine.evaluate({
+        toolName: `MCP[${serverName}]::${actualToolName}`,
+        params,
+        timestamp: Date.now()
+      });
+
+      if (result.decision === 'approved') {
+        console.log(`${indent}${colors.success(`✅ [Smart Mode] MCP tool '${serverName}::${actualToolName}' passed approval`)}`);
+        console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
+      } else if (result.decision === 'requires_confirmation') {
+        const confirmed = await approvalEngine.requestConfirmation(result);
+        if (!confirmed) {
+          console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled MCP tool execution`)}`);
+          throw new Error(`Tool execution cancelled by user: ${toolName}`);
+        }
+      } else {
+        console.log(`${indent}${colors.error(`❌ [Smart Mode] MCP tool execution rejected`)}`);
+        console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
+        throw new Error(`Tool execution rejected: ${toolName}`);
+      }
+    }
+
+    // Execute the MCP tool call with cancellation support
+    const operationId = `mcp-${serverName}-${actualToolName}-${Date.now()}`;
+    return await cancellationManager.withCancellation(
+      mcpManager.callTool(toolName, params),
+      operationId
+    );
   }
 
   async executeAll(

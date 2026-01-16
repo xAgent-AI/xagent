@@ -13,6 +13,7 @@ import { getLogger } from './logger.js';
 import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
+import { SystemPromptGenerator } from './system-prompt-generator.js';
 
 const logger = getLogger();
 
@@ -45,7 +46,7 @@ export class SlashCommandHandler {
   }
 
   /**
-   * 设置当前对话历史（包含所有 user/assistant/tool 消息）
+   * Set current conversation history (includes all user/assistant/tool messages)
    */
   setConversationHistory(messages: ChatMessage[]): void {
     this.conversationHistory = messages;
@@ -517,13 +518,25 @@ export class SlashCommandHandler {
         await this.listMcpServers();
         break;
       case 'add':
-        logger.warn('MCP server addition not implemented yet', 'Use /mcp add in interactive mode');
+        if (args[1]) {
+          // Non-interactive mode: use command line arguments
+          await this.addMcpServerInteractive(args[1]);
+        } else {
+          // Interactive mode
+          await this.addMcpServerInteractive();
+        }
         break;
       case 'remove':
-        logger.warn('MCP server removal not implemented yet', 'Use /mcp remove in interactive mode');
+        if (args[1]) {
+          // Non-interactive mode
+          await this.removeMcpServer(args[1]);
+        } else {
+          // Interactive mode
+          await this.removeMcpServerInteractive();
+        }
         break;
       case 'refresh':
-        logger.warn('MCP server refresh not implemented yet', 'Check back later for updates');
+        await this.refreshMcpServers();
         break;
       default:
         logger.warn(`Unknown MCP action: ${action}`, 'Use /mcp list to see available actions');
@@ -545,6 +558,203 @@ export class SlashCommandHandler {
       const status = server.isServerConnected() ? chalk.green(connected) : chalk.red(connected);
       logger.info(`  ${status} ${server.getToolNames().join(', ')}`);
     });
+  }
+
+  private async addMcpServerInteractive(serverName?: string): Promise<void> {
+    const { name, command, args: serverArgs, transport, url, authToken, headers } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'name',
+        message: 'Enter MCP server name:',
+        default: serverName,
+        validate: (input: string) => {
+          if (!input.trim()) {
+            return 'Server name is required';
+          }
+          const servers = this.mcpManager.getAllServers();
+          if (servers.some((s: MCPServer) => (s as any).config?.name === input)) {
+            return 'Server with this name already exists';
+          }
+          return true;
+        }
+      },
+      {
+        type: 'list',
+        name: 'transport',
+        message: 'Select transport type:',
+        choices: [
+          { name: 'Stdio (stdin/stdout)', value: 'stdio' },
+          { name: 'HTTP/SSE', value: 'sse' },
+          { name: 'HTTP (POST)', value: 'http' }
+        ],
+        default: 'stdio'
+      },
+      {
+        type: 'input',
+        name: 'command',
+        message: 'Enter command (for stdio transport):',
+        when: (answers: any) => answers.transport === 'stdio',
+        validate: (input: string) => input.trim() ? true : 'Command is required'
+      },
+      {
+        type: 'input',
+        name: 'args',
+        message: 'Enter arguments (comma-separated, for stdio transport):',
+        when: (answers: any) => answers.transport === 'stdio',
+        filter: (input: string) => input ? input.split(',').map((a: string) => a.trim()) : []
+      },
+      {
+        type: 'input',
+        name: 'url',
+        message: 'Enter server URL (for HTTP/SSE/HTTP transport):',
+        when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http',
+        validate: (input: string) => input.trim() ? true : 'URL is required'
+      },
+      {
+        type: 'password',
+        name: 'authToken',
+        message: 'Enter authentication token (optional):',
+        when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http'
+      },
+      {
+        type: 'input',
+        name: 'headers',
+        message: 'Enter custom headers as JSON (optional, e.g., {"Authorization": "Bearer token"}):',
+        when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http',
+        filter: (input: string) => {
+          if (!input.trim()) return undefined;
+          try {
+            return JSON.parse(input);
+          } catch {
+            return undefined;
+          }
+        }
+      }
+    ]);
+
+    const config: any = {
+      transport: transport as 'stdio' | 'sse' | 'http'
+    };
+
+    if (transport === 'stdio') {
+      config.command = command;
+      if (serverArgs && serverArgs.length > 0) {
+        config.args = serverArgs;
+      }
+    } else {
+      config.url = url;
+      if (authToken) {
+        config.authToken = authToken;
+      }
+      if (headers) {
+        config.headers = headers;
+      }
+    }
+
+    try {
+      // Save to config file
+      this.configManager.addMcpServer(name, config);
+      await this.configManager.save('global');
+
+      // Register to MCP Manager
+      this.mcpManager.registerServer(name, config);
+
+      // Connect to server
+      await this.mcpManager.connectServer(name);
+
+      // Generate MCP tool guide and notify LLM
+      const toolRegistry = getToolRegistry();
+      const promptGenerator = new SystemPromptGenerator(toolRegistry, ExecutionMode.YOLO);
+      const mcpToolGuide = await promptGenerator.generateMCPToolGuide(this.mcpManager);
+
+      // Append system message to conversation history so LLM knows about the new tools
+      this.conversationHistory.push({
+        role: 'system',
+        content: `## New MCP Server Added: ${name}\n\n${mcpToolGuide}\n\nYou now have access to these new tools. Use them when appropriate for the user's requests.`,
+        timestamp: Date.now()
+      });
+
+      console.log(chalk.green(`✅ MCP server '${name}' added and connected successfully`));
+    } catch (error: any) {
+      console.log(chalk.red(`❌ Failed to add MCP server: ${error.message}`));
+    }
+  }
+
+  private async removeMcpServerInteractive(): Promise<void> {
+    const servers = this.mcpManager.getAllServers();
+
+    if (servers.length === 0) {
+      logger.warn('No MCP servers configured', 'Use /mcp add to add servers');
+      return;
+    }
+
+    const serverNames = servers.map((s: MCPServer) => {
+      const tools = s.getToolNames();
+      const status = s.isServerConnected() ? '✓' : '✗';
+      return {
+        name: `${status} ${(s as any).config?.name || 'unknown'} (${tools.length} tools)`,
+        value: (s as any).config?.name
+      };
+    });
+
+    const { serverName } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'serverName',
+        message: 'Select MCP server to remove:',
+        choices: serverNames
+      }
+    ]);
+
+    await this.removeMcpServer(serverName);
+  }
+
+  private async removeMcpServer(serverName: string): Promise<void> {
+    try {
+      // Get server info before disconnecting to notify LLM
+      const server = this.mcpManager.getServer(serverName);
+      const removedTools = server ? server.getToolNames() : [];
+      const removedToolNames = removedTools.map((t: string) => `${serverName}__${t}`).join(', ');
+
+      // Disconnect
+      this.mcpManager.disconnectServer(serverName);
+
+      // Remove from config
+      this.configManager.removeMcpServer(serverName);
+      await this.configManager.save('global');
+
+      // Notify LLM about removed MCP tools
+      if (removedTools.length > 0) {
+        this.conversationHistory.push({
+          role: 'system',
+          content: `## MCP Server Removed: ${serverName}\n\nThe following tools are no longer available:\n${removedTools.map((t: string) => `- ${serverName}__${t}`).join('\n')}\n\nPlease adjust your approach accordingly.`,
+          timestamp: Date.now()
+        });
+      }
+
+      console.log(chalk.green(`✅ MCP server '${serverName}' removed successfully`));
+    } catch (error: any) {
+      console.log(chalk.red(`❌ Failed to remove MCP server: ${error.message}`));
+    }
+  }
+
+  private async refreshMcpServers(): Promise<void> {
+    const spinner = ora({ text: 'Refreshing MCP servers...', interval: 200 }).start();
+
+    try {
+      // Disconnect all existing connections
+      this.mcpManager.disconnectAllServers();
+
+      // Reconnect all servers
+      await this.mcpManager.connectAllServers();
+
+      spinner.succeed('MCP servers refreshed successfully');
+      
+      // Show current server status
+      await this.listMcpServers();
+    } catch (error: any) {
+      spinner.fail(`Failed to refresh MCP servers: ${error.message}`);
+    }
   }
 
   private async handleMemory(args: string[]): Promise<void> {
@@ -736,7 +946,7 @@ export class SlashCommandHandler {
   private async handleCompress(args: string[]): Promise<void> {
     const config = this.configManager.getContextCompressionConfig();
 
-    // 如果有参数，则处理配置或执行
+    // If there are arguments, process config or execute
     if (args.length > 0) {
       const action = args[0].toLowerCase();
       

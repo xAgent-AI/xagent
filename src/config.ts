@@ -39,6 +39,7 @@ const DEFAULT_SETTINGS: Settings = {
   },
   contextFileName: 'XAGENT.md',
   mcpServers: {},
+  mcpToolPreferences: {},
   language: 'zh',
   autoUpdate: true,
   telemetryEnabled: true,

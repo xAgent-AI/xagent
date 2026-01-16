@@ -17,13 +17,23 @@ export class MCPServer {
     this.config = config;
   }
 
+  /**
+   * Get transport type, supporting both 'transport' and 'type' fields
+   * for MCP spec compatibility
+   */
+  private getTransportType(): 'stdio' | 'sse' | 'http' | undefined {
+    return this.config.transport || this.config.type;
+  }
+
   async connect(): Promise<void> {
     if (this.isConnected) {
       return;
     }
 
+    const transportType = this.getTransportType();
+
     try {
-      if (this.config.transport === 'http' || this.config.transport === 'sse') {
+      if (transportType === 'http' || transportType === 'sse') {
         await this.connectHttp();
       } else {
         await this.connectStdio();
@@ -211,7 +221,7 @@ export class MCPServer {
       }
     };
 
-    if (this.config.transport === 'http' || this.config.transport === 'sse') {
+    if (this.getTransportType() === 'http' || this.getTransportType() === 'sse') {
       return await this.callToolHttp(message);
     } else {
       return await this.callToolStdio(message);

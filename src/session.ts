@@ -657,10 +657,15 @@ export class InteractiveSession {
       const allowedToolNames = this.currentAgent
         ? this.agentManager.getAvailableToolsForAgent(this.currentAgent, this.executionMode)
         : [];
-      const allToolDefinitions = toolRegistry.getToolDefinitions();
+      const allLocalToolDefinitions = toolRegistry.getToolDefinitions();
+      const mcpToolDefinitions = this.mcpManager.getToolDefinitions();
+      
+      // Merge local tools and MCP tools
+      const allToolDefinitions = [...allLocalToolDefinitions, ...mcpToolDefinitions];
+      
       const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
         ? allToolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
-        : [];
+        : allToolDefinitions;
 
       const baseSystemPrompt = this.currentAgent?.systemPrompt;
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);

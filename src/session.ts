@@ -150,7 +150,6 @@ export class InteractiveSession {
 
         // Try refresh token if validation failed
         if (!isValid && authConfig.refreshToken) {
-          console.log(colors.info(`[DEBUG] Token expired, trying to refresh...`));
           spinner.text = colors.textMuted('Refreshing authentication...');
           const newToken = await this.refreshToken(baseUrl, authConfig.refreshToken);
           
@@ -159,7 +158,6 @@ export class InteractiveSession {
             await this.configManager.set('apiKey', newToken);
             authConfig.apiKey = newToken;
             isValid = true;
-            console.log(colors.success(`[DEBUG] Token refreshed successfully!`));
           }
         }
 
@@ -267,7 +265,6 @@ export class InteractiveSession {
     try {
       // For OAuth XAGENT auth, use /api/auth/me endpoint
       const url = `${baseUrl}/api/auth/me`;
-      console.log(colors.info(`[DEBUG] Validating token with: ${url}`));
 
       const response = await fetch(url, {
         method: 'GET',
@@ -277,11 +274,8 @@ export class InteractiveSession {
         }
       });
 
-      console.log(colors.info(`[DEBUG] Response status: ${response.status}`));
-
       return response.ok;
     } catch (error) {
-      console.log(colors.warning(`[DEBUG] Network error: ${error}`));
       // Network error - could be server down, consider token invalid
       return false;
     }
@@ -290,7 +284,6 @@ export class InteractiveSession {
   private async refreshToken(baseUrl: string, refreshToken: string): Promise<string | null> {
     try {
       const url = `${baseUrl}/api/auth/refresh`;
-      console.log(colors.info(`[DEBUG] Refreshing token with: ${url}`));
 
       const response = await fetch(url, {
         method: 'POST',
@@ -302,14 +295,11 @@ export class InteractiveSession {
 
       if (response.ok) {
         const data = await response.json() as { token?: string; refreshToken?: string };
-        console.log(colors.success(`[DEBUG] Token refreshed successfully`));
         return data.token || null;
       } else {
-        console.log(colors.warning(`[DEBUG] Token refresh failed: ${response.status}`));
         return null;
       }
     } catch (error) {
-      console.log(colors.warning(`[DEBUG] Token refresh error: ${error}`));
       return null;
     }
   }

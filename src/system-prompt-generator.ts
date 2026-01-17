@@ -2,7 +2,6 @@ import { ToolRegistry } from './tools.js';
 import { ExecutionMode, AgentConfig } from './types.js';
 import { getAgentManager } from './agents.js';
 import { getSkillInvoker, SkillInfo } from './skill-invoker.js';
-import { getMCPManager } from './mcp.js';
 
 export interface ToolParameter {
   type: string;
@@ -43,23 +42,10 @@ export class SystemPromptGenerator {
       availableTools = availableTools.filter(tool => allowedToolNames.includes(tool.name));
     }
 
-    // Load MCP tools
-    let mcpToolGuide = '';
-    try {
-      const mcpManager = getMCPManager();
-      const servers = mcpManager.getAllServers();
-      if (servers.length > 0) {
-        // We need to get server names - they're stored in the Map keys
-        mcpToolGuide = await this.generateMCPToolGuide(mcpManager);
-      }
-    } catch (error) {
-      // MCP not available, skip
-    }
-
     let enhancedPrompt = baseSystemPrompt;
 
     // Only add tool-related content if tools are available
-    if (availableTools.length > 0 || mcpToolGuide) {
+    if (availableTools.length > 0) {
       const toolSchemas = this.getToolSchemas(availableTools);
       const toolUsageGuide = this.generateToolUsageGuide(toolSchemas);
       const decisionMakingGuide = this.generateDecisionMakingGuide(availableTools);
@@ -67,8 +53,6 @@ export class SystemPromptGenerator {
       const skillInstructions = await this.generateSkillInstructions();
 
       enhancedPrompt += `
-
-${mcpToolGuide}
 
 ${toolUsageGuide}
 
@@ -528,10 +512,28 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       }
     };
 
-    return schemas[tool.name] || {
+    // Fallback for unknown tools (including MCP tools)
+    if (schemas[tool.name]) {
+      return schemas[tool.name];
+    }
+
+    // Convert MCP inputSchema to parameters format
+    const parameters: Record<string, ToolParameter> = {};
+    if (tool.inputSchema?.properties) {
+      for (const [paramName, paramDef] of Object.entries<any>(tool.inputSchema.properties)) {
+        parameters[paramName] = {
+          type: paramDef.type || 'any',
+          description: paramDef.description || '',
+          required: tool.inputSchema.required?.includes(paramName) || false,
+          enum: paramDef.enum
+        };
+      }
+    }
+
+    return {
       name: tool.name,
       description: tool.description,
-      parameters: {},
+      parameters,
       usage: `Use ${tool.name} for related tasks`,
       examples: [],
       bestPractices: []
@@ -596,7 +598,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       'exit_plan_mode': 'When you have completed planning and are ready to execute',
       'xml_escape': 'When you need to escape special characters in XML/HTML files',
       'image_read': 'When you need to analyze or read image files',
-      'Skill': 'When you need to execute specialized skills like PDF, PPTX, or XLSX'
+      'InvokeSkill': 'When you need to use specialized skills for domain tasks (see Available Skills section below for details)'
     };
 
     // 根据可用工具生成 "When to Use Tools" 部分
@@ -732,83 +734,6 @@ When a user asks you to:
       // If skills can't be loaded, return empty string
       return '';
     }
-  }
-
-  /**
-   * Generate a guide for available MCP (Model Context Protocol) tools
-   */
-  async generateMCPToolGuide(mcpManager: any): Promise<string> {
-    let guide = '## Available MCP Tools (Model Context Protocol)\n\n';
-    guide += 'You have access to additional tools via MCP (Model Context Protocol) servers. ';
-    guide += 'These tools extend your capabilities with specialized external services.\n\n';
-
-    guide += '### MCP Tool Naming Convention\n';
-    guide += '- MCP tools are named as: `{serverName}__{toolName}`\n';
-    guide += '- Example: `github__create_issue`, `filesystem__read_file`\n';
-    guide += '- Use the exact tool name when calling MCP tools\n\n';
-
-    guide += '### Available MCP Servers and Tools\n\n';
-
-    // Get all servers from the manager
-    const servers = mcpManager.getAllServers();
-    // We need to get server names - they're stored in the Map keys
-    // Access the private servers Map via getAllServers result combined with a workaround
-    // Since we can't directly get names from getAllServers(), use getAllTools to extract server names
-    const allTools = mcpManager.getAllTools();
-
-    // Group tools by server
-    const toolsByServer = new Map<string, any[]>();
-    for (const [fullName, tool] of allTools) {
-      const [serverName, ...toolNameParts] = fullName.split('__');
-      const toolName = toolNameParts.join('__');
-      const existing = toolsByServer.get(serverName) || [];
-      existing.push({ ...tool, fullName });
-      toolsByServer.set(serverName, existing);
-    }
-
-    for (const [serverName, serverTools] of toolsByServer) {
-      guide += `#### ${serverName}\n`;
-
-      if (serverTools.length === 0) {
-        guide += '- (No tools loaded)\n\n';
-        continue;
-      }
-
-      for (const tool of serverTools) {
-        guide += `- **${tool.fullName}**\n`;
-        guide += `  - Description: ${tool.description}\n`;
-
-        // Add parameter information if available
-        if (tool.inputSchema && tool.inputSchema.properties) {
-          const requiredParams = tool.inputSchema.required || [];
-          guide += `  - Parameters:\n`;
-          for (const [paramName, paramDesc] of Object.entries(tool.inputSchema.properties)) {
-            if (!paramDesc) continue;
-            const pd = paramDesc as { type?: string; description?: string };
-            const isRequired = requiredParams.includes(paramName) ? ' (required)' : ' (optional)';
-            const paramType = pd.type ? `: ${pd.type}` : '';
-            guide += `    - \`${paramName}\`${isRequired}${paramType}\n`;
-            if (pd.description) {
-              guide += `      - ${pd.description}\n`;
-            }
-          }
-        }
-        guide += '\n';
-      }
-    }
-
-    guide += '### MCP Tool Selection\n';
-    guide += '- When a task can be accomplished by both local and MCP tools, choose the most appropriate one\n';
-    guide += '- MCP tools are ideal for: external API access, database operations, cloud service integration\n';
-    guide += '- Local tools are ideal for: filesystem operations, project-specific tasks, command execution\n';
-    guide += '- Consider the pros and cons of each option for your specific task\n\n';
-
-    guide += '### MCP Tool Execution\n';
-    guide += '- Call MCP tools using their full name: `{serverName}__{toolName}`\n';
-    guide += '- Parameters follow the tool\'s input schema\n';
-    guide += '- MCP tools may have network latency - plan accordingly\n\n';
-
-    return guide;
   }
 
   getToolDefinitions(): any[] {

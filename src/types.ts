@@ -35,6 +35,7 @@ export interface Tool {
   description: string;
   execute: (params: any, executionMode?: ExecutionMode) => Promise<any>;
   allowedModes: ExecutionMode[];
+  inputSchema?: any; // For MCP tools to pass input schema
 }
 
 export interface AgentConfig {

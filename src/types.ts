@@ -84,6 +84,7 @@ export interface Settings {
   apiKey?: string;
   baseUrl?: string;
   modelName?: string;
+  xagentApiBaseUrl?: string;  // xAgent API base URL (for token validation)
   guiSubagentModel?: string;
   guiSubagentBaseUrl?: string;
   guiSubagentApiKey?: string;

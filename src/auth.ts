@@ -7,6 +7,11 @@ import { getLogger } from './logger.js';
 
 const logger = getLogger();
 
+// Extended AuthConfig for xAgent with additional fields
+interface XAgentAuthConfig extends AuthConfig {
+  xagentApiBaseUrl?: string;
+}
+
 interface VLMProviderInfo {
   name: string;
   provider: string;
@@ -128,7 +133,7 @@ const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
 ];
 
 export class AuthService {
-  private authConfig: AuthConfig;
+  private authConfig: XAgentAuthConfig;
 
   constructor(authConfig: AuthConfig) {
     this.authConfig = authConfig;
@@ -156,9 +161,12 @@ export class AuthService {
 
       // 2. 设置认证配置
       this.authConfig.baseUrl = 'http://xagent-colife.net:3000/v1';
+      this.authConfig.xagentApiBaseUrl = 'http://xagent-colife.net:3000';
       this.authConfig.apiKey = token;
 
-      logger.success('Successfully authenticated with xAgent!', 'You can now start using xAgent CLI');
+      logger.success('Successfully authenticated with xAgent!');
+      logger.info(`LLM API: http://xagent-colife.net:3000/v1`);
+      logger.info(`VLM API: http://xagent-colife.net:3000/v3`);
       return true;
     } catch (error) {
       logger.error('xAgent authentication failed', 'Check your network connection and try again');
@@ -391,20 +399,46 @@ export class AuthService {
     const authUrl = 'http://xagent-colife.net:3000/login';
     const callbackUrl = 'http://localhost:8080/callback';
 
+    logger.debug(`[OAuth] Opening browser for authentication`);
+    logger.debug(`[OAuth] Login URL: ${authUrl}?callback=${encodeURIComponent(callbackUrl)}`);
+
     // 启动 HTTP 服务器接收回调，然后打开浏览器
     return new Promise((resolve, reject) => {
       const server = http.createServer((req: any, res: any) => {
+        logger.debug(`[OAuth] Received request: ${req.url}`);
+
         if (req.url.startsWith('/callback')) {
           const url = new URL(req.url, `http://${req.headers.host}`);
           const token = url.searchParams.get('token');
 
+          logger.debug(`[OAuth] Callback received, token: ${token ? 'present' : 'missing'}`);
+
           if (token) {
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(`
+              <!DOCTYPE html>
               <html>
+                <head>
+                  <meta charset="UTF-8">
+                  <meta http-equiv="refresh" content="3;url=http://localhost:3000/">
+                  <title>Authentication Successful</title>
+                  <style>
+                    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+                           text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                           color: white; min-height: 100vh; margin: 0; display: flex; flex-direction: column; 
+                           justify-content: center; align-items: center; }
+                    h1 { font-size: 2.5em; margin-bottom: 20px; }
+                    p { font-size: 1.2em; opacity: 0.9; }
+                    .spinner { width: 50px; height: 50px; border: 4px solid rgba(255,255,255,0.3); 
+                               border-top-color: white; border-radius: 50%; animation: spin 1s linear infinite; margin: 20px auto; }
+                    @keyframes spin { to { transform: rotate(360deg); } }
+                  </style>
+                </head>
                 <body>
+                  <div class="spinner"></div>
                   <h1>Authentication Successful!</h1>
-                  <p>You can close this window and return to the terminal.</p>
+                  <p>Redirecting to home page...</p>
+                  <p style="font-size: 0.9em; margin-top: 30px;">If not redirected, <a href="http://localhost:3000/" style="color: white; text-decoration: underline;">click here</a></p>
                 </body>
               </html>
             `);
@@ -412,7 +446,7 @@ export class AuthService {
             resolve(token);
           } else {
             res.writeHead(400, { 'Content-Type': 'text/html' });
-            res.end('<h1>Authentication Failed</h1>');
+            res.end('<h1>Authentication Failed: No token</h1>');
             server.close();
             reject(new Error('No token received'));
           }
@@ -421,12 +455,13 @@ export class AuthService {
 
       server.listen(8080, async () => {
         logger.info('Waiting for authentication...', 'Opening browser for login...');
-
-        // 服务器启动后，打开浏览器
-        await open(`${authUrl}?callback=${encodeURIComponent(callbackUrl)}`);
+        const fullUrl = `${authUrl}?callback=${encodeURIComponent(callbackUrl)}`;
+        logger.debug(`[OAuth] Full URL: ${fullUrl}`);
+        await open(fullUrl);
       });
 
       setTimeout(() => {
+        logger.warn('[OAuth] Authentication timeout after 5 minutes');
         server.close();
         reject(new Error('Authentication timeout'));
       }, 300000);

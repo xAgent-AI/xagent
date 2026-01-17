@@ -131,12 +131,43 @@ export class InteractiveSession {
 
       let authConfig = this.configManager.getAuthConfig();
 
-      if (!authConfig.apiKey) {
+      // If there's an API key, validate it with the backend
+      if (authConfig.apiKey) {
+        spinner.text = colors.textMuted('Validating authentication...');
+        const baseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+        const isValid = await this.validateToken(baseUrl, authConfig.apiKey);
+
+        if (!isValid) {
+          spinner.stop();
+          console.log('');
+          console.log(colors.warning('⚠️  Authentication expired or invalid'));
+          console.log(colors.info('Please log in again to continue.'));
+          console.log('');
+
+          // Clear invalid credentials
+          await this.configManager.set('apiKey', '');
+          await this.configManager.set('selectedAuthType', AuthType.OAUTH_XAGENT);
+
+          await this.setupAuthentication();
+          authConfig = this.configManager.getAuthConfig();
+
+          // Recreate readline interface after inquirer
+          this.rl.close();
+          this.rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+          });
+          this.rl.on('close', () => {
+            console.error('DEBUG: readline interface closed');
+          });
+          spinner.start();
+        }
+      } else {
         spinner.stop();
         await this.setupAuthentication();
-        // Re-fetch authConfig after setup to get the newly saved credentials
         authConfig = this.configManager.getAuthConfig();
-        // inquirer may close stdin, so need to recreate readline interface
+
+        // Recreate readline interface after inquirer
         this.rl.close();
         this.rl = readline.createInterface({
           input: process.stdin,
@@ -192,6 +223,34 @@ export class InteractiveSession {
       const spinner = ora({ text: '', spinner: 'dots', color: 'red' }).start();
       spinner.fail(colors.error(`Initialization failed: ${error.message}`));
       throw error;
+    }
+  }
+
+  /**
+   * Validate token with the backend
+   * Returns true if token is valid, false otherwise
+   */
+  private async validateToken(baseUrl: string, apiKey: string): Promise<boolean> {
+    try {
+      // For OAuth XAGENT auth, use /api/auth/me endpoint
+      const url = `${baseUrl}/api/auth/me`;
+      console.log(colors.info(`[DEBUG] Validating token with: ${url}`));
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      console.log(colors.info(`[DEBUG] Response status: ${response.status}`));
+
+      return response.ok;
+    } catch (error) {
+      console.log(colors.warning(`[DEBUG] Network error: ${error}`));
+      // Network error - could be server down, consider token invalid
+      return false;
     }
   }
 

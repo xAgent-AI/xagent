@@ -140,9 +140,10 @@ export class InteractiveSession {
       await this.configManager.load();
 
       let authConfig = this.configManager.getAuthConfig();
+      const selectedAuthType = this.configManager.get('selectedAuthType');
 
-      // If there's an API key, validate it with the backend
-      if (authConfig.apiKey) {
+      // Only validate OAuth tokens, skip validation for third-party API keys
+      if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
         spinner.text = colors.textMuted('Validating authentication...');
         const baseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
         let isValid = await this.validateToken(baseUrl, authConfig.apiKey);
@@ -181,7 +182,8 @@ export class InteractiveSession {
           this.stdinManager.restoreAfterInquirer();
           spinner.start();
         }
-      } else {
+      } else if (!authConfig.apiKey) {
+        // No API key configured, need to set up authentication
         spinner.stop();
         await this.setupAuthentication();
         authConfig = this.configManager.getAuthConfig();
@@ -190,6 +192,7 @@ export class InteractiveSession {
         this.stdinManager.restoreAfterInquirer();
         spinner.start();
       }
+      // For OPENAI_COMPATIBLE with API key, skip validation and proceed directly
 
       this.aiClient = new AIClient(authConfig);
       this.contextCompressor.setAIClient(this.aiClient);

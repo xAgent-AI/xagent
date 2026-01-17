@@ -59,7 +59,12 @@ export class InteractiveSession {
     this.slashCommandHandler.setClearCallback(() => {
       this.conversation = [];
     });
-    
+
+    // 注册 MCP 更新回调，更新系统提示
+    this.slashCommandHandler.setSystemPromptUpdateCallback(async () => {
+      await this.updateSystemPrompt();
+    });
+
     this.executionMode = ExecutionMode.DEFAULT;
     this.cancellationManager = getCancellationManager();
     this.indentLevel = indentLevel;
@@ -77,6 +82,29 @@ export class InteractiveSession {
 
   setExecutionMode(mode: ExecutionMode): void {
     this.executionMode = mode;
+  }
+
+  /**
+   * Update system prompt to reflect MCP changes (called after add/remove MCP)
+   */
+  async updateSystemPrompt(): Promise<void> {
+    const toolRegistry = getToolRegistry();
+    const promptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+
+    // Use the current agent's original system prompt as base
+    const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are xAgent, an AI-powered CLI tool.';
+    const newSystemPrompt = await promptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
+
+    // Replace old system prompt with new one
+    this.conversation = this.conversation.filter(msg => msg.role !== 'system');
+    this.conversation.unshift({
+      role: 'system',
+      content: newSystemPrompt,
+      timestamp: Date.now()
+    });
+
+    // Sync to slashCommandHandler
+    this.slashCommandHandler.setConversationHistory(this.conversation, this.executionMode);
   }
 
   setAgent(agent: any): void {
@@ -166,14 +194,32 @@ export class InteractiveSession {
       );
 
       // 同步对话历史到 slashCommandHandler
-      this.slashCommandHandler.setConversationHistory(this.conversation);
+      this.slashCommandHandler.setConversationHistory(this.conversation, this.executionMode);
 
       const mcpServers = this.configManager.getMcpServers();
+      console.log(`📋 Loading ${Object.keys(mcpServers).length} MCP servers from config`);
       Object.entries(mcpServers).forEach(([name, config]) => {
+        console.log(`📝 Registering MCP server: ${name} (${config.transport})`);
         this.mcpManager.registerServer(name, config);
       });
 
-      await this.mcpManager.connectAllServers();
+      // Eagerly connect to MCP servers to get tool definitions
+      if (mcpServers && Object.keys(mcpServers).length > 0) {
+        try {
+          console.log(`${colors.info(`${icons.brain} Connecting to ${Object.keys(mcpServers).length} MCP server(s)...`)}`);
+          await this.mcpManager.connectAllServers();
+          const connectedCount = Array.from(this.mcpManager.getAllServers()).filter((s: any) => s.isServerConnected()).length;
+          const mcpTools = this.mcpManager.getToolDefinitions();
+          console.log(`${colors.success(`✓ ${connectedCount}/${Object.keys(mcpServers).length} MCP server(s) connected (${mcpTools.length} tools available)`)}`);
+
+          // Register MCP tools with the tool registry (hide MCP origin from LLM)
+          const toolRegistry = getToolRegistry();
+          const allMcpTools = this.mcpManager.getAllTools();
+          toolRegistry.registerMCPTools(allMcpTools);
+        } catch (error: any) {
+          console.log(`${colors.warning(`⚠ MCP connection failed: ${error.message}`)}`);
+        }
+      }
 
       const checkpointingConfig = this.configManager.getCheckpointingConfig();
       if (checkpointingConfig.enabled) {
@@ -364,7 +410,7 @@ export class InteractiveSession {
       if (handled) {
         this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
         // 同步对话历史到 slashCommandHandler
-        this.slashCommandHandler.setConversationHistory(this.conversation);
+        this.slashCommandHandler.setConversationHistory(this.conversation, this.executionMode);
       }
       return;
     }
@@ -574,7 +620,7 @@ export class InteractiveSession {
         }
 
         // 同步压缩后的对话历史到 slashCommandHandler
-        this.slashCommandHandler.setConversationHistory(this.conversation);
+        this.slashCommandHandler.setConversationHistory(this.conversation, this.executionMode);
       }
     }
   }
@@ -657,6 +703,8 @@ export class InteractiveSession {
       const allowedToolNames = this.currentAgent
         ? this.agentManager.getAvailableToolsForAgent(this.currentAgent, this.executionMode)
         : [];
+
+      // MCP servers are already connected during initialization (eager mode)
       const allLocalToolDefinitions = toolRegistry.getToolDefinitions();
       const mcpToolDefinitions = this.mcpManager.getToolDefinitions();
       

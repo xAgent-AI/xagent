@@ -2519,9 +2519,10 @@ export class ToolRegistry {
     this.register(new ExitPlanModeTool());
     this.register(new XmlEscapeTool());
     this.register(new ImageReadTool());
-    this.register(new SkillTool());
-    this.register(new ListSkillsTool());
-    this.register(new GetSkillDetailsTool());
+    // Deprecated: Use InvokeSkillTool instead (2026-01-17)
+    // this.register(new SkillTool());
+    // this.register(new ListSkillsTool());
+    // this.register(new GetSkillDetailsTool());
     this.register(new InvokeSkillTool());
     // GUI Subagent Tools
     // this.register(new GUIOperateTool());
@@ -2531,6 +2532,81 @@ export class ToolRegistry {
 
   register(tool: Tool): void {
     this.tools.set(tool.name, tool);
+  }
+
+  /**
+   * Register MCP tools with their simple names (without server prefix)
+   * This allows the LLM to call MCP tools using simple names like "create_issue"
+   * instead of "github__create_issue"
+   */
+  registerMCPTools(mcpTools: Map<string, any>): void {
+    let registeredCount = 0;
+
+    for (const [fullName, tool] of mcpTools) {
+      const [serverName, originalName] = fullName.split('__');
+      if (!originalName) {
+        continue;
+      }
+
+      // Auto-rename if conflict, ensure unique name
+      let toolName = originalName;
+      let suffix = 1;
+
+      while (this.tools.has(toolName)) {
+        const existingTool = this.tools.get(toolName);
+        const existingIsMcp = (existingTool as any)._isMcpTool;
+
+        if (existingIsMcp && (existingTool as any)._mcpFullName === fullName) {
+          // Same MCP tool already registered, skip silently
+          break;
+        }
+
+        // Conflict - auto-rename with suffix
+        toolName = `${originalName}_mcp${suffix}`;
+        suffix++;
+      }
+
+      if (!this.tools.has(toolName)) {
+        // Create a wrapper tool for the MCP tool - hide MCP origin from LLM
+        const mcpTool: any = {
+          name: toolName,
+          description: tool.description || 'MCP tool',
+          allowedModes: [ExecutionMode.YOLO, ExecutionMode.SMART, ExecutionMode.ACCEPT_EDITS],
+          inputSchema: tool.inputSchema,
+          _isMcpTool: true,
+          _mcpServerName: serverName,
+          _mcpFullName: fullName,
+          execute: async (params: any) => {
+            const { getMCPManager } = await import('./mcp.js');
+            const mcpManager = getMCPManager();
+            return await mcpManager.callTool(fullName, params);
+          }
+        };
+        this.tools.set(toolName, mcpTool);
+        registeredCount++;
+
+        if (toolName !== originalName) {
+          console.log(`[MCP] Tool '${originalName}' renamed to '${toolName}' to avoid conflict`);
+        }
+      }
+    }
+
+    if (registeredCount > 0) {
+      console.log(`[MCP] Registered ${registeredCount} tool(s)`);
+    }
+  }
+
+  /**
+   * Remove all MCP tool wrappers (useful when MCP servers are removed)
+   */
+  unregisterMCPTools(serverName?: string): void {
+    for (const [name, tool] of this.tools) {
+      // Remove MCP tool wrappers by checking marker
+      const mcpTool = tool as any;
+      if (mcpTool._isMcpTool && (!serverName || mcpTool._mcpServerName === serverName)) {
+        this.tools.delete(name);
+      }
+    }
   }
 
   unregister(toolName: string): void {
@@ -3024,12 +3100,33 @@ export class ToolRegistry {
           break;
 
         default:
-          // For any unknown tools, keep the empty schema
-          parameters = {
-            type: 'object',
-            properties: {},
-            required: []
-          };
+          // For MCP tools, use their inputSchema; for other unknown tools, keep empty schema
+          const mcpTool = tool as any;
+          if (mcpTool._isMcpTool && mcpTool.inputSchema) {
+            // Use MCP tool's inputSchema directly
+            parameters = {
+              type: 'object',
+              properties: {},
+              required: []
+            };
+            if (mcpTool.inputSchema.properties) {
+              for (const [paramName, paramDef] of Object.entries<any>(mcpTool.inputSchema.properties)) {
+                parameters.properties[paramName] = {
+                  type: paramDef.type || 'string',
+                  description: paramDef.description || ''
+                };
+              }
+            }
+            if (mcpTool.inputSchema.required) {
+              parameters.required = mcpTool.inputSchema.required;
+            }
+          } else {
+            parameters = {
+              type: 'object',
+              properties: {},
+              required: []
+            };
+          }
       }
 
       return {
@@ -3044,36 +3141,32 @@ export class ToolRegistry {
   }
 
   async execute(toolName: string, params: any, executionMode: ExecutionMode, indent: string = ''): Promise<any> {
-    // Check if this is an MCP tool (format: serverName__toolName)
-    if (toolName.includes('__')) {
-      return await this.executeMCPTool(toolName, params, executionMode, indent);
-    }
-
-    // Check if there's an MCP tool with the same name
-    const { getMCPManager } = await import('./mcp.js');
-    const mcpManager = getMCPManager();
-    const allMcpTools = mcpManager.getAllTools();
-    const mcpToolExists = allMcpTools.has(toolName);
-
-    // If no MCP tool with this name, use local tool directly
-    if (!mcpToolExists) {
+    // First try to execute as local tool
+    const localTool = this.tools.get(toolName);
+    if (localTool) {
       return await this.executeLocalTool(toolName, params, executionMode, indent);
     }
 
-    // Check if user explicitly specified which tool to use
-    const useTool = params._useTool;
-    if (useTool === 'mcp') {
+    // Fall back to MCP tool if local tool doesn't exist
+    const { getMCPManager } = await import('./mcp.js');
+    const mcpManager = getMCPManager();
+    const allMcpTools = mcpManager.getAllTools();
+
+    // Check if this is an MCP tool (format: serverName__toolName)
+    if (toolName.includes('__') && allMcpTools.has(toolName)) {
       return await this.executeMCPTool(toolName, params, executionMode, indent);
     }
-    if (useTool === 'local') {
-      // Remove the _useTool parameter before execution
-      const filteredParams = { ...params };
-      delete filteredParams._useTool;
-      return await this.executeLocalTool(toolName, filteredParams, executionMode, indent);
+
+    // Try to find MCP tool with just the tool name (try each server)
+    for (const [fullName, tool] of allMcpTools) {
+      const [serverName, actualToolName] = fullName.split('__');
+      if (actualToolName === toolName) {
+        return await this.executeMCPTool(fullName, params, executionMode, indent);
+      }
     }
 
-    // Both local and MCP tools exist - let LLM decide
-    return this.generateLlmToolChoiceGuidance(toolName, params, executionMode, indent);
+    // Tool not found anywhere
+    throw new Error(`Tool not found: ${toolName}`);
   }
 
   /**

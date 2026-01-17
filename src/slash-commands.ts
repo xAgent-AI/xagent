@@ -26,7 +26,9 @@ export class SlashCommandHandler {
   private contextCompressor: ContextCompressor;
   private conversationManager: ConversationManager;
   private conversationHistory: ChatMessage[] = [];
+  private executionMode: ExecutionMode = ExecutionMode.DEFAULT;
   private onClearCallback: (() => void) | null = null;
+  private onSystemPromptUpdate: (() => Promise<void>) | null = null;
 
   constructor() {
     this.configManager = getConfigManager(process.cwd());
@@ -46,10 +48,20 @@ export class SlashCommandHandler {
   }
 
   /**
+   * 设置系统提示更新的回调函数
+   */
+  setSystemPromptUpdateCallback(callback: () => Promise<void>): void {
+    this.onSystemPromptUpdate = callback;
+  }
+
+  /**
    * Set current conversation history (includes all user/assistant/tool messages)
    */
-  setConversationHistory(messages: ChatMessage[]): void {
+  setConversationHistory(messages: ChatMessage[], executionMode?: ExecutionMode): void {
     this.conversationHistory = messages;
+    if (executionMode) {
+      this.executionMode = executionMode;
+    }
   }
 
   async handleCommand(input: string): Promise<boolean> {
@@ -544,20 +556,34 @@ export class SlashCommandHandler {
   }
 
   private async listMcpServers(): Promise<void> {
-    const servers = this.mcpManager.getAllServers();
+    const serverConfigs = this.mcpManager.getAllServerConfigs();
 
-    if (servers.length === 0) {
-      logger.warn('No MCP servers configured', 'Use /mcp add to add servers');
+    if (serverConfigs.length === 0) {
+      logger.section('MCP Servers');
+      logger.warn('No MCP servers configured');
+      logger.info('Use /mcp add to add a new MCP server');
       return;
     }
 
     logger.section('MCP Servers');
 
-    servers.forEach((server: MCPServer) => {
-      const connected = server.isServerConnected() ? '✓' : '✗';
-      const status = server.isServerConnected() ? chalk.green(connected) : chalk.red(connected);
-      logger.info(`  ${status} ${server.getToolNames().join(', ')}`);
+    serverConfigs.forEach(({ name: serverName, config: serverConfig }: { name: string; config: any }) => {
+      const server = this.mcpManager.getServer(serverName);
+      const isConnected = server?.isServerConnected() || false;
+      const status = isConnected ? chalk.green('✓ Connected') : chalk.red('✗ Disconnected');
+      const tools = server?.getToolNames() || [];
+      const transport = serverConfig?.transport || serverConfig?.type || 'unknown';
+      const command = serverConfig?.command ? `${serverConfig.command} ${(serverConfig.args || []).join(' ')}` : serverConfig?.url || 'N/A';
+
+      console.log('');
+      console.log(`  ${chalk.cyan(serverName)} ${status}`);
+      console.log(`    Transport: ${transport}`);
+      console.log(`    Command: ${command}`);
+      console.log(`    Tools: ${isConnected ? tools.length : 'N/A'} (${isConnected ? tools.join(', ') : 'wait for connection'})`);
     });
+
+    console.log('');
+    logger.info(`Total: ${serverConfigs.length} server(s)`);
   }
 
   private async addMcpServerInteractive(serverName?: string): Promise<void> {
@@ -659,20 +685,28 @@ export class SlashCommandHandler {
       // Register to MCP Manager
       this.mcpManager.registerServer(name, config);
 
-      // Connect to server
-      await this.mcpManager.connectServer(name);
+      // Connect to server (with error handling)
+      let connected = false;
+      try {
+        await this.mcpManager.connectServer(name);
+        connected = true;
+      } catch (error: any) {
+        // Connection failed - cleanup
+        this.mcpManager.disconnectServer(name);
+        this.configManager.removeMcpServer(name);
+        await this.configManager.save('global');
+        throw new Error(`Connection failed: ${error.message}`);
+      }
 
-      // Generate MCP tool guide and notify LLM
+      // Register MCP tools with simple names
+      const allMcpTools = this.mcpManager.getAllTools();
       const toolRegistry = getToolRegistry();
-      const promptGenerator = new SystemPromptGenerator(toolRegistry, ExecutionMode.YOLO);
-      const mcpToolGuide = await promptGenerator.generateMCPToolGuide(this.mcpManager);
+      toolRegistry.registerMCPTools(allMcpTools);
 
-      // Append system message to conversation history so LLM knows about the new tools
-      this.conversationHistory.push({
-        role: 'system',
-        content: `## New MCP Server Added: ${name}\n\n${mcpToolGuide}\n\nYou now have access to these new tools. Use them when appropriate for the user's requests.`,
-        timestamp: Date.now()
-      });
+      // Update system prompt to include new MCP tools
+      if (this.onSystemPromptUpdate) {
+        await this.onSystemPromptUpdate();
+      }
 
       console.log(chalk.green(`✅ MCP server '${name}' added and connected successfully`));
     } catch (error: any) {
@@ -719,17 +753,17 @@ export class SlashCommandHandler {
       // Disconnect
       this.mcpManager.disconnectServer(serverName);
 
+      // Unregister MCP tools for this server
+      const toolRegistry = getToolRegistry();
+      toolRegistry.unregisterMCPTools(serverName);
+
       // Remove from config
       this.configManager.removeMcpServer(serverName);
       await this.configManager.save('global');
 
-      // Notify LLM about removed MCP tools
-      if (removedTools.length > 0) {
-        this.conversationHistory.push({
-          role: 'system',
-          content: `## MCP Server Removed: ${serverName}\n\nThe following tools are no longer available:\n${removedTools.map((t: string) => `- ${serverName}__${t}`).join('\n')}\n\nPlease adjust your approach accordingly.`,
-          timestamp: Date.now()
-        });
+      // Update system prompt to reflect removed MCP tools
+      if (this.onSystemPromptUpdate) {
+        await this.onSystemPromptUpdate();
       }
 
       console.log(chalk.green(`✅ MCP server '${serverName}' removed successfully`));

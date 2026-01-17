@@ -14,6 +14,7 @@ import { getContextCompressor, ContextCompressor, CompressionResult } from './co
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
+import { AuthService } from './auth.js';
 
 const logger = getLogger();
 
@@ -99,6 +100,9 @@ export class SlashCommandHandler {
         break;
       case 'mcp':
         await this.handleMcp(args);
+        break;
+      case 'vlm':
+        await this.handleVlm();
         break;
       case 'memory':
         await this.handleMemory(args);
@@ -243,6 +247,12 @@ export class SlashCommandHandler {
         desc: 'Manage MCP servers',
         detail: 'Manage Model Context Protocol servers',
         example: '/mcp list\n/mcp add server-name'
+      },
+      {
+        cmd: '/vlm',
+        desc: 'Configure VLM for GUI Agent',
+        detail: 'Configure Vision-Language Model for browser/desktop automation',
+        example: '/vlm'
       },
       {
         cmd: '/tools [verbose|simple]',
@@ -393,6 +403,85 @@ export class SlashCommandHandler {
 
       if (selectAuthType) {
         logger.warn('Please restart xAgent CLI and run /auth again', 'Authentication changes require restart');
+      }
+    }
+  }
+
+  private async handleVlm(): Promise<void> {
+    logger.section('VLM Configuration for GUI Agent');
+
+    // Show current VLM config
+    const currentVlmConfig = {
+      model: this.configManager.get('guiSubagentModel'),
+      baseUrl: this.configManager.get('guiSubagentBaseUrl'),
+      apiKey: this.configManager.get('guiSubagentApiKey') ? '***' : ''
+    };
+
+    console.log(chalk.cyan('\n📊 Current VLM Configuration:\n'));
+    console.log(`  Model: ${chalk.yellow(currentVlmConfig.model || 'Not configured')}`);
+    console.log(`  Base URL: ${chalk.yellow(currentVlmConfig.baseUrl || 'Not configured')}`);
+    console.log(`  API Key: ${chalk.yellow(currentVlmConfig.apiKey || 'Not configured')}`);
+    console.log();
+
+    const { action } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'action',
+        message: 'Select action:',
+        choices: [
+          { name: 'Configure VLM', value: 'configure' },
+          { name: 'Remove VLM configuration', value: 'remove' },
+          { name: 'Back', value: 'back' }
+        ]
+      }
+    ]);
+
+    if (action === 'back') {
+      return;
+    }
+
+    if (action === 'remove') {
+      const { confirm } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'confirm',
+          message: 'Are you sure you want to remove VLM configuration?',
+          default: false
+        }
+      ]);
+
+      if (confirm) {
+        await this.configManager.set('guiSubagentModel', '');
+        await this.configManager.set('guiSubagentBaseUrl', '');
+        await this.configManager.set('guiSubagentApiKey', '');
+        await this.configManager.save('global');
+        console.log(chalk.green('✅ VLM configuration removed successfully!'));
+      }
+      return;
+    }
+
+    if (action === 'configure') {
+      // Use AuthService to configure VLM
+      const authService = new AuthService({
+        type: 'openai_compatible' as any,
+        apiKey: '',
+        baseUrl: '',
+        modelName: ''
+      });
+
+      const vlmConfig = await authService.configureAndValidateVLM();
+
+      if (vlmConfig) {
+        // Save VLM configuration
+        await this.configManager.set('guiSubagentModel', vlmConfig.model);
+        await this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
+        await this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
+        await this.configManager.save('global');
+        console.log(chalk.green('✅ VLM configuration saved successfully!'));
+        console.log(chalk.cyan(`   Model: ${vlmConfig.model}`));
+        console.log(chalk.cyan(`   Base URL: ${vlmConfig.baseUrl}`));
+      } else {
+        console.log(chalk.red('❌ VLM configuration failed or cancelled'));
       }
     }
   }

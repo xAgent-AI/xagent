@@ -9,7 +9,6 @@ import inquirer from 'inquirer';
 import { Tool, ExecutionMode, AuthType } from './types.js';
 import type { Message, ToolDefinition } from './ai-client.js';
 import { colors, icons, styleHelpers } from './theme.js';
-import { getCancellationManager } from './cancellation.js';
 import { getLogger } from './logger.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { InteractiveSession } from './session.js';
@@ -1018,10 +1017,8 @@ export class TaskTool implements Tool {
     mode: ExecutionMode,
     config: any,
     indentLevel: number = 1
-  ): Promise<{ success: boolean; cancelled?: boolean; message: string; result?: any }> {
+  ): Promise<{ success: boolean; message: string; result?: any }> {
     const indent = '  '.repeat(indentLevel);
-    const cancellationManager = getCancellationManager();
-    const logger = getLogger();
 
     console.log(`${indent}${colors.primaryBright(`${icons.robot} GUI Agent`)}: ${description}`);
     console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
@@ -1077,57 +1074,6 @@ export class TaskTool implements Tool {
       };
     }
 
-    // Set up stdin polling for ESC cancellation
-    let rawModeEnabled = false;
-    let stdinPollingInterval: NodeJS.Timeout | null = null;
-
-    const setupStdinPolling = () => {
-      if (process.stdin.isTTY) {
-        try {
-          process.stdin.setRawMode(true);
-          rawModeEnabled = true;
-          process.stdin.resume();
-          readline.emitKeypressEvents(process.stdin);
-        } catch (e) {
-          logger.debug(`[GUIAgent] Could not set raw mode: ${e}`);
-        }
-
-        stdinPollingInterval = setInterval(() => {
-          try {
-            if (rawModeEnabled) {
-              const chunk = process.stdin.read(1);
-              if (chunk && chunk.length > 0) {
-                const code = chunk[0];
-                if (code === 0x1B) { // ESC
-                  logger.debug('[GUIAgent] ESC detected!');
-                  cancellationManager.cancel();
-                }
-              }
-            }
-          } catch (e) {
-            // Ignore polling errors
-          }
-        }, 10);
-      }
-    };
-
-    const cleanupStdinPolling = () => {
-      if (stdinPollingInterval) {
-        clearInterval(stdinPollingInterval);
-        stdinPollingInterval = null;
-      }
-    };
-
-    // Set up cancellation
-    let cancelled = false;
-    const cancelHandler = () => {
-      cancelled = true;
-    };
-    cancellationManager.on('cancelled', cancelHandler);
-
-    // Start polling for ESC
-    setupStdinPolling();
-
     try {
       // Import and create GUIAgent
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
@@ -1150,22 +1096,6 @@ export class TaskTool implements Tool {
       // Cleanup
       await guiAgent.cleanup();
 
-      // Check cancellation
-      if (cancelled || cancellationManager.isOperationCancelled()) {
-        cleanupStdinPolling();
-        cancellationManager.off('cancelled', cancelHandler);
-        // Flush stdout to prevent residual output after prompt
-        process.stdout.write('\n');
-        return {
-          success: true,
-          cancelled: true,  // Mark as cancelled so main agent won't continue
-          message: `GUI task "${description}" cancelled by user`,
-          result: 'Task cancelled'
-        };
-      }
-
-      cleanupStdinPolling();
-      cancellationManager.off('cancelled', cancelHandler);
       // Flush stdout to ensure all output is displayed before returning
       process.stdout.write('\n');
 
@@ -1193,30 +1123,8 @@ export class TaskTool implements Tool {
         };
       }
     } catch (error: any) {
-      cleanupStdinPolling();
-      cancellationManager.off('cancelled', cancelHandler);
-
       // Flush stdout to prevent residual output
       process.stdout.write('\n');
-
-      // If the user cancelled the task, ignore any API errors (like 429)
-      // and return cancelled status instead
-      if (cancelled || cancellationManager.isOperationCancelled()) {
-        return {
-          success: true,
-          cancelled: true,  // Mark as cancelled so main agent won't continue
-          message: `GUI task "${description}" cancelled by user`,
-          result: 'Task cancelled'
-        };
-      }
-
-      if (error.message === 'Operation cancelled by user') {
-        return {
-          success: true,
-          message: `GUI task "${description}" cancelled by user`,
-          result: 'Task cancelled'
-        };
-      }
 
       // Return failure without throwing - let the main agent handle it
       return {
@@ -1294,73 +1202,10 @@ export class TaskTool implements Tool {
     const indent = '  '.repeat(indentLevel);
     const indentNext = '  '.repeat(indentLevel + 1);
     const agentName = agent.name || subagent_type;
-    const cancellationManager = getCancellationManager();
-    const logger = getLogger();
-    let cancelled = false;
-
-    // Set up raw mode and stdin polling for ESC detection
-    let rawModeEnabled = false;
-    let stdinPollingInterval: NodeJS.Timeout | null = null;
-
-    const setupStdinPolling = () => {
-      if (process.stdin.isTTY) {
-        try {
-          process.stdin.setRawMode(true);
-          rawModeEnabled = true;
-          process.stdin.resume();
-          readline.emitKeypressEvents(process.stdin);
-        } catch (e) {
-          logger.debug(`[TaskTool] Could not set raw mode: ${e}`);
-        }
-
-        // Start polling for ESC key (10ms interval for faster response)
-        stdinPollingInterval = setInterval(() => {
-          try {
-            if (rawModeEnabled) {
-              const chunk = process.stdin.read(1);
-              if (chunk && chunk.length > 0) {
-                const code = chunk[0];
-                if (code === 0x1B) { // ESC
-                  logger.debug('[TaskTool] ESC detected via polling!');
-                  cancellationManager.cancel();
-                }
-              }
-            }
-          } catch (e) {
-            // Ignore polling errors
-          }
-        }, 10);
-      }
-    };
-
-    const cleanupStdinPolling = () => {
-      if (stdinPollingInterval) {
-        clearInterval(stdinPollingInterval);
-        stdinPollingInterval = null;
-      }
-    };
-
-    // Start polling for ESC
-    setupStdinPolling();
-
-    // Listen for cancellation
-    const cancelHandler = () => {
-      cancelled = true;
-    };
-    cancellationManager.on('cancelled', cancelHandler);
 
     // Helper function to indent multi-line content
     const indentMultiline = (content: string, baseIndent: string): string => {
       return content.split('\n').map(line => `${baseIndent}  ${line}`).join('\n');
-    };
-
-    // Check if operation is cancelled
-    const checkCancellation = () => {
-      if (cancelled || cancellationManager.isOperationCancelled()) {
-        cancellationManager.off('cancelled', cancelHandler);
-        cleanupStdinPolling();
-        throw new Error('Operation cancelled by user');
-      }
     };
     
     const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, mode, agent);
@@ -1399,20 +1244,10 @@ export class TaskTool implements Tool {
     while (iteration < maxIterations) {
       iteration++;
       
-      // Check for cancellation before each iteration
-      checkCancellation();
-      
-      // Use withCancellation to make API call cancellable
-      const result = await cancellationManager.withCancellation(
-        subAgentClient.chatCompletion(messages, {
-          tools: toolDefinitions,
-          temperature: 0.7
-        }),
-        `api-${subagent_type}-${iteration}`
-      ) as any;
-
-      // Check for cancellation after API call
-      checkCancellation();
+      const result = await subAgentClient.chatCompletion(messages, {
+        tools: toolDefinitions,
+        temperature: 0.7
+      }) as any;
 
       if (!result || !result.choices || result.choices.length === 0) {
         throw new Error(`Sub-agent ${subagent_type} returned empty response`);
@@ -1475,13 +1310,7 @@ export class TaskTool implements Tool {
           console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${name}`)}`);
 
           try {
-            // Check cancellation before tool execution
-            checkCancellation();
-            
-            const toolResult = await cancellationManager.withCancellation(
-              toolRegistry.execute(name, parsedParams, mode, indent),
-              `subagent-${subagent_type}-${name}-${iteration}`
-            );
+            const toolResult = await toolRegistry.execute(name, parsedParams, mode, indent);
 
             // Display tool result with proper indentation for multi-line content
             const resultPreview = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
@@ -1495,16 +1324,6 @@ export class TaskTool implements Tool {
               tool_call_id: toolCall.id
             });
           } catch (error: any) {
-            if (error.message === 'Operation cancelled by user') {
-              console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
-              cancellationManager.off('cancelled', cancelHandler);
-              cleanupStdinPolling();
-              return {
-                success: false,
-                message: `Task "${description}" cancelled by user`,
-                result: contentStr
-              };
-            }
             console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error.message}\n`);
 
             messages.push({
@@ -1519,8 +1338,6 @@ export class TaskTool implements Tool {
       }
 
       // No more tool calls, return the result
-      cancellationManager.off('cancelled', cancelHandler);
-      cleanupStdinPolling();
       return {
         success: true,
         message: `Task "${description}" completed by ${subagent_type}`,
@@ -1529,8 +1346,6 @@ export class TaskTool implements Tool {
     }
 
     // Max iterations reached - return accumulated results instead of throwing error
-    cancellationManager.off('cancelled', cancelHandler);
-    cleanupStdinPolling();
     // Get the last assistant message content
     const lastAssistantMsg = messages.filter(m => m.role === 'assistant').pop();
     const lastContent = lastAssistantMsg?.content || '';
@@ -1553,75 +1368,12 @@ export class TaskTool implements Tool {
   ): Promise<{ success: boolean; message: string; results: any[]; errors: any[] }> {
     const indent = '  '.repeat(indentLevel);
     const indentNext = '  '.repeat(indentLevel + 1);
-    const cancellationManager = getCancellationManager();
-    const logger = getLogger();
-
-    // Set up raw mode and stdin polling for ESC detection
-    let rawModeEnabled = false;
-    let stdinPollingInterval: NodeJS.Timeout | null = null;
-
-    const setupStdinPolling = () => {
-      if (process.stdin.isTTY) {
-        try {
-          process.stdin.setRawMode(true);
-          rawModeEnabled = true;
-          process.stdin.resume();
-          readline.emitKeypressEvents(process.stdin);
-        } catch (e) {
-          logger.debug(`[ParallelAgents] Could not set raw mode: ${e}`);
-        }
-
-        stdinPollingInterval = setInterval(() => {
-          try {
-            if (rawModeEnabled) {
-              const chunk = process.stdin.read(1);
-              if (chunk && chunk.length > 0) {
-                const code = chunk[0];
-                if (code === 0x1B) { // ESC
-                  logger.debug('[ParallelAgents] ESC detected via polling!');
-                  cancellationManager.cancel();
-                }
-              }
-            }
-          } catch (e) {
-            // Ignore polling errors
-          }
-        }, 10);
-      }
-    };
-
-    const cleanupStdinPolling = () => {
-      if (stdinPollingInterval) {
-        clearInterval(stdinPollingInterval);
-        stdinPollingInterval = null;
-      }
-    };
-
-    // Start polling for ESC
-    setupStdinPolling();
-
-    // Listen for cancellation to stop parallel execution
-    let cancelled = false;
-    const cancelHandler = () => {
-      cancelled = true;
-    };
-    cancellationManager.on('cancelled', cancelHandler);
 
     console.log(`\n${indent}${colors.accent('◆')} ${colors.primaryBright('Parallel Agents')}: ${agents.length} running...`);
 
     const startTime = Date.now();
 
     const agentPromises = agents.map(async (agentTask, index) => {
-      // Check if cancelled
-      if (cancelled || cancellationManager.isOperationCancelled()) {
-        return {
-          success: false,
-          agent: agentTask.subagent_type,
-          description: agentTask.description,
-          error: 'Operation cancelled by user'
-        };
-      }
-
       try {
         const result = await this.executeSingleAgent(
           agentTask.subagent_type,
@@ -1669,10 +1421,6 @@ export class TaskTool implements Tool {
       }
       console.log('');
     }
-
-    // Cleanup
-    cancellationManager.off('cancelled', cancelHandler);
-    cleanupStdinPolling();
 
     return {
       success: failedAgents.length === 0,
@@ -3212,7 +2960,6 @@ Make your decision based on the user's request and the above criteria.`
     // Smart approval mode
     if (executionMode === ExecutionMode.SMART) {
       const debugMode = process.env.DEBUG === 'smart-approval';
-      const cancellationManager = getCancellationManager();
 
       // task tool bypasses smart approval entirely
       if (toolName === 'task') {
@@ -3221,10 +2968,7 @@ Make your decision based on the user's request and the above criteria.`
           const logger = getLogger();
           logger.debug(`[SmartApprovalEngine] Tool '${toolName}' bypassed smart approval completely`);
         }
-        return await cancellationManager.withCancellation(
-          tool.execute(params, executionMode),
-          `tool-${toolName}`
-        );
+        return tool.execute(params, executionMode);
       }
 
       const { getSmartApprovalEngine } = await import('./smart-approval.js');
@@ -3248,10 +2992,7 @@ Make your decision based on the user's request and the above criteria.`
         console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
         console.log(`${indent}${colors.textDim(`  Latency: ${result.latency}ms`)}`);
         console.log('');
-        return await cancellationManager.withCancellation(
-          tool.execute(params, executionMode),
-          `tool-${toolName}`
-        );
+        return tool.execute(params, executionMode);
       } else if (result.decision === 'requires_confirmation') {
         // Requires user confirmation
         const confirmed = await approvalEngine.requestConfirmation(result);
@@ -3260,10 +3001,7 @@ Make your decision based on the user's request and the above criteria.`
           console.log('');
           console.log(`${indent}${colors.success(`✅ [Smart Mode] User confirmed execution of tool '${toolName}'`)}`);
           console.log('');
-          return await cancellationManager.withCancellation(
-            tool.execute(params, executionMode),
-            `tool-${toolName}`
-          );
+          return tool.execute(params, executionMode);
         } else {
           console.log('');
           console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled execution of tool '${toolName}'`)}`);
@@ -3289,7 +3027,6 @@ Make your decision based on the user's request and the above criteria.`
    */
   private async executeMCPTool(toolName: string, params: any, executionMode: ExecutionMode, indent: string = ''): Promise<any> {
     const { getMCPManager } = await import('./mcp.js');
-    const cancellationManager = getCancellationManager();
     const mcpManager = getMCPManager();
 
     // Parse the tool name (format: serverName__toolName)
@@ -3332,12 +3069,8 @@ Make your decision based on the user's request and the above criteria.`
       }
     }
 
-    // Execute the MCP tool call with cancellation support
-    const operationId = `mcp-${serverName}-${actualToolName}-${Date.now()}`;
-    return await cancellationManager.withCancellation(
-      mcpManager.callTool(toolName, params),
-      operationId
-    );
+    // Execute the MCP tool call
+    return mcpManager.callTool(toolName, params);
   }
 
   async executeAll(
@@ -3345,42 +3078,21 @@ Make your decision based on the user's request and the above criteria.`
     executionMode: ExecutionMode
   ): Promise<Array<{ tool: string; result: any; error?: string }>> {
     const results: Array<{ tool: string; result: any; error?: string }> = [];
-    const cancellationManager = getCancellationManager();
-    let cancelled = false;
 
-    // Listen for cancellation
-    const cancelHandler = () => {
-      cancelled = true;
-    };
-    cancellationManager.on('cancelled', cancelHandler);
-
-    const executePromises = toolCalls.map(async (toolCall, index) => {
+    const executePromises = toolCalls.map(async (toolCall) => {
       const { name, params } = toolCall;
-      const operationId = `tool-${name}-${index}-${Date.now()}`;
 
       try {
-        const result = await cancellationManager.withCancellation(
-          this.execute(name, params, executionMode),
-          operationId
-        );
+        const result = await this.execute(name, params, executionMode);
         return { tool: name, result, error: undefined };
       } catch (error: any) {
-        if (error.message === 'Operation cancelled by user') {
-          return { tool: name, result: undefined, error: 'Cancelled' };
-        }
         return { tool: name, result: undefined, error: error.message };
       }
     });
 
     const settledResults = await Promise.all(executePromises);
-    cancellationManager.off('cancelled', cancelHandler);
 
-    // Filter out cancelled tools and mark them appropriately
     for (const result of settledResults) {
-      if (result.error === 'Cancelled' && cancelled) {
-        // Don't add cancelled results to the final output
-        continue;
-      }
       results.push(result);
     }
 

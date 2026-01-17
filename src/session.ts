@@ -16,15 +16,14 @@ import { getSessionManager, SessionManager } from './session-manager.js';
 import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
-import { getCancellationManager, CancellationManager } from './cancellation.js';
+import { getStdinManager } from './stdin-manager.js';
 import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
-import { Logger, LogLevel } from './logger.js';
 
 export class InteractiveSession {
   private conversationManager: ConversationManager;
   private sessionManager: SessionManager;
   private contextCompressor: ContextCompressor;
-  rl: readline.Interface;
+  private stdinManager = getStdinManager();
   private aiClient: AIClient | null = null;
   private conversation: ChatMessage[] = [];
   private toolCalls: ToolCall[] = [];
@@ -36,16 +35,10 @@ export class InteractiveSession {
   private mcpManager: MCPManager;
   private checkpointManager: CheckpointManager;
   private currentAgent: any = null;
-  private cancellationManager: CancellationManager;
   private indentLevel: number;
   private indentString: string;
 
   constructor(indentLevel: number = 0) {
-    this.rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-
     this.configManager = getConfigManager(process.cwd());
     this.agentManager = getAgentManager(process.cwd());
     this.memoryManager = getMemoryManager(process.cwd());
@@ -54,7 +47,7 @@ export class InteractiveSession {
     this.conversationManager = getConversationManager();
     this.sessionManager = getSessionManager(process.cwd());
     this.slashCommandHandler = new SlashCommandHandler();
-    
+
     // 注册 /clear 回调，清除对话时同步清空本地 conversation
     this.slashCommandHandler.setClearCallback(() => {
       this.conversation = [];
@@ -66,7 +59,6 @@ export class InteractiveSession {
     });
 
     this.executionMode = ExecutionMode.DEFAULT;
-    this.cancellationManager = getCancellationManager();
     this.indentLevel = indentLevel;
     this.indentString = '  '.repeat(indentLevel);
     this.contextCompressor = getContextCompressor();
@@ -129,16 +121,6 @@ export class InteractiveSession {
     // Track if an operation is in progress
     (this as any)._isOperationInProgress = false;
 
-    // Listen for ESC cancellation - only cancel operations, don't exit the program
-    const cancelHandler = () => {
-      if ((this as any)._isOperationInProgress) {
-        // An operation is running, let it be cancelled
-        return;
-      }
-      // No operation running, ignore ESC or show a message
-    };
-    this.cancellationManager.on('cancelled', cancelHandler);
-
     this.promptLoop();
 
     // Keep the promise pending until shutdown
@@ -158,16 +140,16 @@ export class InteractiveSession {
       await this.configManager.load();
 
       let authConfig = this.configManager.getAuthConfig();
+      const selectedAuthType = this.configManager.get('selectedAuthType');
 
-      // If there's an API key, validate it with the backend
-      if (authConfig.apiKey) {
+      // Only validate OAuth tokens, skip validation for third-party API keys
+      if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
         spinner.text = colors.textMuted('Validating authentication...');
         const baseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
         let isValid = await this.validateToken(baseUrl, authConfig.apiKey);
 
         // Try refresh token if validation failed
         if (!isValid && authConfig.refreshToken) {
-          console.log(colors.info(`[DEBUG] Token expired, trying to refresh...`));
           spinner.text = colors.textMuted('Refreshing authentication...');
           const newToken = await this.refreshToken(baseUrl, authConfig.refreshToken);
           
@@ -176,7 +158,6 @@ export class InteractiveSession {
             await this.configManager.set('apiKey', newToken);
             authConfig.apiKey = newToken;
             isValid = true;
-            console.log(colors.success(`[DEBUG] Token refreshed successfully!`));
           }
         }
 
@@ -195,33 +176,21 @@ export class InteractiveSession {
           await this.setupAuthentication();
           authConfig = this.configManager.getAuthConfig();
 
-          // Recreate readline interface after inquirer
-          this.rl.close();
-          this.rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout
-          });
-          this.rl.on('close', () => {
-            console.error('DEBUG: readline interface closed');
-          });
+          // 恢复 stdin 状态 after inquirer
+          this.stdinManager.restoreAfterInquirer();
           spinner.start();
         }
-      } else {
+      } else if (!authConfig.apiKey) {
+        // No API key configured, need to set up authentication
         spinner.stop();
         await this.setupAuthentication();
         authConfig = this.configManager.getAuthConfig();
 
-        // Recreate readline interface after inquirer
-        this.rl.close();
-        this.rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout
-        });
-        this.rl.on('close', () => {
-          console.error('DEBUG: readline interface closed');
-        });
+        // 恢复 stdin 状态 after inquirer
+        this.stdinManager.restoreAfterInquirer();
         spinner.start();
       }
+      // For OPENAI_COMPATIBLE with API key, skip validation and proceed directly
 
       this.aiClient = new AIClient(authConfig);
       this.contextCompressor.setAIClient(this.aiClient);
@@ -296,7 +265,6 @@ export class InteractiveSession {
     try {
       // For OAuth XAGENT auth, use /api/auth/me endpoint
       const url = `${baseUrl}/api/auth/me`;
-      console.log(colors.info(`[DEBUG] Validating token with: ${url}`));
 
       const response = await fetch(url, {
         method: 'GET',
@@ -306,11 +274,8 @@ export class InteractiveSession {
         }
       });
 
-      console.log(colors.info(`[DEBUG] Response status: ${response.status}`));
-
       return response.ok;
     } catch (error) {
-      console.log(colors.warning(`[DEBUG] Network error: ${error}`));
       // Network error - could be server down, consider token invalid
       return false;
     }
@@ -319,7 +284,6 @@ export class InteractiveSession {
   private async refreshToken(baseUrl: string, refreshToken: string): Promise<string | null> {
     try {
       const url = `${baseUrl}/api/auth/refresh`;
-      console.log(colors.info(`[DEBUG] Refreshing token with: ${url}`));
 
       const response = await fetch(url, {
         method: 'POST',
@@ -331,14 +295,11 @@ export class InteractiveSession {
 
       if (response.ok) {
         const data = await response.json() as { token?: string; refreshToken?: string };
-        console.log(colors.success(`[DEBUG] Token refreshed successfully`));
         return data.token || null;
       } else {
-        console.log(colors.warning(`[DEBUG] Token refresh failed: ${response.status}`));
         return null;
       }
     } catch (error) {
-      console.log(colors.warning(`[DEBUG] Token refresh error: ${error}`));
       return null;
     }
   }
@@ -445,37 +406,23 @@ export class InteractiveSession {
       return;
     }
 
-    // Recreate readline interface
-    if (this.rl) {
-      this.rl.close();
-    }
-
-    // Enable raw mode BEFORE emitKeypressEvents for better ESC detection
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-    }
-    process.stdin.resume();
-    readline.emitKeypressEvents(process.stdin);
-
-    this.rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-
     const prompt = `${colors.primaryBright('❯')} `;
-    this.rl.question(prompt, async (input: string) => {
-      if ((this as any)._isShuttingDown) {
-        return;
-      }
 
-      try {
-        await this.handleInput(input);
-      } catch (err: any) {
-        console.log(colors.error(`Error: ${err.message}`));
-      }
+    // 使用 StdinManager 进行输入
+    const input = await this.stdinManager.question(prompt);
 
-      this.promptLoop();
-    });
+    if ((this as any)._isShuttingDown) {
+      return;
+    }
+
+    try {
+      await this.handleInput(input);
+    } catch (err: any) {
+      console.log(colors.error(`Error: ${err.message}`));
+    }
+
+    // 继续下一个循环
+    this.promptLoop();
   }
 
   private async handleInput(input: string): Promise<void> {
@@ -832,17 +779,11 @@ export class InteractiveSession {
             //   this.displayAIDebugInfo('INPUT', messages, availableTools);
             // }
       
-            const operationId = `ai-response-${Date.now()}`;
-      const responsePromise = this.aiClient.chatCompletion(messages, {
+            const response = await this.aiClient.chatCompletion(messages, {
         tools: availableTools,
         toolChoice: availableTools.length > 0 ? 'auto' : 'none',
         thinkingTokens
       });
-
-      const response = await this.cancellationManager.withCancellation(
-        responsePromise,
-        operationId
-      );
 
       clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r'); // Clear spinner line
@@ -914,7 +855,6 @@ export class InteractiveSession {
       (this as any)._isOperationInProgress = false;
 
       if (error.message === 'Operation cancelled by user') {
-        // Message is already logged by CancellationManager
         return;
       }
 
@@ -1215,9 +1155,7 @@ export class InteractiveSession {
   // }
 
   shutdown(): void {
-    this.rl.close();
     this.mcpManager.disconnectAllServers();
-    this.cancellationManager.cleanup();
 
     // End the current session
     this.sessionManager.completeCurrentSession();

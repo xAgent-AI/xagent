@@ -114,6 +114,7 @@ export class ConfigManager {
     return {
       type: this.settings.selectedAuthType,
       apiKey: this.settings.apiKey,
+      refreshToken: this.settings.refreshToken,
       baseUrl: this.settings.baseUrl,
       xagentApiBaseUrl: this.settings.xagentApiBaseUrl,
       modelName: this.settings.modelName,

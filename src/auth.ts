@@ -411,29 +411,66 @@ export class AuthService {
 
     // 启动 HTTP 服务器接收回调，然后打开浏览器
     return new Promise((resolve, reject) => {
-      const server = http.createServer((req: any, res: any) => {
+      let timeoutId: NodeJS.Timeout | null = null;
+      let server: http.Server | null = null;
+      
+      const cleanup = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+      };
+      
+      const serverCallback = (req: any, res: any) => {
         logger.debug(`[OAuth] Received request: ${req.url}`);
 
         if (req.url.startsWith('/callback')) {
           const url = new URL(req.url, `http://${req.headers.host}`);
           const token = url.searchParams.get('token');
+          const refreshToken = url.searchParams.get('refreshToken');
 
           logger.debug(`[OAuth] Callback received, token: ${token ? 'present' : 'missing'}`);
+          logger.debug(`[OAuth] Refresh token: ${refreshToken ? 'present' : 'missing'}`);
 
           if (token) {
+            cleanup();
+            
+            // Save refresh token if provided
+            if (refreshToken) {
+              this.authConfig.refreshToken = refreshToken;
+              logger.debug(`[OAuth] Refresh token saved`);
+            }
+
             // Redirect directly to home page after successful authentication
             res.writeHead(302, { 'Location': 'http://localhost:3000/' });
             res.end();
-            server.close();
+            if (server) {
+              server.close();
+            }
             resolve(token);
           } else {
+            cleanup();
+            
             res.writeHead(400, { 'Content-Type': 'text/html' });
             res.end('<h1>Authentication Failed: No token</h1>');
-            server.close();
+            if (server) {
+              server.close();
+            }
             reject(new Error('No token received'));
           }
         }
-      });
+      };
+      
+      server = http.createServer(serverCallback);
+
+      // 设置超时定时器（在 server 创建后）
+      timeoutId = setTimeout(() => {
+        logger.warn('[OAuth] Authentication timeout after 30 minutes');
+        if (server) {
+          server.close();
+        }
+        reject(new Error('Authentication timeout'));
+      }, 1800000); // 30 minutes
 
       server.listen(8080, async () => {
         logger.info('Waiting for authentication...', 'Opening browser for login...');
@@ -441,12 +478,6 @@ export class AuthService {
         logger.debug(`[OAuth] Full URL: ${fullUrl}`);
         await open(fullUrl);
       });
-
-      setTimeout(() => {
-        logger.warn('[OAuth] Authentication timeout after 5 minutes');
-        server.close();
-        reject(new Error('Authentication timeout'));
-      }, 300000);
     });
   }
 

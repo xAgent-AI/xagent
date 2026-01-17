@@ -135,7 +135,22 @@ export class InteractiveSession {
       if (authConfig.apiKey) {
         spinner.text = colors.textMuted('Validating authentication...');
         const baseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-        const isValid = await this.validateToken(baseUrl, authConfig.apiKey);
+        let isValid = await this.validateToken(baseUrl, authConfig.apiKey);
+
+        // Try refresh token if validation failed
+        if (!isValid && authConfig.refreshToken) {
+          console.log(colors.info(`[DEBUG] Token expired, trying to refresh...`));
+          spinner.text = colors.textMuted('Refreshing authentication...');
+          const newToken = await this.refreshToken(baseUrl, authConfig.refreshToken);
+          
+          if (newToken) {
+            // Save new token
+            await this.configManager.set('apiKey', newToken);
+            authConfig.apiKey = newToken;
+            isValid = true;
+            console.log(colors.success(`[DEBUG] Token refreshed successfully!`));
+          }
+        }
 
         if (!isValid) {
           spinner.stop();
@@ -146,6 +161,7 @@ export class InteractiveSession {
 
           // Clear invalid credentials
           await this.configManager.set('apiKey', '');
+          await this.configManager.set('refreshToken', '');
           await this.configManager.set('selectedAuthType', AuthType.OAUTH_XAGENT);
 
           await this.setupAuthentication();
@@ -251,6 +267,33 @@ export class InteractiveSession {
       console.log(colors.warning(`[DEBUG] Network error: ${error}`));
       // Network error - could be server down, consider token invalid
       return false;
+    }
+  }
+
+  private async refreshToken(baseUrl: string, refreshToken: string): Promise<string | null> {
+    try {
+      const url = `${baseUrl}/api/auth/refresh`;
+      console.log(colors.info(`[DEBUG] Refreshing token with: ${url}`));
+
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ refreshToken })
+      });
+
+      if (response.ok) {
+        const data = await response.json() as { token?: string; refreshToken?: string };
+        console.log(colors.success(`[DEBUG] Token refreshed successfully`));
+        return data.token || null;
+      } else {
+        console.log(colors.warning(`[DEBUG] Token refresh failed: ${response.status}`));
+        return null;
+      }
+    } catch (error) {
+      console.log(colors.warning(`[DEBUG] Token refresh error: ${error}`));
+      return null;
     }
   }
 

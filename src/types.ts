@@ -23,6 +23,7 @@ export enum AuthType {
 export interface AuthConfig {
   type: AuthType;
   apiKey?: string;
+  refreshToken?: string;
   baseUrl?: string;
   modelName?: string;
   searchApiKey?: string;
@@ -82,6 +83,7 @@ export interface Settings {
   theme: string;
   selectedAuthType: AuthType;
   apiKey?: string;
+  refreshToken?: string;
   baseUrl?: string;
   modelName?: string;
   xagentApiBaseUrl?: string;  // xAgent API base URL (for token validation)

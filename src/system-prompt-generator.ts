@@ -48,19 +48,23 @@ export class SystemPromptGenerator {
     if (availableTools.length > 0) {
       const toolSchemas = this.getToolSchemas(availableTools);
       const toolUsageGuide = this.generateToolUsageGuide(toolSchemas);
+      const hasInvokeSkillTool = availableTools.some(tool => tool.name === 'InvokeSkill');
+      const skillInstructions = hasInvokeSkillTool ? await this.generateSkillInstructions() : '';
       const decisionMakingGuide = this.generateDecisionMakingGuide(availableTools);
       const executionStrategy = this.generateExecutionStrategy();
-      const skillInstructions = await this.generateSkillInstructions();
+
 
       enhancedPrompt += `
 
 ${toolUsageGuide}
 
+${skillInstructions}
+
 ${decisionMakingGuide}
 
 ${executionStrategy}
 
-${skillInstructions}
+
 
 ## Important Notes
 - Always verify tool results before proceeding to next steps
@@ -598,7 +602,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       'exit_plan_mode': 'When you have completed planning and are ready to execute',
       'xml_escape': 'When you need to escape special characters in XML/HTML files',
       'image_read': 'When you need to analyze or read image files',
-      'InvokeSkill': 'When you need to use specialized skills for domain tasks (see Available Skills section below for details)'
+      'InvokeSkill': 'When you need to use specialized skills for domain tasks (see Available Skills section for details)'
     };
 
     // 根据可用工具生成 "When to Use Tools" 部分

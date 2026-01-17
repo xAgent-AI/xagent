@@ -104,7 +104,7 @@ export class InteractiveSession {
     });
 
     // Sync to slashCommandHandler
-    this.slashCommandHandler.setConversationHistory(this.conversation, this.executionMode);
+    this.slashCommandHandler.setConversationHistory(this.conversation);
   }
 
   setAgent(agent: any): void {
@@ -241,7 +241,7 @@ export class InteractiveSession {
       );
 
       // 同步对话历史到 slashCommandHandler
-      this.slashCommandHandler.setConversationHistory(this.conversation, this.executionMode);
+      this.slashCommandHandler.setConversationHistory(this.conversation);
 
       const mcpServers = this.configManager.getMcpServers();
       console.log(`📋 Loading ${Object.keys(mcpServers).length} MCP servers from config`);
@@ -490,7 +490,7 @@ export class InteractiveSession {
       if (handled) {
         this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
         // 同步对话历史到 slashCommandHandler
-        this.slashCommandHandler.setConversationHistory(this.conversation, this.executionMode);
+        this.slashCommandHandler.setConversationHistory(this.conversation);
       }
       return;
     }
@@ -700,7 +700,7 @@ export class InteractiveSession {
         }
 
         // 同步压缩后的对话历史到 slashCommandHandler
-        this.slashCommandHandler.setConversationHistory(this.conversation, this.executionMode);
+        this.slashCommandHandler.setConversationHistory(this.conversation);
       }
     }
   }
@@ -1083,9 +1083,9 @@ export class InteractiveSession {
       'exit_plan_mode': () => `Complete plan`,
       'xml_escape': (p) => `XML escape: ${this.truncatePath(p.file_path)}`,
       'image_read': (p) => `Read image: ${this.truncatePath(p.image_input)}`,
-      'Skill': (p) => `Execute skill: ${p.skill}`,
-      'ListSkills': () => `List available skills`,
-      'GetSkillDetails': (p) => `Get skill details: ${p.skill}`,
+      // 'Skill': (p) => `Execute skill: ${p.skill}`,
+      // 'ListSkills': () => `List available skills`,
+      // 'GetSkillDetails': (p) => `Get skill details: ${p.skill}`,
       'InvokeSkill': (p) => `Invoke skill: ${p.skillId} - ${this.truncatePath(p.taskDescription || '', 40)}`
     };
 

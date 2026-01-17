@@ -26,7 +26,6 @@ export class SlashCommandHandler {
   private contextCompressor: ContextCompressor;
   private conversationManager: ConversationManager;
   private conversationHistory: ChatMessage[] = [];
-  private executionMode: ExecutionMode = ExecutionMode.DEFAULT;
   private onClearCallback: (() => void) | null = null;
   private onSystemPromptUpdate: (() => Promise<void>) | null = null;
 
@@ -57,11 +56,8 @@ export class SlashCommandHandler {
   /**
    * Set current conversation history (includes all user/assistant/tool messages)
    */
-  setConversationHistory(messages: ChatMessage[], executionMode?: ExecutionMode): void {
+  setConversationHistory(messages: ChatMessage[]): void {
     this.conversationHistory = messages;
-    if (executionMode) {
-      this.executionMode = executionMode;
-    }
   }
 
   async handleCommand(input: string): Promise<boolean> {

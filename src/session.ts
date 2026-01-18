@@ -4,6 +4,7 @@ import ora from 'ora';
 import inquirer from 'inquirer';
 import { ExecutionMode, ChatMessage, ToolCall, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
+import { RemoteAIClient } from './remote-ai-client.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { getToolRegistry } from './tools.js';
@@ -25,6 +26,7 @@ export class InteractiveSession {
   private contextCompressor: ContextCompressor;
   private stdinManager = getStdinManager();
   private aiClient: AIClient | null = null;
+  private remoteAIClient: RemoteAIClient | null = null;
   private conversation: ChatMessage[] = [];
   private toolCalls: ToolCall[] = [];
   private executionMode: ExecutionMode;
@@ -37,6 +39,7 @@ export class InteractiveSession {
   private currentAgent: any = null;
   private indentLevel: number;
   private indentString: string;
+  private remoteConversationId: string | null = null;
 
   constructor(indentLevel: number = 0) {
     this.configManager = getConfigManager(process.cwd());
@@ -194,6 +197,14 @@ export class InteractiveSession {
 
       this.aiClient = new AIClient(authConfig);
       this.contextCompressor.setAIClient(this.aiClient);
+
+      // Initialize remote AI client for OAuth XAGENT mode
+      if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
+        const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+        console.log('[Session] 初始化远程 AI 客户端, webBaseUrl:', webBaseUrl);
+        this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
+      }
+
       this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
 
       await this.agentManager.loadAgents();
@@ -532,7 +543,12 @@ export class InteractiveSession {
     // 检查是否需要压缩上下文
     await this.checkAndCompressContext(lastUserMessage);
 
-    await this.generateResponse(thinkingTokens);
+    // Use remote AI client if available (OAuth XAGENT mode)
+    if (this.remoteAIClient) {
+      await this.generateRemoteResponse(thinkingTokens);
+    } else {
+      await this.generateResponse(thinkingTokens);
+    }
   }
 
   private displayThinkingContent(reasoningContent: string): void {
@@ -844,6 +860,128 @@ export class InteractiveSession {
           [...this.toolCalls]
         );
       }
+
+      // Operation completed successfully, clear the flag
+      (this as any)._isOperationInProgress = false;
+    } catch (error: any) {
+      clearInterval(spinnerInterval);
+      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
+
+      // Clear the operation flag
+      (this as any)._isOperationInProgress = false;
+
+      if (error.message === 'Operation cancelled by user') {
+        return;
+      }
+
+      console.log(colors.error(`Error: ${error.message}`));
+    }
+  }
+
+  /**
+   * 使用远程 AI 服务生成响应（OAuth XAGENT 模式）
+   */
+  private async generateRemoteResponse(thinkingTokens: number = 0): Promise<void> {
+    if (!this.remoteAIClient) {
+      console.log(colors.error('Remote AI client not initialized'));
+      return;
+    }
+
+    // Mark that an operation is in progress
+    (this as any)._isOperationInProgress = true;
+
+    const indent = this.getIndent();
+    const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
+    const icon = colors.primary(icons.brain);
+    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let frameIndex = 0;
+
+    // Custom spinner: only icon rotates, text stays static
+    const spinnerInterval = setInterval(() => {
+      process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
+      frameIndex = (frameIndex + 1) % frames.length;
+    }, 120);
+
+    try {
+      // Prepare messages for remote API (only recent messages to save tokens)
+      const messages = this.conversation.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+
+      // Get context info
+      const context = {
+        cwd: process.cwd(),
+        workspace: this.configManager.get('workspacePath') || process.cwd(),
+        recentFiles: []
+      };
+
+      // Stream response from remote
+      const chunks: string[] = [];
+
+      await new Promise<void>((resolve, reject) => {
+        // 先设置监听器，再启动流
+        const chunkHandler = (content: string) => {
+          chunks.push(content);
+          process.stdout.write(content);
+        };
+
+        const doneHandler = (conversationId?: string) => {
+          this.remoteAIClient!.off('chunk', chunkHandler);
+          this.remoteAIClient!.off('done', doneHandler);
+          this.remoteAIClient!.off('error', errorHandler);
+          if (conversationId) {
+            this.remoteConversationId = conversationId;
+          }
+          resolve();
+        };
+
+        const errorHandler = (error: Error) => {
+          this.remoteAIClient!.off('chunk', chunkHandler);
+          this.remoteAIClient!.off('done', doneHandler);
+          this.remoteAIClient!.off('error', errorHandler);
+          reject(error);
+        };
+
+        this.remoteAIClient!.on('chunk', chunkHandler);
+        this.remoteAIClient!.on('done', doneHandler);
+        this.remoteAIClient!.on('error', errorHandler);
+
+        // 启动流
+        this.remoteAIClient!.streamChat(messages as any, {
+          conversationId: this.remoteConversationId || undefined,
+          context
+        });
+      });
+
+      clearInterval(spinnerInterval);
+      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
+      console.log('');
+
+      const content = chunks.join('');
+
+      // Display assistant header
+      console.log('');
+      console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
+      console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
+      console.log('');
+      const renderedContent = renderMarkdown(content, (process.stdout.columns || 80) - indent.length * 2);
+      console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
+      console.log('');
+
+      // Add assistant message to conversation
+      this.conversation.push({
+        role: 'assistant',
+        content,
+        timestamp: Date.now()
+      });
+
+      // Record output to session manager
+      await this.sessionManager.addOutput({
+        role: 'assistant',
+        content,
+        timestamp: Date.now()
+      });
 
       // Operation completed successfully, clear the flag
       (this as any)._isOperationInProgress = false;

@@ -40,37 +40,41 @@ export interface RemoteVLMResponse {
 }
 
 /**
- * 远程 AI 客户端 - 用于与 xagent-web 服务通信
+ * Remote AI Client - communicates with xagent-web service
  */
 export class RemoteAIClient extends EventEmitter {
   private authToken: string;
   private webBaseUrl: string;
   private agentApi: string;
   private vlmApi: string;
+  private showAIDebugInfo: boolean;
 
-  constructor(authToken: string, webBaseUrl: string) {
+  constructor(authToken: string, webBaseUrl: string, showAIDebugInfo: boolean = false) {
     super();
     this.authToken = authToken;
-    this.webBaseUrl = webBaseUrl.replace(/\/$/, ''); // 移除末尾斜杠
+    this.webBaseUrl = webBaseUrl.replace(/\/$/, ''); // Remove trailing slash
     this.agentApi = `${this.webBaseUrl}/api/agent`;
     this.vlmApi = `${this.webBaseUrl}/api/agent/vlm`;
+    this.showAIDebugInfo = showAIDebugInfo;
 
-    console.log('[RemoteAIClient] 初始化完成');
-    console.log('[RemoteAIClient] Web Base URL:', this.webBaseUrl);
-    console.log('[RemoteAIClient] Agent API:', this.agentApi);
-    console.log('[RemoteAIClient] VLM API:', this.vlmApi);
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Initialization complete');
+      console.log('[RemoteAIClient] Web Base URL:', this.webBaseUrl);
+      console.log('[RemoteAIClient] Agent API:', this.agentApi);
+      console.log('[RemoteAIClient] VLM API:', this.vlmApi);
+    }
   }
 
   /**
-   * 非流式聊天 - 发送消息并接收完整响应
+   * Non-streaming chat - send messages and receive full response
    */
   async chat(
     messages: ChatMessage[],
     options: RemoteChatOptions = {}
   ): Promise<SessionOutput> {
-    // 传递完整的 messages 数组给后端，后端直接转发给 LLM
+    // Pass complete messages array to backend, backend forwards directly to LLM
     const requestBody = {
-      messages: messages,  // 传递完整消息历史
+      messages: messages,  // Pass complete message history
       conversationId: options.conversationId,
       context: options.context,
       options: {
@@ -81,11 +85,13 @@ export class RemoteAIClient extends EventEmitter {
     };
 
     const url = `${this.agentApi}/chat`;
-    console.log('[RemoteAIClient] 发送请求到:', url);
-    console.log('[RemoteAIClient] Token 前缀:', this.authToken.substring(0, 20) + '...');
-    console.log('[RemoteAIClient] 消息数量:', messages.length);
-    if (options.tools) {
-      console.log('[RemoteAIClient] 发送工具数量:', options.tools.length);
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Sending request to:', url);
+      console.log('[RemoteAIClient] Token prefix:', this.authToken.substring(0, 20) + '...');
+      console.log('[RemoteAIClient] Message count:', messages.length);
+      if (options.tools) {
+        console.log('[RemoteAIClient] Tool count:', options.tools.length);
+      }
     }
 
     try {
@@ -98,18 +104,24 @@ export class RemoteAIClient extends EventEmitter {
         body: JSON.stringify(requestBody)
       });
 
-      console.log('[RemoteAIClient] 响应状态:', response.status);
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] Response status:', response.status);
+      }
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.log('[RemoteAIClient] 错误响应:', errorText);
+        if (this.showAIDebugInfo) {
+          console.log('[RemoteAIClient] Error response:', errorText);
+        }
         const errorData = JSON.parse(errorText) as { error?: string };
         throw new Error(errorData.error || `HTTP ${response.status}`);
       }
 
       const data = await response.json() as RemoteChatResponse;
-      console.log('[RemoteAIClient] 收到响应, content 长度:', data.content?.length || 0);
-      console.log('[RemoteAIClient] toolCalls 数量:', data.toolCalls?.length || 0);
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] Received response, content length:', data.content?.length || 0);
+        console.log('[RemoteAIClient] toolCalls count:', data.toolCalls?.length || 0);
+      }
 
       return {
         role: 'assistant',
@@ -119,20 +131,22 @@ export class RemoteAIClient extends EventEmitter {
       };
 
     } catch (error) {
-      console.log('[RemoteAIClient] 请求异常:', error);
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] Request exception:', error);
+      }
       throw error;
     }
   }
 
   /**
-   * 统一 LLM 调用接口 - 与 aiClient.chatCompletion 返回类型相同
-   * 实现透明性：调用方不需要关心是远程还是本地模式
+   * Unified LLM call interface - same return type as aiClient.chatCompletion
+   * Implements transparency: caller doesn't need to know remote vs local mode
    */
   async chatCompletion(
     messages: ChatMessage[],
     options: ChatCompletionOptions = {}
   ): Promise<ChatCompletionResponse> {
-    // 调用现有的 chat 方法
+    // Call existing chat method
     const response = await this.chat(messages, {
       conversationId: undefined,
       tools: options.tools as any,
@@ -141,7 +155,7 @@ export class RemoteAIClient extends EventEmitter {
       model: options.model
     });
 
-    // 转换为 ChatCompletionResponse 格式（与本地模式一致）
+    // Convert to ChatCompletionResponse format (consistent with local mode)
     return {
       id: `remote-${Date.now()}`,
       object: 'chat.completion',
@@ -164,11 +178,11 @@ export class RemoteAIClient extends EventEmitter {
   }
 
   /**
-   * 调用 VLM 进行图像理解
-   * @param image - base64 图片或 URL
-   * @param prompt - 用户提示词
-   * @param systemPrompt - 系统提示词（可选，CLI 生成并传递）
-   * @param options - 其他选项
+   * Invoke VLM for image understanding
+   * @param image - base64 image or URL
+   * @param prompt - user prompt
+   * @param systemPrompt - system prompt (optional, generated and passed by CLI)
+   * @param options - other options
    */
   async invokeVLM(
     image: string,
@@ -176,8 +190,8 @@ export class RemoteAIClient extends EventEmitter {
     systemPrompt?: string,
     options: RemoteChatOptions = {}
   ): Promise<string> {
-    // 确保图片格式正确：需要 data:image/xxx;base64, 前缀
-    // 与本地模式保持一致
+    // Ensure correct image format: requires data:image/xxx;base64, prefix
+    // Consistent with local mode
     let imageUrl = image;
     if (typeof image === 'string' && image.length > 0) {
       if (!image.startsWith('data:') && !image.startsWith('http://') && !image.startsWith('https://')) {
@@ -185,7 +199,7 @@ export class RemoteAIClient extends EventEmitter {
       }
     }
 
-    // 构建 VLM 消息（CLI 生成完整消息，后端透传）
+    // Build VLM messages (CLI generates complete messages, backend forwards)
     const messages = [
       ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
       {
@@ -198,14 +212,16 @@ export class RemoteAIClient extends EventEmitter {
     ];
 
     const requestBody = {
-      messages,  // 传递完整消息（包含 system prompt）
+      messages,  // Pass complete messages (including system prompt)
       context: options.context,
       options: {
         model: options.model
       }
     };
 
-    console.log('[RemoteAIClient] VLM 发送请求到:', this.vlmApi);
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] VLM sending request to:', this.vlmApi);
+    }
 
     try {
       const response = await fetch(this.vlmApi, {
@@ -217,7 +233,9 @@ export class RemoteAIClient extends EventEmitter {
         body: JSON.stringify(requestBody)
       });
 
-      console.log('[RemoteAIClient] VLM 响应状态:', response.status);
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] VLM response status:', response.status);
+      }
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -229,17 +247,21 @@ export class RemoteAIClient extends EventEmitter {
       return data.content || '';
 
     } catch (error) {
-      console.log('[RemoteAIClient] VLM 请求异常:', error);
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] VLM request exception:', error);
+      }
       throw error;
     }
   }
 
   /**
-   * 获取对话列表
+   * Get conversation list
    */
   async getConversations(): Promise<any[]> {
     const url = `${this.agentApi}/conversations`;
-    console.log('[RemoteAIClient] 获取对话列表:', url);
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Getting conversation list:', url);
+    }
 
     const response = await fetch(url, {
       headers: {
@@ -248,7 +270,7 @@ export class RemoteAIClient extends EventEmitter {
     });
 
     if (!response.ok) {
-      throw new Error('获取对话列表失败');
+      throw new Error('Failed to get conversation list');
     }
 
     const data = await response.json() as { conversations?: any[] };
@@ -256,11 +278,13 @@ export class RemoteAIClient extends EventEmitter {
   }
 
   /**
-   * 获取对话详情
+   * Get conversation details
    */
   async getConversation(conversationId: string): Promise<any> {
     const url = `${this.agentApi}/conversations/${conversationId}`;
-    console.log('[RemoteAIClient] 获取对话详情:', url);
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Getting conversation details:', url);
+    }
 
     const response = await fetch(url, {
       headers: {
@@ -269,7 +293,7 @@ export class RemoteAIClient extends EventEmitter {
     });
 
     if (!response.ok) {
-      throw new Error('获取对话详情失败');
+      throw new Error('Failed to get conversation details');
     }
 
     const data = await response.json() as { conversation?: any };
@@ -277,11 +301,13 @@ export class RemoteAIClient extends EventEmitter {
   }
 
   /**
-   * 创建新对话
+   * Create new conversation
    */
   async createConversation(title?: string): Promise<any> {
     const url = `${this.agentApi}/conversations`;
-    console.log('[RemoteAIClient] 创建对话:', url);
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Creating conversation:', url);
+    }
 
     const response = await fetch(url, {
       method: 'POST',
@@ -293,7 +319,7 @@ export class RemoteAIClient extends EventEmitter {
     });
 
     if (!response.ok) {
-      throw new Error('创建对话失败');
+      throw new Error('Failed to create conversation');
     }
 
     const data = await response.json() as { conversation?: any };
@@ -301,11 +327,13 @@ export class RemoteAIClient extends EventEmitter {
   }
 
   /**
-   * 删除对话
+   * Delete conversation
    */
   async deleteConversation(conversationId: string): Promise<void> {
     const url = `${this.agentApi}/conversations/${conversationId}`;
-    console.log('[RemoteAIClient] 删除对话:', url);
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Deleting conversation:', url);
+    }
 
     const response = await fetch(url, {
       method: 'DELETE',
@@ -315,7 +343,7 @@ export class RemoteAIClient extends EventEmitter {
     });
 
     if (!response.ok) {
-      throw new Error('删除对话失败');
+      throw new Error('Failed to delete conversation');
     }
   }
 }

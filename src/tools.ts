@@ -1020,7 +1020,7 @@ export class TaskTool implements Tool {
         try {
           return await remoteAIClient.invokeVLM(image, userPrompt, systemPrompt);
         } catch (error: any) {
-          throw new Error(`远程 VLM 调用失败: ${error.message}`);
+          throw new Error(`Remote VLM call failed: ${error.message}`);
         }
       };
     }
@@ -1086,18 +1086,18 @@ export class TaskTool implements Tool {
     console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
     console.log('');
 
-    // 获取本地 VLM 配置
+    // Get local VLM configuration
     const baseUrl = config.get('guiSubagentBaseUrl') || config.get('baseUrl') || '';
     const apiKey = config.get('guiSubagentApiKey') || config.get('apiKey') || '';
     const modelName = config.get('guiSubagentModel') || config.get('modelName') || '';
 
-    // 透明性：remoteAIClient 存在则使用远程模式，否则使用本地模式
+    // Transparency: use remote mode if remoteAIClient exists, otherwise use local mode
     const isRemoteMode = !!remoteAIClient;
     if (isRemoteMode) {
-      console.log(`${indent}${colors.info(`${icons.brain} 使用远程 VLM 服务`)}`);
+      console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
     } else {
-      console.log(`${indent}${colors.info(`${icons.brain} 使用本地 VLM 配置`)}`);
-      // 本地模式需要配置检查
+      console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
+      // Local mode requires configuration check
       if (!baseUrl) {
         return {
           success: false,
@@ -1106,7 +1106,7 @@ export class TaskTool implements Tool {
       }
     }
 
-    // 透明性：创建统一的 vlmCaller，调用方不关心内部实现
+    // Transparency: create unified vlmCaller, caller doesn't care about internal implementation
     const vlmCaller = this.createVLMCaller(remoteAIClient, { baseUrl, apiKey, modelName });
 
     try {
@@ -1188,7 +1188,7 @@ export class TaskTool implements Tool {
 
     // Special handling for gui-subagent: directly call GUIAgent.run() instead of subagent message loop
     if (subagent_type === 'gui-subagent') {
-      // 获取 RemoteAIClient 实例（如果有）
+      // Get RemoteAIClient instance (if available)
       let remoteAIClient: any;
       try {
         const { RemoteAIClient } = await import('./remote-ai-client.js');
@@ -1199,10 +1199,11 @@ export class TaskTool implements Tool {
 
         if (selectedAuthType === AuthType.OAUTH_XAGENT && authConfig.apiKey) {
           const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-          remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
+          const showAIDebugInfo = cfg.get('showAIDebugInfo') || false;
+          remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl, showAIDebugInfo);
         }
       } catch (e) {
-        // RemoteAIClient 不可用，保持 undefined
+        // RemoteAIClient not available, keep undefined
         remoteAIClient = undefined;
       }
 
@@ -2093,7 +2094,7 @@ export class InvokeSkillTool implements Tool {
     task: string;
     result?: any;
     files?: string[];
-    /** 告诉 Agent 接下来要做什么 */
+    /** Tell the agent what to do next */
     nextSteps?: Array<{
       step: number;
       action: string;
@@ -2129,7 +2130,7 @@ export class InvokeSkillTool implements Tool {
               confidence: match.confidence,
               matchedKeywords: match.matchedKeywords
             },
-            guidance: '请按照匹配到的技能继续执行任务。'
+            guidance: 'Please continue executing the task using the matched skill.'
           };
         }
         throw new Error(`Skill not found: ${skillId}`);
@@ -2144,28 +2145,28 @@ export class InvokeSkillTool implements Tool {
       });
 
       if (result.success) {
-        // 生成指导信息，告诉 Agent 接下来要做什么
+        // Generate guidance info, tell the agent what to do next
         let guidance = '';
         if (result.nextSteps && result.nextSteps.length > 0) {
-          guidance = `\n## 🎯 下一步操作\n\n请按照以下步骤继续执行任务：\n\n`;
+          guidance = `\n## 🎯 Next Steps\n\nPlease continue executing the task with the following steps:\n\n`;
           for (const step of result.nextSteps) {
-            guidance += `### 步骤 ${step.step}: ${step.action}\n`;
-            guidance += `- **描述**: ${step.description}\n`;
-            guidance += `- **原因**: ${step.reason}\n`;
+            guidance += `### Step ${step.step}: ${step.action}\n`;
+            guidance += `- **Description**: ${step.description}\n`;
+            guidance += `- **Reason**: ${step.reason}\n`;
             if (step.command) {
-              guidance += `- **命令**: \`${step.command}\`\n`;
+              guidance += `- **Command**: \`${step.command}\`\n`;
             }
             if (step.file) {
-              guidance += `- **文件**: ${step.file}\n`;
+              guidance += `- **File**: ${step.file}\n`;
             }
             guidance += '\n';
           }
-          guidance += `---\n**重要**: 上述步骤是根据 SKILL.md 自动生成的执行指南。请按照这些步骤继续完成任务，而不是结束对话。\n`;
+          guidance += `---\n**Important**: The above steps are automatically generated execution guidelines from SKILL.md. Please continue completing the task following these steps instead of ending the conversation.\n`;
         }
 
         return {
           success: true,
-          message: `技能已激活: ${skillDetails.name}`,
+          message: `Skill activated: ${skillDetails.name}`,
           skill: skillId,
           task: taskDescription,
           result: result.output + (guidance ? guidance : ''),

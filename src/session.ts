@@ -51,12 +51,12 @@ export class InteractiveSession {
     this.sessionManager = getSessionManager(process.cwd());
     this.slashCommandHandler = new SlashCommandHandler();
 
-    // 注册 /clear 回调，清除对话时同步清空本地 conversation
+    // Register /clear callback, clear local conversation when clearing dialogue
     this.slashCommandHandler.setClearCallback(() => {
       this.conversation = [];
     });
 
-    // 注册 MCP 更新回调，更新系统提示
+    // Register MCP update callback, update system prompt
     this.slashCommandHandler.setSystemPromptUpdateCallback(async () => {
       await this.updateSystemPrompt();
     });
@@ -179,7 +179,7 @@ export class InteractiveSession {
           await this.setupAuthentication();
           authConfig = this.configManager.getAuthConfig();
 
-          // 恢复 stdin 状态 after inquirer
+          // Restore stdin state after inquirer
           this.stdinManager.restoreAfterInquirer();
           spinner.start();
         }
@@ -189,7 +189,7 @@ export class InteractiveSession {
         await this.setupAuthentication();
         authConfig = this.configManager.getAuthConfig();
 
-        // 恢复 stdin 状态 after inquirer
+        // Restore stdin state after inquirer
         this.stdinManager.restoreAfterInquirer();
         spinner.start();
       }
@@ -201,7 +201,7 @@ export class InteractiveSession {
       // Initialize remote AI client for OAuth XAGENT mode
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
         const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-        console.log('[Session] 初始化远程 AI 客户端, webBaseUrl:', webBaseUrl);
+        console.log('[Session] Initialize remote AI client, webBaseUrl:', webBaseUrl);
         this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
       }
 
@@ -220,7 +220,7 @@ export class InteractiveSession {
         this.executionMode
       );
 
-      // 同步对话历史到 slashCommandHandler
+      // Sync conversation history to slashCommandHandler
       this.slashCommandHandler.setConversationHistory(this.conversation);
 
       const mcpServers = this.configManager.getMcpServers();
@@ -419,7 +419,7 @@ export class InteractiveSession {
 
     const prompt = `${colors.primaryBright('❯')} `;
 
-    // 使用 StdinManager 进行输入
+    // Use StdinManager for input
     const input = await this.stdinManager.question(prompt);
 
     if ((this as any)._isShuttingDown) {
@@ -432,7 +432,7 @@ export class InteractiveSession {
       console.log(colors.error(`Error: ${err.message}`));
     }
 
-    // 继续下一个循环
+    // Continue next loop
     this.promptLoop();
   }
 
@@ -447,7 +447,7 @@ export class InteractiveSession {
       const handled = await this.slashCommandHandler.handleCommand(trimmedInput);
       if (handled) {
         this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
-        // 同步对话历史到 slashCommandHandler
+        // Sync conversation history to slashCommandHandler
         this.slashCommandHandler.setConversationHistory(this.conversation);
       }
       return;
@@ -540,7 +540,7 @@ export class InteractiveSession {
     this.conversation.push(userMessage);
     await this.conversationManager.addMessage(userMessage);
 
-    // 检查是否需要压缩上下文
+    // Check if context compression is needed
     await this.checkAndCompressContext(lastUserMessage);
 
     // Use remote AI client if available (OAuth XAGENT mode)
@@ -599,7 +599,7 @@ export class InteractiveSession {
   }
 
   /**
-   * 检查并压缩对话上下文
+   * Check and compress conversation context
    */
   private async checkAndCompressContext(lastUserMessage?: ChatMessage): Promise<void> {
     const compressionConfig = this.configManager.getContextCompressionConfig();
@@ -634,7 +634,7 @@ export class InteractiveSession {
         // console.log(`${indent}${colors.success(`✓ Compressed ${result.originalMessageCount} messages to ${result.compressedMessageCount} messages`)}`);
         console.log(`${indent}${colors.textMuted(`✓ Size: ${result.originalSize} → ${result.compressedSize} chars (${Math.round((1 - result.compressedSize / result.originalSize) * 100)}% reduction)`)}`);
 
-        // 显示压缩后的摘要内容
+        // Display compressed summary content
         const summaryMessage = result.compressedMessages.find(m => m.role === 'assistant');
         if (summaryMessage && summaryMessage.content) {
           const maxPreviewLength = 800;
@@ -657,12 +657,12 @@ export class InteractiveSession {
           console.log(`${indent}${colors.border(separator)}`);
         }
 
-        // 压缩后恢复用户消息，确保 API 调用时有 user 消息
+        // Restore user messages after compression, ensuring user message exists for API calls
         if (lastUserMessage) {
           this.conversation.push(lastUserMessage);
         }
 
-        // 同步压缩后的对话历史到 slashCommandHandler
+        // Sync compressed conversation history to slashCommandHandler
         this.slashCommandHandler.setConversationHistory(this.conversation);
       }
     }
@@ -720,12 +720,12 @@ export class InteractiveSession {
   }
 
   /**
-   * 创建统一的 LLM Caller
-   * 实现透明性：调用方不需要关心是远程还是本地模式
-   * 远程模式优先级更高
+   * Create unified LLM Caller
+   * Implement transparency: caller doesn't need to care about remote vs local mode
+   * Remote mode takes priority
    */
   private createLLMCaller() {
-    // 远程模式优先级更高
+    // Remote mode takes priority
     if (this.remoteAIClient) {
       return {
         chatCompletion: (messages: ChatMessage[], options: any) => 
@@ -734,7 +734,7 @@ export class InteractiveSession {
       };
     }
 
-    // 本地模式
+    // Local mode
     if (!this.aiClient) {
       throw new Error('AI client not initialized');
     }
@@ -746,7 +746,7 @@ export class InteractiveSession {
   }
 
   private async generateResponse(thinkingTokens: number = 0): Promise<void> {
-    // 使用统一的 LLM Caller
+    // Use unified LLM Caller
     const { chatCompletion, isRemote } = this.createLLMCaller();
 
     if (!isRemote && !this.aiClient) {
@@ -800,13 +800,13 @@ export class InteractiveSession {
         }))
       ];
 
-      // Debug: 打印完整的 prompt 信息
+      // Debug: Print full prompt info
       // const logger = new Logger({ minLevel: LogLevel.DEBUG });
-      // logger.debug('[DEBUG] 即将发送给 AI 的完整 Prompt:');
+      // logger.debug('[DEBUG] Full Prompt to be sent to AI:');
       // console.log('\n' + '='.repeat(60));
       // console.log('【SYSTEM PROMPT】');
       // console.log('-'.repeat(60));
-      // console.log(messages[0]?.content || '(无)');
+      // console.log(messages[0]?.content || '(none)');
       // console.log('='.repeat(60));
       // console.log('【CONVERSATION】');
       // console.log('-'.repeat(60));
@@ -815,12 +815,12 @@ export class InteractiveSession {
       //   console.log(`[${idx + 1}] [${msg.role}]: ${contentStr.substring(0, 200)}${contentStr.length > 200 ? '...' : ''}`);
       // });
       // console.log('='.repeat(60));
-      // console.log(`【AVAILABLE TOOLS】: ${availableTools.length} 个工具`);
+      // console.log(`【AVAILABLE TOOLS】: ${availableTools.length} items`);
       // availableTools.forEach((tool: any) => {
       //   console.log(`  - ${tool.function.name}`);
             // });      // console.log('='.repeat(60) + '\n');
       
-            // Debug: 打印AI输入信息 (已移至 ai-client.ts)
+            // Debug: Print AI input info (moved to ai-client.ts)
             // if (this.configManager.get('showAIDebugInfo')) {
             //   this.displayAIDebugInfo('INPUT', messages, availableTools);
             // }
@@ -836,7 +836,7 @@ export class InteractiveSession {
 
       const assistantMessage = response.choices[0].message;
 
-      // Debug: 打印AI输出信息 (已移至 ai-client.ts)
+      // Debug: Print AI output info (moved to ai-client.ts)
       // if (this.configManager.get('showAIDebugInfo')) {
       //   this.displayAIDebugInfo('OUTPUT', response, assistantMessage);
       // }
@@ -1021,7 +1021,7 @@ export class InteractiveSession {
       console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
       console.log('');
 
-      // Add assistant message to conversation (与本地模式一致，包含 reasoningContent)
+      // Add assistant message to conversation (consistent with local mode, including reasoningContent)
       this.conversation.push({
         role: 'assistant',
         content,
@@ -1030,7 +1030,7 @@ export class InteractiveSession {
         toolCalls: toolCalls
       });
 
-      // Record output to session manager (与本地模式一致，包含 reasoningContent 和 toolCalls)
+      // Record output to session manager (consistent with local mode, including reasoningContent and toolCalls)
       await this.sessionManager.addOutput({
         role: 'assistant',
         content,
@@ -1044,7 +1044,7 @@ export class InteractiveSession {
         await this.handleRemoteToolCalls(toolCalls);
       }
 
-      // Checkpoint support (与本地模式一致)
+      // Checkpoint support (consistent with local mode)
       if (this.checkpointManager.isEnabled()) {
         await this.checkpointManager.createCheckpoint(
           `Response generated at ${new Date().toLocaleString()}`,
@@ -1430,7 +1430,7 @@ export class InteractiveSession {
   /**
    * Display AI debug information (input or output)
    */
-  // AI 调试信息已移至 ai-client.ts 实现
+  // AI debug info moved to ai-client.ts implementation
   // private displayAIDebugInfo(type: 'INPUT' | 'OUTPUT', data: any, extra?: any): void {
   //   const indent = this.getIndent();
   //   const boxChar = {
@@ -1452,19 +1452,18 @@ export class InteractiveSession {
   //     const messages = data as any[];
   //     const tools = extra as any[];
   //
-  //     // System prompt
-  //     const systemMsg = messages.find((m: any) => m.role === 'system');
-  //     console.log(colors.border(`${boxChar.vertical}`) + ' 🟫 SYSTEM: ' +
-  //       colors.textMuted(systemMsg?.content?.toString().substring(0, 50) || '(无)') + ' '.repeat(3) + colors.border(boxChar.vertical));
-  //
-  //     // Messages count
-  //     console.log(colors.border(`${boxChar.vertical}`) + ' 💬 MESSAGES: ' +
-  //       colors.text(messages.length.toString()) + ' 条' + ' '.repeat(40) + colors.border(boxChar.vertical));
-  //
-  //     // Tools count
-  //     console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOLS: ' +
-  //       colors.text((tools?.length || 0).toString()) + ' 个' + ' '.repeat(43) + colors.border(boxChar.vertical));
-  //
+      //     // System prompt
+      //     const systemMsg = messages.find((m: any) => m.role === 'system');
+      //     console.log(colors.border(`${boxChar.vertical}`) + ' 🟫 SYSTEM: ' +
+      //       colors.textMuted(systemMsg?.content?.toString().substring(0, 50) || '(none)') + ' '.repeat(3) + colors.border(boxChar.vertical));
+      //
+      //     // Messages count
+      //     console.log(colors.border(`${boxChar.vertical}`) + ' 💬 MESSAGES: ' +
+      //       colors.text(messages.length.toString()) + ' items' + ' '.repeat(40) + colors.border(boxChar.vertical));
+      //
+      //     // Tools count
+      //     console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOLS: ' +
+      //       colors.text((tools?.length || 0).toString()) + '' + ' '.repeat(43) + colors.border(boxChar.vertical));  //
   //     // Show last 2 messages
   //     const recentMessages = messages.slice(-2);
   //     for (const msg of recentMessages) {
@@ -1488,8 +1487,8 @@ export class InteractiveSession {
   //       colors.text(`Prompt: ${response.usage?.prompt_tokens || '?'}, Completion: ${response.usage?.completion_tokens || '?'}`) +
   //       ' '.repeat(15) + colors.border(boxChar.vertical));
   //
-  //     console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOL_CALLS: ' +
-  //       colors.text((message.tool_calls?.length || 0).toString()) + ' 个' + ' '.repeat(37) + colors.border(boxChar.vertical));
+        // console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOL_CALLS: ' +
+        //   colors.text((message.tool_calls?.length || 0).toString()) + '' + ' '.repeat(37) + colors.border(boxChar.vertical));
   //
   //     // Content preview
   //     const contentStr = typeof message.content === 'string'

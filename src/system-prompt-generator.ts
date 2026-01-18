@@ -593,7 +593,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
   }
 
   private generateDecisionMakingGuide(availableTools: any[]): string {
-    // 工具名称到简短描述的映射
+    // Tool name to short description mapping
     const toolDescriptions: Record<string, string> = {
       'Read': 'When you need to understand existing code, configuration, or documentation',
       'Write': 'When creating new files or completely replacing existing content',
@@ -617,7 +617,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       'InvokeSkill': 'When you need to use specialized skills for domain tasks (see Available Skills section for details)'
     };
 
-    // 根据可用工具生成 "When to Use Tools" 部分
+    // Generate based on available tools "When to Use Tools" 部分
     let toolsSection = '### When to Use Tools\n';
     if (availableTools.length > 0) {
       for (const tool of availableTools) {

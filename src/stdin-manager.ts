@@ -1,8 +1,8 @@
 /**
- * StdinManager - 最简化的 CLI 输入管理
+ * StdinManager - Minimalist CLI input management
  * 
- * 每次输入都创建新的 readline，使用后关闭
- * 避免复杂的生命周期管理带来的问题
+ * Create new readline for each input，使用后关闭
+ * Avoid complex lifecycle management带来的问题
  */
 
 import readline from 'readline';
@@ -20,7 +20,7 @@ export class StdinManager {
   }
 
   /**
-   * 简单阻塞式输入
+   * Simple blocking input
    * 每次调用都创建新的 readline，使用后关闭
    */
   async question(prompt: string): Promise<string> {
@@ -39,18 +39,18 @@ export class StdinManager {
   }
 
   /**
-   * 在 inquirer 使用后恢复
-   * 实际上不需要做任何事，因为每次 question() 都是新的 rl
+   * Restore after inquirer usage
+   * Actually no need to do anything，因为每次 question() 都是新的 rl
    */
   restoreAfterInquirer(): void {
-    // 无需操作
+    // No operation needed
   }
 
   /**
-   * 关闭（保留接口兼容性）
+   * Close (keep interface compatibility)
    */
   close(): void {
-    // 无需操作
+    // No operation needed
   }
 }
 

@@ -909,8 +909,8 @@ export class InteractiveSession {
   }
 
   /**
-   * 使用远程 AI 服务生成响应（OAuth XAGENT 模式）
-   * 支持完整的 tool calling 循环
+   * Generate response using remote AI service（OAuth XAGENT 模式）
+   * Support full tool calling loop
    * 与本地模式 generateResponse 保持一致
    */
   private async generateRemoteResponse(thinkingTokens: number = 0): Promise<void> {
@@ -966,13 +966,13 @@ export class InteractiveSession {
         }
       }));
 
-      // Debug: 打印工具列表，特别是确认 gui-subagent 是否在列表中
+      // Debug: Print tool list，特别是确认 gui-subagent 是否在列表中
       const hasGuiSubagent = tools.some((t: any) => t.function.name === 'task');
       const guiSubagentTool = tools.find((t: any) => t.function.name === 'task');
-      console.log(`[DEBUG] 工具总数: ${tools.length}, 包含 task 工具: ${hasGuiSubagent}`);
+      console.log(`[DEBUG] 工具总数: ${tools.length}, includes task 工具: ${hasGuiSubagent}`);
       if (guiSubagentTool) {
         const hasGuiSubagentInDesc = guiSubagentTool.function.description?.includes('gui-subagent');
-        console.log(`[DEBUG] task 工具描述中包含 gui-subagent: ${hasGuiSubagentInDesc}`);
+        console.log(`[DEBUG] task 工具描述中includes gui-subagent: ${hasGuiSubagentInDesc}`);
       }
 
       // Generate system prompt (与本地模式一致)

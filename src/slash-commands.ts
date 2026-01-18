@@ -41,14 +41,14 @@ export class SlashCommandHandler {
   }
 
   /**
-   * 设置清除对话的回调函数
+   * Set callback for clearing conversation
    */
   setClearCallback(callback: () => void): void {
     this.onClearCallback = callback;
   }
 
   /**
-   * 设置系统提示更新的回调函数
+   * Set callback for system prompt update
    */
   setSystemPromptUpdateCallback(callback: () => Promise<void>): void {
     this.onSystemPromptUpdate = callback;
@@ -347,13 +347,13 @@ export class SlashCommandHandler {
   }
 
   private async handleClear(): Promise<void> {
-    // 清空本地对话历史
+    // Clear local conversation history
     this.conversationHistory = [];
 
-    // 清空 ConversationManager 中的当前对话
+    // Clear ConversationManager 中的当前对话
     await this.conversationManager.clearCurrentConversation();
 
-    // 调用回调通知 InteractiveSession 清空对话
+    // Call callback to notify InteractiveSession 清空对话
     if (this.onClearCallback) {
       this.onClearCallback();
     }

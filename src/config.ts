@@ -10,12 +10,12 @@ const DEFAULT_SETTINGS: Settings = {
   theme: 'Default',
   selectedAuthType: AuthType.OAUTH_XAGENT,
   apiKey: '',
-  // LLM API - 用于主对话和任务处理 (OpenAI兼容格式)
+  // LLM API - for main conversation and task processing (OpenAI compatible format)
   baseUrl: 'http://xagent-colife.net:3000/v1',
   modelName: 'Qwen3-Coder',
-  // xAgent API - 用于 token 验证等后端调用 (不含 /v1)
+  // xAgent API - for token validation and other backend calls (without /v1)
   xagentApiBaseUrl: 'http://xagent-colife.net:3000',
-  // VLM API - 用于 GUI 自动化（浏览器/桌面操作）
+  // VLM API - for GUI automation (browser/desktop operations)
   guiSubagentModel: 'Qwen3-Coder',
   guiSubagentBaseUrl: 'http://xagent-colife.net:3000/v3',
   guiSubagentApiKey: '',

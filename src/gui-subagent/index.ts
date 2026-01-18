@@ -13,7 +13,7 @@ export * from './types/index.js';
 export * from './operator/index.js';
 export * from './agent/index.js';
 
-// 导出 VLMCaller 类型供外部使用
+// Export VLMCaller type供外部使用
 export type { VLMCaller } from './agent/gui-agent.js';
 
 import { ComputerOperator, type ComputerOperatorOptions } from './operator/computer-operator.js';
@@ -30,10 +30,10 @@ export interface GUISubAgentConfig {
   modelBaseUrl?: string;
   modelApiKey?: string;
   /**
-   * 外部注入的 VLM 调用函数
-   * 如果提供此函数，GUI Agent 将使用它来调用 VLM
+   * Externally injected VLM caller function
+   * If this function is provided，GUI Agent will use it来调用 VLM
    * 这使得 GUI Agent 可以与远程服务配合使用
-   * 参数: image-图片, prompt-提示词, systemPrompt-系统提示词
+   * Parameters: image - image, prompt-提示词, systemPrompt-系统提示词
    */
   vlmCaller?: (image: string, prompt: string, systemPrompt: string) => Promise<string>;
   headless?: boolean;

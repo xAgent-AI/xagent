@@ -420,7 +420,7 @@ export function setConfigProvider(provider: () => { getLoggerLevel: () => string
 
 export function getLogger(config?: Partial<LoggerConfig>): Logger {
   if (!loggerInstance) {
-    // 从配置读取 loggerLevel
+    // Read loggerLevel from config
     let minLevel = LogLevel.INFO;
     if (configProvider) {
       const levelStr = configProvider().getLoggerLevel();

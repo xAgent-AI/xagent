@@ -156,10 +156,10 @@ export class AuthService {
     logger.info('Authenticating with xAgent...', 'Please complete the authentication in your browser');
 
     try {
-      // 1. 先启动 HTTP 服务器接收回调
+      // 1. Start HTTP server to receive callback
       const token = await this.retrieveXAgentToken();
 
-      // 2. 设置认证配置
+      // 2. Set authentication configuration
       this.authConfig.baseUrl = 'http://xagent-colife.net:3000/v1';
       this.authConfig.xagentApiBaseUrl = 'http://xagent-colife.net:3000';
       this.authConfig.apiKey = token;
@@ -402,14 +402,14 @@ export class AuthService {
   }
 
   private async retrieveXAgentToken(): Promise<string> {
-    // 使用前端登录页面（支持 callback 参数）
+    // Use frontend login page (supports callback parameter)
     const authUrl = 'http://xagent-colife.net:3000/login';
     const callbackUrl = 'http://localhost:8080/callback';
 
     logger.debug(`[OAuth] Opening browser for authentication`);
     logger.debug(`[OAuth] Login URL: ${authUrl}?callback=${encodeURIComponent(callbackUrl)}`);
 
-    // 启动 HTTP 服务器接收回调，然后打开浏览器
+    // Start HTTP server to receive callback, then open browser
     return new Promise((resolve, reject) => {
       let timeoutId: NodeJS.Timeout | null = null;
       let server: http.Server | null = null;
@@ -463,7 +463,7 @@ export class AuthService {
       
       server = http.createServer(serverCallback);
 
-      // 设置超时定时器（在 server 创建后）
+      // Set timeout timer (after server is created)
       timeoutId = setTimeout(() => {
         logger.warn('[OAuth] Authentication timeout after 30 minutes');
         if (server) {

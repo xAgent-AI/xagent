@@ -33,7 +33,7 @@ export class ContextCompressor {
   }
 
   /**
-   * 检查是否需要进行压缩
+   * Check if compression is needed
    */
   needsCompression(
     messages: ChatMessage[],
@@ -61,7 +61,7 @@ export class ContextCompressor {
   }
 
   /**
-   * 计算上下文大小（字符数）
+   * Calculate context size（字符数）
    */
   calculateContextSize(messages: ChatMessage[]): number {
     return messages.reduce((total, msg) => {
@@ -70,7 +70,7 @@ export class ContextCompressor {
   }
 
   /**
-   * 压缩对话历史
+   * Compress conversation history
    */
   async compressContext(
     messages: ChatMessage[],
@@ -81,7 +81,7 @@ export class ContextCompressor {
     const originalMessageCount = messages.length;
     const originalSize = this.calculateContextSize(messages);
 
-    // 分离系统消息、用户消息和助手消息
+    // Separate system messages、用户消息和助手消息
     const systemMessages = messages.filter(m => m.role === 'system');
     const nonSystemMessages = messages.filter(m => m.role !== 'system');
 
@@ -99,7 +99,7 @@ export class ContextCompressor {
       };
     }
 
-    // 使用 AI 生成摘要压缩全部历史对话
+    // Use AI to generate summary压缩全部历史对话
     const compressedMessages = await this.summarizeAllMessages(
       nonSystemMessages,
       systemPrompt,
@@ -107,7 +107,7 @@ export class ContextCompressor {
     );
 
     // 注意：不再保留原始的 systemMessages，因为 generateResponse 会自动添加系统提示
-    // 压缩后的消息只包含摘要（role: assistant），避免重复的 system 消息导致 API 报错
+    // 压缩后的消息只includes摘要（role: assistant），避免重复的 system 消息导致 API 报错
     const finalMessages = [...compressedMessages];
 
     return {
@@ -122,7 +122,7 @@ export class ContextCompressor {
   }
 
   /**
-   * 使用 AI 生成摘要来压缩全部对话历史
+   * Use AI to generate summary来压缩全部对话历史
    */
   private async summarizeAllMessages(
     messages: ChatMessage[],
@@ -253,7 +253,7 @@ Please provide the comprehensive summary possible. Do not omit any important inf
   }
 
   /**
-   * 创建压缩后的消息副本（用于保存）
+   * Create compressed message copy（用于保存）
    */
   createCompressedSnapshot(
     messages: ChatMessage[],

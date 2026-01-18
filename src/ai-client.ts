@@ -13,49 +13,49 @@ export interface AnthropicContentBlock {
   thinking?: string;
 }
 
-// Markdown渲染辅助函数
+// Markdown rendering helper function
 function renderMarkdown(text: string): string {
-  // 代码块渲染
+  // Code block rendering
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     return `\n┌─[${lang || 'code'}]\n${code.trim().split('\n').map((l: string) => '│ ' + l).join('\n')}\n└─\n`;
   });
-  
-  // 行内代码渲染
+
+  // Inline code rendering
   text = text.replace(/`([^`]+)`/g, '`$1`');
-  
-  // 粗体渲染
+
+  // Bold rendering
   text = text.replace(/\*\*([^*]+)\*\*/g, '●$1○');
-  
-  // 斜体渲染
+
+  // Italic rendering
   text = text.replace(/\*([^*]+)\*/g, '/$1/');
-  
-  // 列表渲染
+
+  // List rendering
   text = text.replace(/^- (.*$)/gm, '○ $1');
   text = text.replace(/^\d+\. (.*$)/gm, '• $1');
-  
-  // 标题渲染
+
+  // Heading rendering
   text = text.replace(/^### (.*$)/gm, '\n━━━ $1 ━━━\n');
   text = text.replace(/^## (.*$)/gm, '\n━━━━━ $1 ━━━━━\n');
   text = text.replace(/^# (.*$)/gm, '\n━━━━━━━ $1 ━━━━━━━\n');
-  
-  // 引用渲染
+
+  // Quote rendering
   text = text.replace(/^> (.*$)/gm, '│ │ $1');
-  
-  // 链接渲染
+
+  // Link rendering
   text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '[$1]($2)');
-  
+
   return text;
 }
 
-// 格式化消息内容
+// Format message content
 function formatMessageContent(content: string | Array<any>): string {
   if (typeof content === 'string') {
     return renderMarkdown(content);
   }
-  
+
   const parts: string[] = [];
   let hasToolUse = false;
-  
+
   for (const block of content) {
     if (block.type === 'text') {
       parts.push(renderMarkdown(block.text || ''));
@@ -69,15 +69,15 @@ function formatMessageContent(content: string | Array<any>): string {
       parts.push(`[🧠 THINKING]\n${block.thinking || ''}`);
     }
   }
-  
+
   if (hasToolUse) {
     parts.push('\n[⚠️  Note: Tool calls are executed by the framework, not displayed here]');
   }
-  
+
   return parts.join('\n');
 }
 
-// 分类展示消息
+// Display messages by category
 function displayMessages(messages: any[], systemPrompt?: string): void {
   const roleColors: Record<string, string> = {
     system: '🟫 SYSTEM',
@@ -85,8 +85,8 @@ function displayMessages(messages: any[], systemPrompt?: string): void {
     assistant: '🤖 ASSISTANT',
     tool: '🔧 TOOL'
   };
-  
-  // 先显示system消息（如果有单独的systemPrompt参数）
+
+  // Display system message first (if there's a separate systemPrompt parameter)
   if (systemPrompt) {
     console.log('\n┌─────────────────────────────────────────────────────────────┐');
     console.log('│ 🟫 SYSTEM                                                     │');
@@ -94,18 +94,18 @@ function displayMessages(messages: any[], systemPrompt?: string): void {
     console.log(renderMarkdown(systemPrompt).split('\n').map((l: string) => '│ ' + l).join('\n'));
     console.log('└─────────────────────────────────────────────────────────────┘');
   }
-  
-  // 遍历所有消息
+
+  // Iterate through all messages
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const role = msg.role as string;
     const roleLabel = roleColors[role] || `● ${role.toUpperCase()}`;
-    
+
     console.log(`\n┌─────────────────────────────────────────────────────────────┐`);
     console.log(`│ ${roleLabel} (${i + 1}/${messages.length})                                          │`);
     console.log('├─────────────────────────────────────────────────────────────┤');
-    
-    // 显示reasoning_content（如果有）
+
+    // Display reasoning_content (if present)
     if ((msg as any).reasoning_content) {
       console.log('│ 🧠 REASONING:');
       console.log('│ ───────────────────────────────────────────────────────────');
@@ -116,37 +116,37 @@ function displayMessages(messages: any[], systemPrompt?: string): void {
       if ((msg as any).reasoning_content.length > 1000) console.log('│ ... (truncated)');
       console.log('│ ───────────────────────────────────────────────────────────');
     }
-    
-    // 显示主要内容
+
+    // Display main content
     const content = formatMessageContent(msg.content);
     const lines = content.split('\n');
-    
+
     for (const line of lines.slice(0, 50)) {
       console.log('│ ' + line.slice(0, 62));
     }
     if (lines.length > 50) {
       console.log('│ ... (' + (lines.length - 50) + ' more lines)');
     }
-    
+
     console.log('└─────────────────────────────────────────────────────────────┘');
   }
 }
 
-// 格式化响应内容
+// Format response content
 function formatResponseContent(content: string | Array<any>): string {
   if (typeof content === 'string') {
     return renderMarkdown(content);
   }
-  
+
   const parts: string[] = [];
   let hasToolUse = false;
-  
+
   for (const block of content) {
     if (block.type === 'text') {
       parts.push(renderMarkdown(block.text || ''));
     } else if (block.type === 'tool_use') {
       hasToolUse = true;
-      // 工具调用通过 tool_calls 字段处理，不在此显示
+      // Tool calls are handled via tool_calls field, not shown here
     } else if (block.type === 'tool_result') {
       const result = typeof block.content === 'string' ? block.content : JSON.stringify(block.content);
       parts.push(`[✅ TOOL RESULT]\n${result}`);
@@ -156,11 +156,11 @@ function formatResponseContent(content: string | Array<any>): string {
       parts.push('[IMAGE]');
     }
   }
-  
+
   if (hasToolUse) {
     parts.push('\n[⚠️  Note: Tool calls are executed via tool_calls field, not shown here]');
   }
-  
+
   return parts.join('\n');
 }
 
@@ -208,30 +208,30 @@ export interface ChatCompletionResponse {
   };
 }
 
-// 检测是否为 Anthropic 兼容 API（使用 x-api-key 认证头）
+// Detect if it's Anthropic compatible API（Use x-api-key authentication header）
 function isAnthropicCompatible(baseUrl: string): boolean {
   return baseUrl.includes('anthropic') || 
          baseUrl.includes('minimaxi.com') ||
          baseUrl.includes('minimax.chat');
 }
 
-// MiniMax API 路径检测
+// MiniMax API path detection
 function detectMiniMaxAPI(baseUrl: string): boolean {
   return baseUrl.includes('minimax.chat') || 
          baseUrl.includes('minimaxi.com');
 }
 
-// 获取 MiniMax 的正确端点路径
+// Get correct endpoint path for MiniMax
 function getMiniMaxEndpoint(baseUrl: string): { endpoint: string; format: 'anthropic' | 'openai' } {
-  // MiniMax Anthropic 格式: https://api.minimax.chat/anthropic + /v1/messages
+  // MiniMax Anthropic format: https://api.minimax.chat/anthropic + /v1/messages
   if (baseUrl.includes('/anthropic')) {
     return { endpoint: '/v1/messages', format: 'anthropic' };
   }
-  // MiniMax OpenAI 格式: https://api.minimaxi.com/v1 + /chat/completions
+  // MiniMax OpenAI format: https://api.minimaxi.com/v1 + /chat/completions
   if (baseUrl.includes('/v1') && !baseUrl.includes('/anthropic')) {
     return { endpoint: '/chat/completions', format: 'openai' };
   }
-  // 默认使用 Anthropic 格式
+  // Default to Anthropic format
   return { endpoint: '/v1/messages', format: 'anthropic' };
 }
 
@@ -249,16 +249,16 @@ export class AIClient {
     };
     
     if (isMiniMax) {
-      // MiniMax: 使用 x-api-key 认证头
+      // MiniMax: Use x-api-key authentication header
       headers['x-api-key'] = authConfig.apiKey || '';
       headers['anthropic-version'] = '2023-06-01';
     } else if (isAnthropicOfficial) {
-      // Anthropic 官方: 使用 x-api-key 认证头
+      // Anthropic official: Use x-api-key authentication header
       headers['x-api-key'] = authConfig.apiKey || '';
       headers['anthropic-version'] = '2023-06-01';
       headers['anthropic-dangerous-direct-browser-access'] = 'true';
     } else {
-      // 其他 OpenAI 兼容: 使用 Bearer token
+      // Other OpenAI compatible: 使用 Bearer token
       headers['Authorization'] = `Bearer ${authConfig.apiKey}`;
     }
     
@@ -269,7 +269,7 @@ export class AIClient {
     });
   }
 
-  // 将 OpenAI 格式消息转换为 Anthropic 格式
+  // Convert OpenAI format messages to Anthropic format
   private convertToAnthropicFormat(
     messages: Message[],
     systemPrompt?: string
@@ -312,7 +312,7 @@ export class AIClient {
         }
       }
 
-      // 处理 tool_calls (OpenAI 格式)
+      // Handle tool_calls (OpenAI 格式)
       if (msg.tool_calls) {
         for (const tc of msg.tool_calls) {
           blocks.push({
@@ -351,7 +351,7 @@ export class AIClient {
       return this.anthropicNativeChatCompletion(messages, options);
     }
 
-    // OpenAI 格式请求
+    // OpenAI format request
     const requestBody: any = {
       model,
       messages,
@@ -372,7 +372,7 @@ export class AIClient {
       requestBody.max_completion_tokens = options.thinkingTokens;
     }
 
-    // 调试输出（受showAIDebugInfo配置控制）
+    // Debug output（受showAIDebugInfo配置控制）
     const showDebug = this.authConfig.showAIDebugInfo ?? false;
     
     if (showDebug) {
@@ -381,14 +381,14 @@ export class AIClient {
       console.log('╚══════════════════════════════════════════════════════════╝');
       console.log(`📦 Model: ${model}`);
       console.log(`🌐 Base URL: ${this.authConfig.baseUrl}`);
-      console.log(`💬 Total Messages: ${messages.length} 条`);
+      console.log(`💬 Total Messages: ${messages.length} items`);
       if (options.temperature !== undefined) console.log(`🌡️  Temperature: ${options.temperature}`);
       if (options.maxTokens) console.log(`📏 Max Tokens: ${options.maxTokens}`);
-      if (options.tools?.length) console.log(`🔧 Tools: ${options.tools.length} 个`);
+      if (options.tools?.length) console.log(`🔧 Tools: ${options.tools.length} items`);
       if (options.thinkingTokens) console.log(`🧠 Thinking Tokens: ${options.thinkingTokens}`);
       console.log('─'.repeat(60));
       
-      // 分离system消息
+      // Separate system messages
       const systemMsgs = messages.filter(m => m.role === 'system');
       const otherMsgs = messages.filter(m => m.role !== 'system');
       
@@ -429,7 +429,7 @@ export class AIClient {
           console.log('│ 🤖 ASSISTANT                                                 │');
           console.log('├─────────────────────────────────────────────────────────────┤');
           
-          // 显示reasoning_content（如果有）
+          // Display reasoning_content（如果有）
           if (choice.message.reasoning_content) {
             console.log('│ 🧠 REASONING:');
             console.log('│ ───────────────────────────────────────────────────────────');
@@ -441,7 +441,7 @@ export class AIClient {
             console.log('│ ───────────────────────────────────────────────────────────');
           }
           
-          // 显示主要内容
+          // Display main content
           const content = formatResponseContent(choice.message.content);
           const lines = content.split('\n');
           console.log('│ 💬 CONTENT:');
@@ -473,7 +473,7 @@ export class AIClient {
     }
   }
 
-  // Anthropic 官方原生 API（使用 /v1/messages 端点）
+  // Anthropic official原生 API（使用 /v1/messages 端点）
   private async anthropicNativeChatCompletion(
     messages: Message[],
     options: ChatCompletionOptions = {}
@@ -492,7 +492,7 @@ export class AIClient {
       requestBody.system = system;
     }
 
-    // Anthropic 原生工具格式
+    // Anthropic native tool format
     if (options.tools && options.tools.length > 0) {
       requestBody.tools = options.tools.map(tool => ({
         name: tool.function.name,
@@ -500,7 +500,7 @@ export class AIClient {
         input_schema: tool.function.parameters || { type: 'object', properties: {} }
       }));
       
-      // 转换 tool_choice 从 OpenAI 格式到 Anthropic 格式
+      // Convert tool_choice 从 OpenAI 格式到 Anthropic 格式
       const toolChoice = options.toolChoice;
       if (toolChoice === 'none') {
         requestBody.tool_choice = { type: 'auto' };
@@ -515,12 +515,12 @@ export class AIClient {
       }
     }
 
-    // Anthropic thinking 模式
+    // Anthropic thinking mode
     if (options.thinkingTokens && options.thinkingTokens > 0) {
       requestBody.thinking = { type: 'enabled', budget_tokens: options.thinkingTokens };
     }
 
-    // 调试输出（受showAIDebugInfo配置控制）
+    // Debug output（受showAIDebugInfo配置控制）
     const showDebug = this.authConfig.showAIDebugInfo ?? false;
     
     if (showDebug) {
@@ -529,14 +529,14 @@ export class AIClient {
       console.log('╚══════════════════════════════════════════════════════════╝');
       console.log(`📦 Model: ${requestBody.model}`);
       console.log(`🌐 Base URL: ${this.authConfig.baseUrl}`);
-      console.log(`💬 Total Messages: ${anthropicMessages.length} 条`);
+      console.log(`💬 Total Messages: ${anthropicMessages.length} items`);
       if (requestBody.temperature) console.log(`🌡️  Temperature: ${requestBody.temperature}`);
       if (requestBody.max_tokens) console.log(`📏 Max Tokens: ${requestBody.max_tokens}`);
-      if (requestBody.tools) console.log(`🔧 Tools: ${requestBody.tools.length} 个`);
+      if (requestBody.tools) console.log(`🔧 Tools: ${requestBody.tools.length} items`);
       if (requestBody.thinking) console.log(`🧠 Thinking Budget: ${requestBody.thinking.budget_tokens}`);
       console.log('─'.repeat(60));
       
-      // 显示system消息
+      // Display system messages
       if (system) {
         console.log('\n┌─────────────────────────────────────────────────────────────┐');
         console.log('│ 🟫 SYSTEM                                                     │');
@@ -545,14 +545,14 @@ export class AIClient {
         console.log('└─────────────────────────────────────────────────────────────┘');
       }
       
-      // 显示用户和助手消息
+      // Display user and assistant messages
       displayMessages(anthropicMessages);
       
       console.log('\n📤 Sending to Anthropic API (v1/messages)...\n');
     }
 
     try {
-      // 使用 Anthropic 原生端点 /v1/messages
+      // Use Anthropic native endpoint /v1/messages
       const response = await this.client.post('/v1/messages', requestBody);
       
       if (showDebug) {
@@ -575,7 +575,7 @@ export class AIClient {
         const reasoning = content.filter((c: any) => c.type === 'thinking').map((c: any) => c.thinking).join('');
         const textContent = content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('');
         
-        // 显示thinking
+        // Display thinking
         if (reasoning) {
           console.log('│ 🧠 REASONING:');
           console.log('│ ───────────────────────────────────────────────────────────');
@@ -587,7 +587,7 @@ export class AIClient {
           console.log('│ ───────────────────────────────────────────────────────────');
         }
         
-        // 显示内容
+        // Display content
         console.log('│ 💬 CONTENT:');
         console.log('│ ───────────────────────────────────────────────────────────');
         const lines = renderMarkdown(textContent).split('\n');
@@ -618,7 +618,7 @@ export class AIClient {
     }
   }
 
-  // MiniMax API（根据 baseUrl 自动选择 Anthropic 或 OpenAI 格式）
+  // MiniMax API（Automatically select based on baseUrl Anthropic 或 OpenAI 格式）
   private async minimaxChatCompletion(
     messages: Message[],
     options: ChatCompletionOptions = {}
@@ -661,14 +661,14 @@ export class AIClient {
         }
       }
     } else {
-      // OpenAI 格式的工具
+      // OpenAI format tools
       if (options.tools && options.tools.length > 0) {
         requestBody.tools = options.tools;
         requestBody.tool_choice = options.toolChoice || 'auto';
       }
     }
 
-    // 调试输出（受showAIDebugInfo配置控制）
+    // Debug output（受showAIDebugInfo配置控制）
     const showDebug = this.authConfig.showAIDebugInfo ?? false;
     
     if (showDebug) {
@@ -678,13 +678,13 @@ export class AIClient {
       console.log(`📦 Model: ${requestBody.model}`);
       console.log(`🔗 Format: ${format.toUpperCase()} | Endpoint: ${endpoint}`);
       console.log(`🌐 Base URL: ${this.authConfig.baseUrl}`);
-      console.log(`💬 Total Messages: ${requestBody.messages.length} 条`);
+      console.log(`💬 Total Messages: ${requestBody.messages.length} items`);
       if (requestBody.temperature) console.log(`🌡️  Temperature: ${requestBody.temperature}`);
       if (requestBody.max_tokens) console.log(`📏 Max Tokens: ${requestBody.max_tokens}`);
-      if (requestBody.tools) console.log(`🔧 Tools: ${requestBody.tools.length} 个`);
+      if (requestBody.tools) console.log(`🔧 Tools: ${requestBody.tools.length} items`);
       console.log('─'.repeat(60));
       
-      // 显示system消息
+      // Display system messages
       if (system && format === 'anthropic') {
         console.log('\n┌─────────────────────────────────────────────────────────────┐');
         console.log('│ 🟫 SYSTEM                                                     │');
@@ -693,14 +693,14 @@ export class AIClient {
         console.log('└─────────────────────────────────────────────────────────────┘');
       }
       
-      // 显示其他消息
+      // Display other messages
       displayMessages(requestBody.messages);
       
       console.log('\n📤 Sending to MiniMax API...\n');
     }
 
     try {
-      // MiniMax 使用正确的端点
+      // MiniMax uses correct endpoint
       const response = await this.client.post(endpoint, requestBody);
       
       if (showDebug) {
@@ -756,7 +756,7 @@ export class AIClient {
     }
   }
 
-  // 将 Anthropic 原生响应转换为统一格式
+  // Convert Anthropic native response to unified format
   private convertFromAnthropicNativeResponse(anthropicResponse: any): ChatCompletionResponse {
     const content = anthropicResponse.content || [];
     let textContent = '';
@@ -804,7 +804,7 @@ export class AIClient {
     };
   }
 
-  // 将 MiniMax 响应转换为统一格式
+  // Convert MiniMax response to unified format
   private convertFromMiniMaxResponse(minimaxResponse: any): ChatCompletionResponse {
     const message = minimaxResponse.choices?.[0]?.message;
     const content = message?.content;
@@ -870,7 +870,7 @@ export class AIClient {
       return;
     }
 
-    // OpenAI 流式响应
+    // OpenAI streaming response
     const model = options.model || this.authConfig.modelName || 'gpt-4';
 
     const requestBody: any = {
@@ -893,7 +893,7 @@ export class AIClient {
       requestBody.max_completion_tokens = options.thinkingTokens;
     }
 
-    // 调试输出（受showAIDebugInfo配置控制）
+    // Debug output（受showAIDebugInfo配置控制）
     const showDebug = this.authConfig.showAIDebugInfo ?? false;
     
     if (showDebug) {
@@ -902,13 +902,13 @@ export class AIClient {
       console.log('╚══════════════════════════════════════════════════════════╝');
       console.log(`📦 Model: ${model}`);
       console.log(`🌐 Base URL: ${this.authConfig.baseUrl}`);
-      console.log(`💬 Total Messages: ${messages.length} 条`);
+      console.log(`💬 Total Messages: ${messages.length} items`);
       if (options.temperature) console.log(`🌡️  Temperature: ${options.temperature}`);
       if (options.maxTokens) console.log(`📏 Max Tokens: ${options.maxTokens}`);
-      if (options.tools?.length) console.log(`🔧 Tools: ${options.tools.length} 个`);
+      if (options.tools?.length) console.log(`🔧 Tools: ${options.tools.length} items`);
       console.log('─'.repeat(60));
       
-      // 分离并显示消息
+      // Separate and display messages
       const systemMsgs = messages.filter(m => m.role === 'system');
       const otherMsgs = messages.filter(m => m.role !== 'system');
       
@@ -1032,7 +1032,7 @@ export class AIClient {
     }
   }
 
-  // Anthropic 原生流式响应（/v1/messages 端点）
+  // Anthropic native streaming response（/v1/messages 端点）
   private async *anthropicNativeStreamChatCompletion(
     messages: Message[],
     options: ChatCompletionOptions = {}
@@ -1051,7 +1051,7 @@ export class AIClient {
       requestBody.system = system;
     }
 
-    // Anthropic 原生工具格式
+    // Anthropic native tool format
     if (options.tools && options.tools.length > 0) {
       requestBody.tools = options.tools.map(tool => ({
         name: tool.function.name,
@@ -1077,7 +1077,7 @@ export class AIClient {
       requestBody.thinking = { type: 'enabled', budget_tokens: options.thinkingTokens };
     }
 
-    // 调试输出（受showAIDebugInfo配置控制）
+    // Debug output（受showAIDebugInfo配置控制）
     const showDebug = this.authConfig.showAIDebugInfo ?? false;
     
     if (showDebug) {
@@ -1086,13 +1086,13 @@ export class AIClient {
       console.log('╚══════════════════════════════════════════════════════════╝');
       console.log(`📦 Model: ${requestBody.model}`);
       console.log(`🌐 Base URL: ${this.authConfig.baseUrl}`);
-      console.log(`💬 Total Messages: ${anthropicMessages.length} 条`);
+      console.log(`💬 Total Messages: ${anthropicMessages.length} items`);
       if (requestBody.temperature) console.log(`🌡️  Temperature: ${requestBody.temperature}`);
       if (requestBody.max_tokens) console.log(`📏 Max Tokens: ${requestBody.max_tokens}`);
       if (requestBody.thinking) console.log(`🧠 Thinking Budget: ${requestBody.thinking.budget_tokens}`);
       console.log('─'.repeat(60));
       
-      // 显示system消息
+      // Display system messages
       if (system) {
         console.log('\n┌─────────────────────────────────────────────────────────────┐');
         console.log('│ 🟫 SYSTEM                                                     │');
@@ -1107,7 +1107,7 @@ export class AIClient {
     }
 
     try {
-      // Anthropic 原生流式端点 /v1/messages
+      // Anthropic native streaming endpoint /v1/messages
       const response = await this.client.post('/v1/messages', requestBody, {
         responseType: 'stream'
       });
@@ -1126,14 +1126,14 @@ export class AIClient {
           const trimmedLine = line.trim();
           if (!trimmedLine) continue;
 
-          // Anthropic 流式格式: data: {"type":"content_block_delta",...}
+          // Anthropic streaming format: data: {"type":"content_block_delta",...}
           if (trimmedLine.startsWith('data: ')) {
             const data = trimmedLine.slice(6);
 
             try {
               const parsed = JSON.parse(data);
 
-              // Anthropic 事件类型
+              // Anthropic event types
               if (parsed.type === 'content_block_delta') {
                 if (parsed.delta?.type === 'text_delta' && parsed.delta.text) {
                   outputBuffer += parsed.delta.text;
@@ -1144,7 +1144,7 @@ export class AIClient {
                 }
               } else if (parsed.type === 'message_delta') {
                 if (parsed.delta?.stop_reason) {
-                  // 消息结束
+                  // Message end
                   if (showDebug) {
                     console.log('\n╔══════════════════════════════════════════════════════════╗');
                     console.log('║              STREAM COMPLETED                            ║');
@@ -1170,7 +1170,7 @@ export class AIClient {
                 }
               }
             } catch (e) {
-              // 忽略解析错误
+              // Ignore parsing errors
             }
           }
         }
@@ -1192,7 +1192,7 @@ export class AIClient {
     }
   }
 
-  // MiniMax 流式响应（根据 baseUrl 自动选择格式）
+  // MiniMax streaming response（Automatically select based on baseUrl格式）
   private async *minimaxStreamChatCompletion(
     messages: Message[],
     options: ChatCompletionOptions = {}
@@ -1235,7 +1235,7 @@ export class AIClient {
         }
       }
     } else {
-      // OpenAI 格式的工具
+      // OpenAI format tools
       if (options.tools && options.tools.length > 0) {
         requestBody.tools = options.tools;
         requestBody.tool_choice = options.toolChoice || 'auto';
@@ -1248,12 +1248,12 @@ export class AIClient {
     console.log(`📦 Model: ${requestBody.model}`);
     console.log(`🔗 Format: ${format.toUpperCase()} | Endpoint: ${endpoint}`);
     console.log(`🌐 Base URL: ${this.authConfig.baseUrl}`);
-    console.log(`💬 Total Messages: ${requestBody.messages.length} 条`);
+    console.log(`💬 Total Messages: ${requestBody.messages.length} items`);
     if (requestBody.temperature) console.log(`🌡️  Temperature: ${requestBody.temperature}`);
     if (requestBody.max_tokens) console.log(`📏 Max Tokens: ${requestBody.max_tokens}`);
     console.log('─'.repeat(60));
     
-    // 显示system消息
+    // Display system messages
     if (system && format === 'anthropic') {
       console.log('\n┌─────────────────────────────────────────────────────────────┐');
       console.log('│ 🟫 SYSTEM                                                     │');
@@ -1286,9 +1286,9 @@ export class AIClient {
           const trimmedLine = line.trim();
           if (!trimmedLine) continue;
 
-          // 根据格式解析不同的流式响应
+          // Parse different streaming responses based on format
           if (format === 'anthropic') {
-            // Anthropic SSE 格式: data: {"type":"content_block_delta",...}
+            // Anthropic SSE format: data: {"type":"content_block_delta",...}
             if (trimmedLine.startsWith('data: ')) {
               const data = trimmedLine.slice(6);
 
@@ -1326,11 +1326,11 @@ export class AIClient {
                   }
                 }
               } catch (e) {
-                // 忽略解析错误
+                // Ignore parsing errors
               }
             }
           } else {
-            // OpenAI SSE 格式: data: {...}
+            // OpenAI SSE format: data: {...}
             if (trimmedLine.startsWith('data: ')) {
               const data = trimmedLine.slice(6);
               if (data === '[DONE]') continue;
@@ -1346,7 +1346,7 @@ export class AIClient {
                   yield delta.reasoning_content;
                 }
               } catch (e) {
-                // 忽略解析错误
+                // Ignore parsing errors
               }
             }
           }

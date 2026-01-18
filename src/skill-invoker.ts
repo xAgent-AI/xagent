@@ -1196,8 +1196,8 @@ class DocumentSkillExecutor implements SkillExecutor {
   private extractXlsxContent(taskLower: string, fullContent: string, nextSteps: ExecutionStep[], skillPath: string, taskWorkspace: string): string {
     const content = fullContent.replace(/^---\n[\s\S]*?\n---/, '').trim();
 
-    const hasFormulas = taskLower.includes('formula') || taskLower.includes('公式');
-    const hasData = taskLower.includes('data') || taskLower.includes('数据分析');
+    const hasFormulas = taskLower.includes('formula') || taskLower.includes('formula');
+    const hasData = taskLower.includes('data') || taskLower.includes('data analysis');
 
     nextSteps.push({
       step: 1,

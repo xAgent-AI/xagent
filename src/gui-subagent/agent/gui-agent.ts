@@ -48,8 +48,8 @@ export enum GUIAgentStatus {
 }
 
 /**
- * VLM Caller 回调函数类型
- * 外部注入此函数来处理 VLM 调用，GUI Agent 不需要知道 VLM 的实现细节
+ * VLM Caller callback function type
+ * Inject this function externally来处理 VLM 调用，GUI Agent doesn't need to know VLM 的实现细节
  * systemPrompt 由 GUI Agent 生成并传递给调用方
  */
 export type VLMCaller = (image: string, prompt: string, systemPrompt: string) => Promise<string>;
@@ -60,8 +60,8 @@ export interface GUIAgentConfig<T extends Operator> {
   modelBaseUrl?: string;
   modelApiKey?: string;
   /**
-   * 外部注入的 VLM 调用函数
-   * 如果提供此函数，GUI Agent 将使用它来调用 VLM，
+   * Externally injected VLM caller function
+   * If this function is provided，GUI Agent will use it来调用 VLM，
    * 而不是直接调用 modelBaseUrl/modelApiKey
    * 这使得 GUI Agent 可以与远程服务配合使用，而不暴露任何配置信息
    */
@@ -792,7 +792,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     messages: any[],
     screenContext: ScreenContext
   ): Promise<{ prediction: string; parsedPredictions: PredictionParsed[] }> {
-    // 如果提供了 vlmCaller，使用外部注入的调用函数
+    // If vlmCaller is provided，Use externally injected caller function
     if (this.vlmCaller) {
       const lastUserMessage = messages[messages.length - 1];
       let image = '';
@@ -814,7 +814,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         prompt = textBlock?.text || '';
       }
 
-      // 使用外部注入的 VLM 调用函数（传递 systemPrompt）
+      // 使用Externally injected VLM caller function（传递 systemPrompt）
       const prediction = await this.vlmCaller(image, prompt, this.systemPrompt);
 
       // 解析预测结果
@@ -833,7 +833,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       };
     }
 
-    // 原有逻辑：直接调用模型 API
+    // Original logic：Call model API directly
     const baseUrl = this.modelBaseUrl || process.env.MODEL_BASE_URL || 'https://api.openai.com/v1';
     const apiKey = this.modelApiKey || process.env.MODEL_API_KEY || '';
 

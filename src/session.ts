@@ -181,6 +181,8 @@ export class InteractiveSession {
   }
 
   private async initialize(): Promise<void> {
+    console.log('\n[SESSION] ========== initialize() 开始 ==========\n');
+
     try {
       const spinner = ora({
         text: colors.textMuted('Initializing XAGENT CLI...'),
@@ -188,10 +190,18 @@ export class InteractiveSession {
         color: 'cyan'
       }).start();
 
+      console.log('[SESSION] 调用 configManager.load()...');
       await this.configManager.load();
 
+      console.log('[SESSION] 调用 configManager.getAuthConfig()...');
       let authConfig = this.configManager.getAuthConfig();
       const selectedAuthType = this.configManager.get('selectedAuthType');
+
+      console.log('[SESSION] getAuthConfig() 返回:');
+      console.log('  - apiKey exists:', !!authConfig.apiKey);
+      console.log('  - selectedAuthType:', selectedAuthType);
+      console.log('  - authConfig.type:', authConfig.type);
+      console.log('  - authConfig.baseUrl:', authConfig.baseUrl);
 
       // Only validate OAuth tokens, skip validation for third-party API keys
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
@@ -227,6 +237,8 @@ export class InteractiveSession {
           await this.setupAuthentication();
           authConfig = this.configManager.getAuthConfig();
 
+          console.log('[DEBUG Initialize] After setupAuthentication, authConfig:', JSON.stringify(authConfig, null, 2));
+
           // Recreate readline interface after inquirer
           this.rl.close();
           this.rl = readline.createInterface({
@@ -244,6 +256,8 @@ export class InteractiveSession {
         await this.setupAuthentication();
         authConfig = this.configManager.getAuthConfig();
 
+        console.log('[DEBUG Initialize] After setupAuthentication (no apiKey case), authConfig:', JSON.stringify(authConfig, null, 2));
+
         // Recreate readline interface after inquirer
         this.rl.close();
         this.rl = readline.createInterface({
@@ -260,11 +274,19 @@ export class InteractiveSession {
       this.aiClient = new AIClient(authConfig);
       this.contextCompressor.setAIClient(this.aiClient);
 
+      console.log('[DEBUG Initialize] About to check remoteAIClient condition:');
+      console.log('  - authConfig.apiKey exists:', !!authConfig.apiKey);
+      console.log('  - selectedAuthType:', selectedAuthType);
+      console.log('  - selectedAuthType === AuthType.OAUTH_XAGENT:', selectedAuthType === AuthType.OAUTH_XAGENT);
+
       // Initialize remote AI client for OAuth XAGENT mode
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
         const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-        console.log('[Session] Initialize remote AI client, webBaseUrl:', webBaseUrl);
+        console.log('[DEBUG Initialize] Creating RemoteAIClient with webBaseUrl:', webBaseUrl);
         this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
+        console.log('[DEBUG Initialize] RemoteAIClient created successfully');
+      } else {
+        console.log('[DEBUG Initialize] RemoteAIClient NOT created (condition not met)');
       }
 
       this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
@@ -620,9 +642,12 @@ export class InteractiveSession {
     await this.checkAndCompressContext(lastUserMessage);
 
     // Use remote AI client if available (OAuth XAGENT mode)
+    console.log('[DEBUG processUserMessage] this.remoteAIClient exists:', !!this.remoteAIClient);
     if (this.remoteAIClient) {
+      console.log('[DEBUG processUserMessage] Using generateRemoteResponse');
       await this.generateRemoteResponse(thinkingTokens);
     } else {
+      console.log('[DEBUG processUserMessage] Using generateResponse (local mode)');
       await this.generateResponse(thinkingTokens);
     }
   }
@@ -1071,12 +1096,16 @@ export class InteractiveSession {
         }))
       ];
 
-      // Call unified LLM API
-      const response = await chatCompletion(messages, {
-        tools,
-        toolChoice: tools.length > 0 ? 'auto' : 'none',
-        thinkingTokens
-      });
+      // Call unified LLM API with cancellation support
+      const operationId = `remote-ai-response-${Date.now()}`;
+      const response = await this.cancellationManager.withCancellation(
+        chatCompletion(messages, {
+          tools,
+          toolChoice: tools.length > 0 ? 'auto' : 'none',
+          thinkingTokens
+        }),
+        operationId
+      );
 
       clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');

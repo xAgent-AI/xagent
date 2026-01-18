@@ -1013,13 +1013,14 @@ export class TaskTool implements Tool {
    */
   private createVLMCaller(
     remoteAIClient: any,
-    localConfig: { baseUrl: string; apiKey: string; modelName: string }
+    localConfig: { baseUrl: string; apiKey: string; modelName: string },
+    signal?: AbortSignal
   ): (image: string, prompt: string, systemPrompt: string) => Promise<string> {
     // Remote mode takes priority
     if (remoteAIClient) {
       return async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
         try {
-          return await remoteAIClient.invokeVLM(image, userPrompt, systemPrompt);
+          return await remoteAIClient.invokeVLM(image, userPrompt, systemPrompt, { signal });
         } catch (error: any) {
           throw new Error(`Remote VLM call failed: ${error.message}`);
         }
@@ -1047,6 +1048,14 @@ export class TaskTool implements Tool {
         temperature: 0.1,
       };
 
+      const controller = signal ? new AbortController() : undefined;
+      const abortSignal = signal || controller?.signal;
+
+      // If external signal is provided, listen to it
+      if (signal) {
+        signal.addEventListener?.('abort', () => controller?.abort());
+      }
+
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
@@ -1054,6 +1063,7 @@ export class TaskTool implements Tool {
           'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify(requestBody),
+        signal: abortSignal,
       });
 
       if (!response.ok) {
@@ -1108,7 +1118,8 @@ export class TaskTool implements Tool {
     }
 
     // Transparency: create unified vlmCaller, caller doesn't care about internal implementation
-    const vlmCaller = this.createVLMCaller(remoteAIClient, { baseUrl, apiKey, modelName });
+    const abortController = new AbortController();
+    const vlmCaller = this.createVLMCaller(remoteAIClient, { baseUrl, apiKey, modelName }, abortController.signal);
 
     // Set up stdin polling for ESC cancellation
     let rawModeEnabled = false;

@@ -27,6 +27,7 @@ export interface RemoteChatOptions {
       };
     };
   }>;
+  signal?: AbortSignal;
 }
 
 export interface RemoteChatResponse {
@@ -51,6 +52,7 @@ export class RemoteAIClient extends EventEmitter {
 
   constructor(authToken: string, webBaseUrl: string, showAIDebugInfo: boolean = false) {
     super();
+    console.log('[RemoteAIClient] Constructor called, authToken:', authToken ? authToken.substring(0, 30) + '...' : 'empty');
     this.authToken = authToken;
     this.webBaseUrl = webBaseUrl.replace(/\/$/, ''); // Remove trailing slash
     this.agentApi = `${this.webBaseUrl}/api/agent`;
@@ -182,7 +184,7 @@ export class RemoteAIClient extends EventEmitter {
    * @param image - base64 image or URL
    * @param prompt - user prompt
    * @param systemPrompt - system prompt (optional, generated and passed by CLI)
-   * @param options - other options
+   * @param options - other options including AbortSignal
    */
   async invokeVLM(
     image: string,
@@ -223,6 +225,15 @@ export class RemoteAIClient extends EventEmitter {
       console.log('[RemoteAIClient] VLM sending request to:', this.vlmApi);
     }
 
+    // Handle abort signal
+    const controller = options.signal ? new AbortController() : undefined;
+    const abortSignal = options.signal || controller?.signal;
+
+    // If external signal is provided, listen to it
+    if (options.signal) {
+      options.signal.addEventListener?.('abort', () => controller?.abort());
+    }
+
     try {
       const response = await fetch(this.vlmApi, {
         method: 'POST',
@@ -230,7 +241,8 @@ export class RemoteAIClient extends EventEmitter {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.authToken}`
         },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal: abortSignal
       });
 
       if (this.showAIDebugInfo) {

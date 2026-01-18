@@ -1007,8 +1007,69 @@ export class TaskTool implements Tool {
   }
 
   /**
+   * Create unified VLM caller
+   * Uses remote VLM if remoteAIClient is provided, otherwise uses local VLM
+   */
+  private createVLMCaller(
+    remoteAIClient: any,
+    localConfig: { baseUrl: string; apiKey: string; modelName: string }
+  ): (image: string, prompt: string, systemPrompt: string) => Promise<string> {
+    // Remote mode takes priority
+    if (remoteAIClient) {
+      return async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
+        try {
+          return await remoteAIClient.invokeVLM(image, userPrompt, systemPrompt);
+        } catch (error: any) {
+          throw new Error(`远程 VLM 调用失败: ${error.message}`);
+        }
+      };
+    }
+
+    // Local mode
+    const { baseUrl, apiKey, modelName } = localConfig;
+    return async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
+      const messages = [
+        ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: userPrompt },
+            { type: 'image_url', image_url: { url: `data:image/png;base64,${image}` } }
+          ]
+        }
+      ];
+
+      const requestBody = {
+        model: modelName,
+        messages,
+        max_tokens: 1024,
+        temperature: 0.1,
+      };
+
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`VLM API error: ${errorText}`);
+      }
+
+      const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+      return result.choices?.[0]?.message?.content || '';
+    };
+  }
+
+  /**
    * Execute GUI subagent by directly calling GUIAgent.run()
    * This bypasses the normal subagent message loop for better GUI control
+   *
+   * @param remoteAIClient - Optional RemoteAIClient instance for remote mode
    */
   private async executeGUIAgent(
     prompt: string,
@@ -1016,7 +1077,8 @@ export class TaskTool implements Tool {
     agent: any,
     mode: ExecutionMode,
     config: any,
-    indentLevel: number = 1
+    indentLevel: number = 1,
+    remoteAIClient?: any
   ): Promise<{ success: boolean; message: string; result?: any }> {
     const indent = '  '.repeat(indentLevel);
 
@@ -1024,64 +1086,35 @@ export class TaskTool implements Tool {
     console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
     console.log('');
 
-    // Get model config for GUI agent
-    // Priority: guiSubagentBaseUrl (test first) -> baseUrl (fallback)
-    // When falling back to baseUrl, also use the corresponding modelName and apiKey
-    const primaryBaseUrl = config.get('guiSubagentBaseUrl') || '';
-    const fallbackBaseUrl = config.get('baseUrl') || '';
-    const primaryApiKey = config.get('guiSubagentApiKey') || '';
-    const fallbackApiKey = config.get('apiKey') || '';
-    const primaryModelName = config.get('guiSubagentModel') || '';
-    const fallbackModelName = config.get('modelName') || '';
+    // 获取本地 VLM 配置
+    const baseUrl = config.get('guiSubagentBaseUrl') || config.get('baseUrl') || '';
+    const apiKey = config.get('guiSubagentApiKey') || config.get('apiKey') || '';
+    const modelName = config.get('guiSubagentModel') || config.get('modelName') || '';
 
-    let baseUrl = primaryBaseUrl;
-    let modelName = primaryModelName;
-    let apiKey = primaryApiKey;
-
-    // Test API availability (like curl) and choose the right baseUrl
-    if (primaryBaseUrl) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
-        const response = await fetch(`${primaryBaseUrl.replace(/\/v1\/?$/, '')}/models`, {
-          method: 'GET',
-          headers: primaryApiKey ? { 'Authorization': `Bearer ${primaryApiKey}` } : {},
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        if (!response.ok) {
-          // Fallback to baseUrl with its corresponding model and API key
-          baseUrl = fallbackBaseUrl;
-          modelName = fallbackModelName;
-          apiKey = fallbackApiKey;
-        }
-      } catch {
-        // Fallback to baseUrl with its corresponding model and API key
-        baseUrl = fallbackBaseUrl;
-        modelName = fallbackModelName;
-        apiKey = fallbackApiKey;
-      }
+    // 透明性：remoteAIClient 存在则使用远程模式，否则使用本地模式
+    const isRemoteMode = !!remoteAIClient;
+    if (isRemoteMode) {
+      console.log(`${indent}${colors.info(`${icons.brain} 使用远程 VLM 服务`)}`);
     } else {
-      baseUrl = fallbackBaseUrl;
-      modelName = fallbackModelName;
-      apiKey = fallbackApiKey;
+      console.log(`${indent}${colors.info(`${icons.brain} 使用本地 VLM 配置`)}`);
+      // 本地模式需要配置检查
+      if (!baseUrl) {
+        return {
+          success: false,
+          message: `GUI task "${description}" failed: No valid API URL configured`
+        };
+      }
     }
 
-    if (!baseUrl) {
-      return {
-        success: false,
-        message: `GUI task "${description}" failed: No valid API URL configured`
-      };
-    }
+    // 透明性：创建统一的 vlmCaller，调用方不关心内部实现
+    const vlmCaller = this.createVLMCaller(remoteAIClient, { baseUrl, apiKey, modelName });
 
     try {
       // Import and create GUIAgent
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
 
       const guiAgent = await createGUISubAgent({
-        model: modelName,
-        modelBaseUrl: baseUrl || undefined,
-        modelApiKey: apiKey || undefined,
+        vlmCaller,
         maxLoopCount: 30,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
@@ -1155,13 +1188,32 @@ export class TaskTool implements Tool {
 
     // Special handling for gui-subagent: directly call GUIAgent.run() instead of subagent message loop
     if (subagent_type === 'gui-subagent') {
+      // 获取 RemoteAIClient 实例（如果有）
+      let remoteAIClient: any;
+      try {
+        const { RemoteAIClient } = await import('./remote-ai-client.js');
+        const { getConfigManager } = await import('./config.js');
+        const cfg = getConfigManager();
+        const authConfig = cfg.getAuthConfig();
+        const selectedAuthType = cfg.get('selectedAuthType');
+
+        if (selectedAuthType === AuthType.OAUTH_XAGENT && authConfig.apiKey) {
+          const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+          remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
+        }
+      } catch (e) {
+        // RemoteAIClient 不可用，保持 undefined
+        remoteAIClient = undefined;
+      }
+
       return this.executeGUIAgent(
         prompt,
         description,
         agent,
         mode,
         config,
-        indentLevel
+        indentLevel,
+        remoteAIClient
       );
     }
 

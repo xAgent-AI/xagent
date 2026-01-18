@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
-import { ChatMessage, SessionOutput } from './types.js';
+import { ChatMessage, SessionOutput, ToolCall } from './types.js';
+import { ChatCompletionResponse, ChatCompletionOptions, Message } from './ai-client.js';
 
 export interface RemoteChatOptions {
   model?: string;
@@ -9,13 +10,29 @@ export interface RemoteChatOptions {
     workspace?: string;
     recentFiles?: string[];
   };
+  toolResults?: Array<{
+    toolCallId: string;
+    toolName: string;
+    result: any;
+  }>;
+  tools?: Array<{
+    type: 'function';
+    function: {
+      name: string;
+      description: string;
+      parameters: {
+        type: 'object';
+        properties: Record<string, any>;
+        required?: string[];
+      };
+    };
+  }>;
 }
 
-export interface RemoteChunk {
-  type: 'message' | 'done' | 'error';
-  content?: string;
-  conversationId?: string;
-  error?: string;
+export interface RemoteChatResponse {
+  content: string;
+  toolCalls?: ToolCall[];
+  conversationId: string;
 }
 
 export interface RemoteVLMResponse {
@@ -45,30 +62,31 @@ export class RemoteAIClient extends EventEmitter {
   }
 
   /**
-   * 流式聊天 - 发送消息并接收流式响应
+   * 非流式聊天 - 发送消息并接收完整响应
    */
-  async streamChat(
+  async chat(
     messages: ChatMessage[],
     options: RemoteChatOptions = {}
-  ): Promise<void> {
-    const lastMessage = messages[messages.length - 1];
-    const userContent = typeof lastMessage?.content === 'string' 
-      ? lastMessage.content 
-      : '';
-
+  ): Promise<SessionOutput> {
+    // 传递完整的 messages 数组给后端，后端直接转发给 LLM
     const requestBody = {
-      message: userContent,
+      messages: messages,  // 传递完整消息历史
       conversationId: options.conversationId,
       context: options.context,
       options: {
         model: options.model
-      }
+      },
+      toolResults: options.toolResults,
+      tools: options.tools
     };
 
     const url = `${this.agentApi}/chat`;
     console.log('[RemoteAIClient] 发送请求到:', url);
     console.log('[RemoteAIClient] Token 前缀:', this.authToken.substring(0, 20) + '...');
-    console.log('[RemoteAIClient] 请求体:', JSON.stringify(requestBody).substring(0, 200));
+    console.log('[RemoteAIClient] 消息数量:', messages.length);
+    if (options.tools) {
+      console.log('[RemoteAIClient] 发送工具数量:', options.tools.length);
+    }
 
     try {
       const response = await fetch(url, {
@@ -81,7 +99,6 @@ export class RemoteAIClient extends EventEmitter {
       });
 
       console.log('[RemoteAIClient] 响应状态:', response.status);
-      console.log('[RemoteAIClient] 响应头:', JSON.stringify(Object.fromEntries(response.headers.entries())));
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -90,133 +107,98 @@ export class RemoteAIClient extends EventEmitter {
         throw new Error(errorData.error || `HTTP ${response.status}`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('无法读取响应流');
-      }
+      const data = await response.json() as RemoteChatResponse;
+      console.log('[RemoteAIClient] 收到响应, content 长度:', data.content?.length || 0);
+      console.log('[RemoteAIClient] toolCalls 数量:', data.toolCalls?.length || 0);
 
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let messageCount = 0;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          console.log('[RemoteAIClient] 流结束，收到消息数:', messageCount);
-          this.emit('done');
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            try {
-              const chunk: RemoteChunk = JSON.parse(data);
-              
-              if (chunk.type === 'error') {
-                console.log('[RemoteAIClient] 收到错误:', chunk.error);
-                this.emit('error', new Error(chunk.error));
-                return;
-              }
-              
-              if (chunk.type === 'done') {
-                console.log('[RemoteAIClient] 收到完成信号, conversationId:', chunk.conversationId);
-                this.emit('done', chunk.conversationId);
-                return;
-              }
-              
-              if (chunk.type === 'message' && chunk.content) {
-                messageCount++;
-                this.emit('chunk', chunk.content);
-              }
-            } catch (e) {
-              console.log('[RemoteAIClient] JSON 解析跳过:', line.substring(0, 50));
-            }
-          }
-        }
-      }
+      return {
+        role: 'assistant',
+        content: data.content || '',
+        toolCalls: data.toolCalls,
+        timestamp: Date.now()
+      };
 
     } catch (error) {
       console.log('[RemoteAIClient] 请求异常:', error);
-      this.emit('error', error as Error);
+      throw error;
     }
   }
 
   /**
-   * 非流式聊天
+   * 统一 LLM 调用接口 - 与 aiClient.chatCompletion 返回类型相同
+   * 实现透明性：调用方不需要关心是远程还是本地模式
    */
-  async chat(
+  async chatCompletion(
     messages: ChatMessage[],
-    options: RemoteChatOptions = {}
-  ): Promise<SessionOutput> {
-    return new Promise((resolve, reject) => {
-      const chunks: string[] = [];
-
-      this.streamChat(messages, {
-        ...options,
-        model: options.model
-      });
-
-      this.on('chunk', (content: string) => {
-        chunks.push(content);
-      });
-
-      this.on('done', () => {
-        resolve({
-          role: 'assistant',
-          content: chunks.join(''),
-          timestamp: Date.now()
-        });
-      });
-
-      this.on('error', (error: Error) => {
-        reject(error);
-      });
+    options: ChatCompletionOptions = {}
+  ): Promise<ChatCompletionResponse> {
+    // 调用现有的 chat 方法
+    const response = await this.chat(messages, {
+      conversationId: undefined,
+      tools: options.tools as any,
+      toolResults: undefined,
+      context: undefined,
+      model: options.model
     });
+
+    // 转换为 ChatCompletionResponse 格式（与本地模式一致）
+    return {
+      id: `remote-${Date.now()}`,
+      object: 'chat.completion',
+      created: Date.now(),
+      model: options.model || 'remote-llm',
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content: response.content,
+            reasoning_content: '',
+            tool_calls: response.toolCalls
+          },
+          finish_reason: 'stop'
+        }
+      ],
+      usage: undefined
+    };
   }
 
   /**
    * 调用 VLM 进行图像理解
+   * @param image - base64 图片或 URL
+   * @param prompt - 用户提示词
+   * @param systemPrompt - 系统提示词（可选，CLI 生成并传递）
+   * @param options - 其他选项
    */
   async invokeVLM(
     image: string,
     prompt: string,
+    systemPrompt?: string,
     options: RemoteChatOptions = {}
   ): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const chunks: string[] = [];
+    // 确保图片格式正确：需要 data:image/xxx;base64, 前缀
+    // 与本地模式保持一致
+    let imageUrl = image;
+    if (typeof image === 'string' && image.length > 0) {
+      if (!image.startsWith('data:') && !image.startsWith('http://') && !image.startsWith('https://')) {
+        imageUrl = `data:image/png;base64,${image}`;
+      }
+    }
 
-      this.streamVLM(image, prompt, options);
+    // 构建 VLM 消息（CLI 生成完整消息，后端透传）
+    const messages = [
+      ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: imageUrl } }
+        ]
+      }
+    ];
 
-      this.on('chunk', (content: string) => {
-        chunks.push(content);
-      });
-
-      this.on('done', () => {
-        resolve(chunks.join(''));
-      });
-
-      this.on('error', (error: Error) => {
-        reject(error);
-      });
-    });
-  }
-
-  /**
-   * 流式 VLM 调用
-   */
-  async streamVLM(
-    image: string,
-    prompt: string,
-    options: RemoteChatOptions = {}
-  ): Promise<void> {
     const requestBody = {
-      image,
-      prompt,
+      messages,  // 传递完整消息（包含 system prompt）
       context: options.context,
       options: {
         model: options.model
@@ -243,52 +225,12 @@ export class RemoteAIClient extends EventEmitter {
         throw new Error(errorData.error || `HTTP ${response.status}`);
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('无法读取 VLM 响应流');
-      }
+      const data = await response.json() as RemoteVLMResponse;
+      return data.content || '';
 
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          this.emit('done');
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            try {
-              const chunk: RemoteChunk = JSON.parse(data);
-              
-              if (chunk.type === 'error') {
-                this.emit('error', new Error(chunk.error));
-                return;
-              }
-              
-              if (chunk.type === 'done') {
-                this.emit('done');
-                return;
-              }
-              
-              if (chunk.type === 'message' && chunk.content) {
-                this.emit('chunk', chunk.content);
-              }
-            } catch (e) {
-              // 忽略解析错误
-            }
-          }
-        }
-      }
     } catch (error) {
-      this.emit('error', error as Error);
+      console.log('[RemoteAIClient] VLM 请求异常:', error);
+      throw error;
     }
   }
 

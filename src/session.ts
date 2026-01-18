@@ -719,8 +719,37 @@ export class InteractiveSession {
     }
   }
 
-  private async generateResponse(thinkingTokens: number = 0): Promise<void> {
+  /**
+   * 创建统一的 LLM Caller
+   * 实现透明性：调用方不需要关心是远程还是本地模式
+   * 远程模式优先级更高
+   */
+  private createLLMCaller() {
+    // 远程模式优先级更高
+    if (this.remoteAIClient) {
+      return {
+        chatCompletion: (messages: ChatMessage[], options: any) => 
+          this.remoteAIClient!.chatCompletion(messages, options),
+        isRemote: true
+      };
+    }
+
+    // 本地模式
     if (!this.aiClient) {
+      throw new Error('AI client not initialized');
+    }
+    return {
+      chatCompletion: (messages: ChatMessage[], options: any) => 
+        this.aiClient!.chatCompletion(messages as any, options),
+      isRemote: false
+    };
+  }
+
+  private async generateResponse(thinkingTokens: number = 0): Promise<void> {
+    // 使用统一的 LLM Caller
+    const { chatCompletion, isRemote } = this.createLLMCaller();
+
+    if (!isRemote && !this.aiClient) {
       console.log(colors.error('AI client not initialized'));
       return;
     }
@@ -762,11 +791,12 @@ export class InteractiveSession {
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
       const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
-      const messages: Message[] = [
-        { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}` },
+      const messages: ChatMessage[] = [
+        { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}`, timestamp: Date.now() },
         ...this.conversation.map(msg => ({
           role: msg.role,
-          content: msg.content
+          content: msg.content,
+          timestamp: msg.timestamp
         }))
       ];
 
@@ -795,7 +825,7 @@ export class InteractiveSession {
             //   this.displayAIDebugInfo('INPUT', messages, availableTools);
             // }
       
-            const response = await this.aiClient.chatCompletion(messages, {
+            const response = await chatCompletion(messages, {
         tools: availableTools,
         toolChoice: availableTools.length > 0 ? 'auto' : 'none',
         thinkingTokens
@@ -880,21 +910,26 @@ export class InteractiveSession {
 
   /**
    * 使用远程 AI 服务生成响应（OAuth XAGENT 模式）
+   * 支持完整的 tool calling 循环
+   * 与本地模式 generateResponse 保持一致
    */
   private async generateRemoteResponse(thinkingTokens: number = 0): Promise<void> {
-    if (!this.remoteAIClient) {
-      console.log(colors.error('Remote AI client not initialized'));
-      return;
-    }
+    // 使用统一的 LLM Caller
+    const { chatCompletion, isRemote } = this.createLLMCaller();
 
-    // Mark that an operation is in progress
-    (this as any)._isOperationInProgress = true;
+    if (!isRemote) {
+      // 如果不是远程模式，回退到本地模式
+      return this.generateResponse(thinkingTokens);
+    }
 
     const indent = this.getIndent();
     const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
     const icon = colors.primary(icons.brain);
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let frameIndex = 0;
+
+    // Mark that an operation is in progress
+    (this as any)._isOperationInProgress = true;
 
     // Custom spinner: only icon rotates, text stays static
     const spinnerInterval = setInterval(() => {
@@ -903,65 +938,82 @@ export class InteractiveSession {
     }, 120);
 
     try {
-      // Prepare messages for remote API (only recent messages to save tokens)
-      const messages = this.conversation.map(msg => ({
-        role: msg.role,
-        content: msg.content
+      // Load memory (与本地模式一致)
+      const memory = await this.memoryManager.loadMemory();
+
+      // Get tool definitions
+      const toolRegistry = getToolRegistry();
+      const allowedToolNames = this.currentAgent
+        ? this.agentManager.getAvailableToolsForAgent(this.currentAgent, this.executionMode)
+        : [];
+
+      const allToolDefinitions = toolRegistry.getToolDefinitions();
+      
+      const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
+        ? allToolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
+        : allToolDefinitions;
+
+      // Convert to the format expected by backend (与本地模式一致使用 availableTools)
+      const tools = availableTools.map((tool: any) => ({
+        type: 'function' as const,
+        function: {
+          name: tool.function.name,
+          description: tool.function.description || '',
+          parameters: tool.function.parameters || {
+            type: 'object' as const,
+            properties: {}
+          }
+        }
       }));
 
-      // Get context info
-      const context = {
-        cwd: process.cwd(),
-        workspace: this.configManager.get('workspacePath') || process.cwd(),
-        recentFiles: []
-      };
+      // Debug: 打印工具列表，特别是确认 gui-subagent 是否在列表中
+      const hasGuiSubagent = tools.some((t: any) => t.function.name === 'task');
+      const guiSubagentTool = tools.find((t: any) => t.function.name === 'task');
+      console.log(`[DEBUG] 工具总数: ${tools.length}, 包含 task 工具: ${hasGuiSubagent}`);
+      if (guiSubagentTool) {
+        const hasGuiSubagentInDesc = guiSubagentTool.function.description?.includes('gui-subagent');
+        console.log(`[DEBUG] task 工具描述中包含 gui-subagent: ${hasGuiSubagentInDesc}`);
+      }
 
-      // Stream response from remote
-      const chunks: string[] = [];
+      // Generate system prompt (与本地模式一致)
+      const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
+      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+      const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
-      await new Promise<void>((resolve, reject) => {
-        // 先设置监听器，再启动流
-        const chunkHandler = (content: string) => {
-          chunks.push(content);
-          process.stdout.write(content);
-        };
+      // Build messages with system prompt (与本地模式一致)
+      const messages: ChatMessage[] = [
+        { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}`, timestamp: Date.now() },
+        ...this.conversation.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp
+        }))
+      ];
 
-        const doneHandler = (conversationId?: string) => {
-          this.remoteAIClient!.off('chunk', chunkHandler);
-          this.remoteAIClient!.off('done', doneHandler);
-          this.remoteAIClient!.off('error', errorHandler);
-          if (conversationId) {
-            this.remoteConversationId = conversationId;
-          }
-          resolve();
-        };
-
-        const errorHandler = (error: Error) => {
-          this.remoteAIClient!.off('chunk', chunkHandler);
-          this.remoteAIClient!.off('done', doneHandler);
-          this.remoteAIClient!.off('error', errorHandler);
-          reject(error);
-        };
-
-        this.remoteAIClient!.on('chunk', chunkHandler);
-        this.remoteAIClient!.on('done', doneHandler);
-        this.remoteAIClient!.on('error', errorHandler);
-
-        // 启动流
-        this.remoteAIClient!.streamChat(messages as any, {
-          conversationId: this.remoteConversationId || undefined,
-          context
-        });
+      // Call unified LLM API
+      const response = await chatCompletion(messages, {
+        tools,
+        toolChoice: tools.length > 0 ? 'auto' : 'none',
+        thinkingTokens
       });
 
       clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
       console.log('');
 
-      const content = chunks.join('');
+      // 使用统一的响应格式（与本地模式一致）
+      const assistantMessage = response.choices[0].message;
+      const content = typeof assistantMessage.content === 'string'
+        ? assistantMessage.content
+        : '';
+      const reasoningContent = assistantMessage.reasoning_content || '';
+      const toolCalls = assistantMessage.tool_calls || [];
 
-      // Display assistant header
-      console.log('');
+      // Display reasoning content if available and thinking mode is enabled (与本地模式一致)
+      if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
+        this.displayThinkingContent(reasoningContent);
+      }
+
       console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
       console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
       console.log('');
@@ -969,22 +1021,41 @@ export class InteractiveSession {
       console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
       console.log('');
 
-      // Add assistant message to conversation
+      // Add assistant message to conversation (与本地模式一致，包含 reasoningContent)
       this.conversation.push({
         role: 'assistant',
         content,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        reasoningContent,
+        toolCalls: toolCalls
       });
 
-      // Record output to session manager
+      // Record output to session manager (与本地模式一致，包含 reasoningContent 和 toolCalls)
       await this.sessionManager.addOutput({
         role: 'assistant',
         content,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        reasoningContent,
+        toolCalls
       });
 
-      // Operation completed successfully, clear the flag
+      // Handle tool calls
+      if (toolCalls.length > 0) {
+        await this.handleRemoteToolCalls(toolCalls);
+      }
+
+      // Checkpoint support (与本地模式一致)
+      if (this.checkpointManager.isEnabled()) {
+        await this.checkpointManager.createCheckpoint(
+          `Response generated at ${new Date().toLocaleString()}`,
+          [...this.conversation],
+          [...this.toolCalls]
+        );
+      }
+
+      // Operation completed successfully
       (this as any)._isOperationInProgress = false;
+
     } catch (error: any) {
       clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
@@ -997,6 +1068,7 @@ export class InteractiveSession {
       }
 
       console.log(colors.error(`Error: ${error.message}`));
+      return;
     }
   }
 
@@ -1169,6 +1241,146 @@ export class InteractiveSession {
 
     const getDescription = descriptions[toolName];
     return getDescription ? getDescription(params) : `Execute tool: ${toolName}`;
+  }
+
+  /**
+   * Handle tool calls for remote AI mode
+   * Executes tools and then continues the conversation with results
+   */
+  private async handleRemoteToolCalls(toolCalls: any[]): Promise<void> {
+    // Mark that tool execution is in progress
+    (this as any)._isOperationInProgress = true;
+
+    const toolRegistry = getToolRegistry();
+    const showToolDetails = this.configManager.get('showToolDetails') || false;
+    const indent = this.getIndent();
+
+    // Prepare all tool calls
+    const preparedToolCalls = toolCalls.map((toolCall, index) => {
+      const { name, arguments: params } = toolCall.function;
+
+      let parsedParams: any;
+      try {
+        parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
+      } catch (e) {
+        parsedParams = params;
+      }
+
+      return { name, params: parsedParams, index };
+    });
+
+    // Display all tool calls info
+    for (const { name, params } of preparedToolCalls) {
+      if (showToolDetails) {
+        console.log('');
+        console.log(`${indent}${colors.warning(`${icons.tool} Tool Call: ${name}`)}`);
+        console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
+      } else {
+        const toolDescription = this.getToolDescription(name, params);
+        console.log('');
+        console.log(`${indent}${colors.textMuted(`${icons.loading} ${toolDescription}`)}`);
+      }
+    }
+
+    // Execute all tools in parallel
+    const results = await toolRegistry.executeAll(
+      preparedToolCalls.map(tc => ({ name: tc.name, params: tc.params })),
+      this.executionMode
+    );
+
+    // Process results and maintain order
+    for (const { tool, result, error } of results) {
+      const toolCall = preparedToolCalls.find(tc => tc.name === tool);
+      if (!toolCall) continue;
+
+      const { params } = toolCall;
+
+      if (error) {
+        // Clear the operation flag
+        (this as any)._isOperationInProgress = false;
+
+        if (error === 'Operation cancelled by user') {
+          return;
+        }
+
+        console.log('');
+        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
+
+        this.conversation.push({
+          role: 'tool',
+          content: JSON.stringify({ error }),
+          timestamp: Date.now()
+        });
+      } else {
+        // Use correct indent for gui-subagent tasks
+        const isGuiSubagent = tool === 'task' && params?.subagent_type === 'gui-subagent';
+        const displayIndent = isGuiSubagent ? indent + '  ' : indent;
+
+        // Always show details for todo tools so users can see their task lists
+        const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
+        if (isTodoTool) {
+          console.log('');
+          console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
+          console.log(this.renderTodoList(result.todos || result.todos, displayIndent));
+          // Show summary if available
+          if (result.message) {
+            console.log(`${displayIndent}${colors.textDim(result.message)}`);
+          }
+        } else if (showToolDetails) {
+          console.log('');
+          console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
+          console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
+        } else if (result.success === false) {
+          // GUI task or other tool failed
+          console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
+        } else {
+          console.log(`${displayIndent}${colors.success(`${icons.check} Completed`)}`);
+        }
+
+        const toolCallRecord: ToolCall = {
+          tool,
+          params,
+          result,
+          timestamp: Date.now()
+        };
+
+        this.toolCalls.push(toolCallRecord);
+
+        // Record tool output to session manager
+        await this.sessionManager.addOutput({
+          role: 'tool',
+          content: JSON.stringify(result),
+          toolName: tool,
+          toolParams: params,
+          toolResult: result,
+          timestamp: Date.now()
+        });
+
+        this.conversation.push({
+          role: 'tool',
+          content: JSON.stringify(result),
+          timestamp: Date.now()
+        });
+      }
+    }
+
+    // Logic: Only skip returning results to main agent when user explicitly cancelled (ESC)
+    // For all other cases (success, failure, errors), always return results for further processing
+    const guiSubagentFailed = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent');
+    const guiSubagentCancelled = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent' && results.some(r => r.tool === 'task' && (r.result as any)?.cancelled === true));
+
+    // If GUI agent was cancelled by user, don't continue generating response
+    // This avoids wasting API calls and tokens on cancelled tasks
+    if (guiSubagentCancelled) {
+      console.log('');
+      console.log(`${indent}${colors.textMuted('GUI task cancelled by user')}`);
+      (this as any)._isOperationInProgress = false;
+      return;
+    }
+
+    // For all other cases (GUI success/failure, other tool errors), return results to main agent
+    // This allows main agent to decide how to handle failures (retry, fallback, user notification, etc.)
+    await this.generateRemoteResponse();
   }
 
   /**

@@ -13,9 +13,14 @@ export * from './types/index.js';
 export * from './operator/index.js';
 export * from './agent/index.js';
 
+// 导出 VLMCaller 类型供外部使用
+export type { VLMCaller } from './agent/gui-agent.js';
+
 import { ComputerOperator, type ComputerOperatorOptions } from './operator/computer-operator.js';
 import { GUIAgent, type GUIAgentConfig, type GUIAgentData, type Conversation, GUIAgentStatus } from './agent/gui-agent.js';
 import type { Operator } from './operator/base-operator.js';
+
+import type { VLMCaller } from './agent/gui-agent.js';
 
 /**
  * GUI Subagent configuration
@@ -24,6 +29,13 @@ export interface GUISubAgentConfig {
   model?: string;
   modelBaseUrl?: string;
   modelApiKey?: string;
+  /**
+   * 外部注入的 VLM 调用函数
+   * 如果提供此函数，GUI Agent 将使用它来调用 VLM
+   * 这使得 GUI Agent 可以与远程服务配合使用
+   * 参数: image-图片, prompt-提示词, systemPrompt-系统提示词
+   */
+  vlmCaller?: (image: string, prompt: string, systemPrompt: string) => Promise<string>;
   headless?: boolean;
   loopIntervalInMs?: number;
   maxLoopCount?: number;
@@ -32,11 +44,13 @@ export interface GUISubAgentConfig {
 
 /**
  * Default configuration values (aligned with UI-TARS)
+ * Note: vlmCaller is optional - if not provided, GUIAgent will use direct model API calls
  */
-export const DEFAULT_GUI_CONFIG: Required<GUISubAgentConfig> = {
+export const DEFAULT_GUI_CONFIG = {
   model: 'gpt-4o',
   modelBaseUrl: '',
   modelApiKey: '',
+  vlmCaller: undefined as VLMCaller | undefined,
   headless: false,
   loopIntervalInMs: 0,
   maxLoopCount: 100,
@@ -65,6 +79,7 @@ export async function createGUISubAgent<T extends Operator>(
     model: mergedConfig.model,
     modelBaseUrl: mergedConfig.modelBaseUrl,
     modelApiKey: mergedConfig.modelApiKey,
+    vlmCaller: mergedConfig.vlmCaller,
     loopIntervalInMs: mergedConfig.loopIntervalInMs,
     maxLoopCount: mergedConfig.maxLoopCount,
     showAIDebugInfo: mergedConfig.showAIDebugInfo,

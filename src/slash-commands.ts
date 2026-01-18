@@ -118,9 +118,9 @@ export class SlashCommandHandler {
       case 'theme':
         await this.handleTheme();
         break;
-      case 'language':
-        await this.handleLanguage();
-        break;
+      // case 'language':
+      //   await this.handleLanguage();
+      //   break;
       case 'about':
         await this.handleAbout();
         break;
@@ -219,12 +219,12 @@ export class SlashCommandHandler {
         detail: 'Enable/disable AI thinking process display',
         example: '/think on\n/think off\n/think display compact'
       },
-      {
-        cmd: '/language [zh|en]',
-        desc: 'Switch language',
-        detail: 'Switch between Chinese and English interface',
-        example: '/language zh\n/language en'
-      },
+      // {
+      //   cmd: '/language [zh|en]',
+      //   desc: 'Switch language',
+      //   detail: 'Switch between Chinese and English interface',
+      //   example: '/language zh\n/language en'
+      // },
       {
         cmd: '/theme',
         desc: 'Switch theme',

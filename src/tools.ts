@@ -2264,10 +2264,13 @@ export class ToolRegistry {
     let registeredCount = 0;
 
     for (const [fullName, tool] of mcpTools) {
-      const [serverName, originalName] = fullName.split('__');
-      if (!originalName) {
+      // Split only on the first __ to preserve underscores in tool names
+      const firstUnderscoreIndex = fullName.indexOf('__');
+      if (firstUnderscoreIndex === -1) {
         continue;
       }
+      const serverName = fullName.substring(0, firstUnderscoreIndex);
+      const originalName = fullName.substring(firstUnderscoreIndex + 2);
 
       // Auto-rename if conflict, ensure unique name
       let toolName = originalName;
@@ -2880,7 +2883,13 @@ export class ToolRegistry {
 
     // Try to find MCP tool with just the tool name (try each server)
     for (const [fullName, tool] of allMcpTools) {
-      const [serverName, actualToolName] = fullName.split('__');
+      // Split only on the first __ to preserve underscores in tool names
+      const firstUnderscoreIndex = fullName.indexOf('__');
+      if (firstUnderscoreIndex === -1) continue;
+      const [serverName, actualToolName] = [
+        fullName.substring(0, firstUnderscoreIndex),
+        fullName.substring(firstUnderscoreIndex + 2)
+      ];
       if (actualToolName === toolName) {
         return await this.executeMCPTool(fullName, params, executionMode, indent);
       }

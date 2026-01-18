@@ -84,7 +84,7 @@ export class InteractiveSession {
    */
   async updateSystemPrompt(): Promise<void> {
     const toolRegistry = getToolRegistry();
-    const promptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+    const promptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
 
     // Use the current agent's original system prompt as base
     const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are xAgent, an AI-powered CLI tool.';
@@ -99,7 +99,7 @@ export class InteractiveSession {
     });
 
     // Sync to slashCommandHandler
-    this.slashCommandHandler.setConversationHistory(this.conversation, this.executionMode);
+    this.slashCommandHandler.setConversationHistory(this.conversation);
   }
 
   setAgent(agent: any): void {
@@ -221,7 +221,7 @@ export class InteractiveSession {
       );
 
       // 同步对话历史到 slashCommandHandler
-      this.slashCommandHandler.setConversationHistory(this.conversation, this.executionMode);
+      this.slashCommandHandler.setConversationHistory(this.conversation);
 
       const mcpServers = this.configManager.getMcpServers();
       console.log(`📋 Loading ${Object.keys(mcpServers).length} MCP servers from config`);
@@ -448,7 +448,7 @@ export class InteractiveSession {
       if (handled) {
         this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
         // 同步对话历史到 slashCommandHandler
-        this.slashCommandHandler.setConversationHistory(this.conversation, this.executionMode);
+        this.slashCommandHandler.setConversationHistory(this.conversation);
       }
       return;
     }
@@ -663,7 +663,7 @@ export class InteractiveSession {
         }
 
         // 同步压缩后的对话历史到 slashCommandHandler
-        this.slashCommandHandler.setConversationHistory(this.conversation, this.executionMode);
+        this.slashCommandHandler.setConversationHistory(this.conversation);
       }
     }
   }
@@ -777,18 +777,18 @@ export class InteractiveSession {
         : [];
 
       // MCP servers are already connected during initialization (eager mode)
-      const allLocalToolDefinitions = toolRegistry.getToolDefinitions();
+      const toolDefinitions = toolRegistry.getToolDefinitions();
       const mcpToolDefinitions = this.mcpManager.getToolDefinitions();
-      
+
       // Merge local tools and MCP tools
-      const allToolDefinitions = [...allLocalToolDefinitions, ...mcpToolDefinitions];
-      
+      const allToolDefinitions = [...toolDefinitions, ...mcpToolDefinitions];
+
       const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
         ? allToolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
         : allToolDefinitions;
 
       const baseSystemPrompt = this.currentAgent?.systemPrompt;
-      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
       const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
       const messages: ChatMessage[] = [
@@ -1233,9 +1233,9 @@ export class InteractiveSession {
       'exit_plan_mode': () => `Complete plan`,
       'xml_escape': (p) => `XML escape: ${this.truncatePath(p.file_path)}`,
       'image_read': (p) => `Read image: ${this.truncatePath(p.image_input)}`,
-      'Skill': (p) => `Execute skill: ${p.skill}`,
-      'ListSkills': () => `List available skills`,
-      'GetSkillDetails': (p) => `Get skill details: ${p.skill}`,
+      // 'Skill': (p) => `Execute skill: ${p.skill}`,
+      // 'ListSkills': () => `List available skills`,
+      // 'GetSkillDetails': (p) => `Get skill details: ${p.skill}`,
       'InvokeSkill': (p) => `Invoke skill: ${p.skillId} - ${this.truncatePath(p.taskDescription || '', 40)}`
     };
 

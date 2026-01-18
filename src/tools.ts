@@ -1992,57 +1992,57 @@ export class ImageReadTool implements Tool {
   }
 }
 
-export class SkillTool implements Tool {
-  name = 'Skill';
-  description = `Execute pre-defined workflows (skills) from the xAgent marketplace. Skills are reusable workflows that automate common tasks.
+// export class SkillTool implements Tool {
+//   name = 'Skill';
+//   description = `Execute pre-defined workflows (skills) from the xAgent marketplace. Skills are reusable workflows that automate common tasks.
 
-# When to Use
-- When a skill exists for the requested task
-- When you need to run a multi-step workflow
-- When the task matches a marketplace workflow
+// # When to Use
+// - When a skill exists for the requested task
+// - When you need to run a multi-step workflow
+// - When the task matches a marketplace workflow
 
-# When NOT to Use
-- When a simple tool can accomplish the task
-- When creating new functionality from scratch
-- When skill doesn't exist for the specific task
+// # When NOT to Use
+// - When a simple tool can accomplish the task
+// - When creating new functionality from scratch
+// - When skill doesn't exist for the specific task
 
-# Parameters
-- \`skill\`: The skill/workflow name to execute
+// # Parameters
+// - \`skill\`: The skill/workflow name to execute
 
-# Examples
-- Execute a PDF processing skill
-- Run a data analysis workflow
+// # Examples
+// - Execute a PDF processing skill
+// - Run a data analysis workflow
 
-# Best Practices
-- Skills are pre-configured workflows from the marketplace
-- Check if a relevant skill exists first`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
+// # Best Practices
+// - Skills are pre-configured workflows from the marketplace
+// - Check if a relevant skill exists first`;
+//   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
-  async execute(params: { skill: string }): Promise<{ success: boolean; message: string; result?: any }> {
-    const { skill } = params;
+//   async execute(params: { skill: string }): Promise<{ success: boolean; message: string; result?: any }> {
+//     const { skill } = params;
 
-    try {
-      const { getWorkflowManager } = await import('./workflow.js');
-      const workflowManager = getWorkflowManager(process.cwd());
+//     try {
+//       const { getWorkflowManager } = await import('./workflow.js');
+//       const workflowManager = getWorkflowManager(process.cwd());
 
-      const workflow = workflowManager.getWorkflow(skill);
+//       const workflow = workflowManager.getWorkflow(skill);
 
-      if (!workflow) {
-        throw new Error(`Skill ${skill} not found`);
-      }
+//       if (!workflow) {
+//         throw new Error(`Skill ${skill} not found`);
+//       }
 
-      await workflowManager.executeWorkflow(skill, 'Execute skill');
+//       await workflowManager.executeWorkflow(skill, 'Execute skill');
 
-      return {
-        success: true,
-        message: `Successfully executed skill: ${skill}`,
-        result: workflow
-      };
-    } catch (error: any) {
-      throw new Error(`Failed to execute skill: ${error.message}`);
-    }
-  }
-}
+//       return {
+//         success: true,
+//         message: `Successfully executed skill: ${skill}`,
+//         result: workflow
+//       };
+//     } catch (error: any) {
+//       throw new Error(`Failed to execute skill: ${error.message}`);
+//     }
+//   }
+// }
 
 export class InvokeSkillTool implements Tool {
   name = 'InvokeSkill';
@@ -2054,33 +2054,6 @@ export class InvokeSkillTool implements Tool {
 - When user needs visual design, posters, or generative art
 - When user asks for documentation or internal communications
 - When the task matches a specific skill domain
-
-# Available Skills by Category
-
-## Document Processing
-- **docx**: Create/edit Word documents with tracked changes, comments
-- **pdf**: PDF manipulation, extraction, creation, forms
-- **pptx**: PowerPoint presentations, slides
-- **xlsx**: Spreadsheets with formulas and data visualization
-
-## Frontend & Web Development
-- **frontend-design**: Create production-grade web interfaces, UI components
-- **web-artifacts-builder**: Complex React artifacts with state management
-- **webapp-testing**: Test web applications with Playwright
-
-## Visual & Creative Design
-- **canvas-design**: Create visual art, posters, design pieces
-- **algorithmic-art**: Generative art with p5.js, flow fields
-- **theme-factory**: Apply professional themes (colors/fonts)
-- **brand-guidelines**: Apply Anthropic brand styling
-
-## Communication & Documentation
-- **doc-coauthoring**: Structured documentation writing
-- **internal-comms**: Internal communications, status reports
-
-## Development & Integration
-- **mcp-builder**: Build MCP servers for API integration
-- **skill-creator**: Create new skills
 
 # When NOT to Use
 - For simple file operations (use Read/Write instead)
@@ -2209,84 +2182,84 @@ export class InvokeSkillTool implements Tool {
   }
 }
 
-export class ListSkillsTool implements Tool {
-  name = 'ListSkills';
-  description = `List all available skills from the xAgent skills library. Use this tool when you need to:
-- See what skills are available
-- Find skills that match a user's request
-- Get an overview of capabilities
+// export class ListSkillsTool implements Tool {
+//   name = 'ListSkills';
+//   description = `List all available skills from the xAgent skills library. Use this tool when you need to:
+// - See what skills are available
+// - Find skills that match a user's request
+// - Get an overview of capabilities
 
-This returns a list of all skills with their names, descriptions, and categories.`;
+// This returns a list of all skills with their names, descriptions, and categories.`;
 
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
+//   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
-  async execute(): Promise<{ success: boolean; skills: any[] }> {
-    try {
-      const { getWorkflowManager } = await import('./workflow.js');
-      const workflowManager = getWorkflowManager(process.cwd());
-      const skills = await workflowManager.listSkills();
+//   async execute(): Promise<{ success: boolean; skills: any[] }> {
+//     try {
+//       const { getWorkflowManager } = await import('./workflow.js');
+//       const workflowManager = getWorkflowManager(process.cwd());
+//       const skills = await workflowManager.listSkills();
 
-      return {
-        success: true,
-        skills: skills.map(s => ({
-          id: s.id,
-          name: s.name,
-          description: s.description,
-          category: s.category
-        }))
-      };
-    } catch (error: any) {
-      throw new Error(`Failed to list skills: ${error.message}`);
-    }
-  }
-}
+//       return {
+//         success: true,
+//         skills: skills.map(s => ({
+//           id: s.id,
+//           name: s.name,
+//           description: s.description,
+//           category: s.category
+//         }))
+//       };
+//     } catch (error: any) {
+//       throw new Error(`Failed to list skills: ${error.message}`);
+//     }
+//   }
+// }
 
-export class GetSkillDetailsTool implements Tool {
-  name = 'GetSkillDetails';
-  description = `Get detailed information about a specific skill. Use this tool when:
-- You want to understand what a skill does before executing it
-- You need the full skill documentation to help the user
-- You need to verify a skill exists before using it
+// export class GetSkillDetailsTool implements Tool {
+//   name = 'GetSkillDetails';
+//   description = `Get detailed information about a specific skill. Use this tool when:
+// - You want to understand what a skill does before executing it
+// - You need the full skill documentation to help the user
+// - You need to verify a skill exists before using it
 
-# Parameters
-- \`skill\`: The skill name/id to get details for
+// # Parameters
+// - \`skill\`: The skill name/id to get details for
 
-# Returns
-The full skill documentation including instructions, examples, and guidelines.`;
+// # Returns
+// The full skill documentation including instructions, examples, and guidelines.`;
 
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+//   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
-  async execute(params: { skill: string }): Promise<{ success: boolean; details: any }> {
-    const { skill } = params;
+//   async execute(params: { skill: string }): Promise<{ success: boolean; details: any }> {
+//     const { skill } = params;
     
-    if (!skill) {
-      throw new Error('Skill parameter is required');
-    }
+//     if (!skill) {
+//       throw new Error('Skill parameter is required');
+//     }
 
-    try {
-      const { getWorkflowManager } = await import('./workflow.js');
-      const workflowManager = getWorkflowManager(process.cwd());
-      const details = await workflowManager.getSkillDetails(skill);
+//     try {
+//       const { getWorkflowManager } = await import('./workflow.js');
+//       const workflowManager = getWorkflowManager(process.cwd());
+//       const details = await workflowManager.getSkillDetails(skill);
 
-      if (!details) {
-        throw new Error(`Skill '${skill}' not found`);
-      }
+//       if (!details) {
+//         throw new Error(`Skill '${skill}' not found`);
+//       }
 
-      return {
-        success: true,
-        details: {
-          id: details.id,
-          name: details.name,
-          description: details.description,
-          category: details.category,
-          content: details.content
-        }
-      };
-    } catch (error: any) {
-      throw new Error(`Failed to get skill details: ${error.message}`);
-    }
-  }
-}
+//       return {
+//         success: true,
+//         details: {
+//           id: details.id,
+//           name: details.name,
+//           description: details.description,
+//           category: details.category,
+//           content: details.content
+//         }
+//       };
+//     } catch (error: any) {
+//       throw new Error(`Failed to get skill details: ${error.message}`);
+//     }
+//   }
+// }
 
 export class ToolRegistry {
   private tools: Map<string, Tool> = new Map();
@@ -2343,10 +2316,13 @@ export class ToolRegistry {
     let registeredCount = 0;
 
     for (const [fullName, tool] of mcpTools) {
-      const [serverName, originalName] = fullName.split('__');
-      if (!originalName) {
+      // Split only on the first __ to preserve underscores in tool names
+      const firstUnderscoreIndex = fullName.indexOf('__');
+      if (firstUnderscoreIndex === -1) {
         continue;
       }
+      const serverName = fullName.substring(0, firstUnderscoreIndex);
+      const originalName = fullName.substring(firstUnderscoreIndex + 2);
 
       // Auto-rename if conflict, ensure unique name
       let toolName = originalName;
@@ -2959,7 +2935,13 @@ export class ToolRegistry {
 
     // Try to find MCP tool with just the tool name (try each server)
     for (const [fullName, tool] of allMcpTools) {
-      const [serverName, actualToolName] = fullName.split('__');
+      // Split only on the first __ to preserve underscores in tool names
+      const firstUnderscoreIndex = fullName.indexOf('__');
+      if (firstUnderscoreIndex === -1) continue;
+      const [serverName, actualToolName] = [
+        fullName.substring(0, firstUnderscoreIndex),
+        fullName.substring(firstUnderscoreIndex + 2)
+      ];
       if (actualToolName === toolName) {
         return await this.executeMCPTool(fullName, params, executionMode, indent);
       }
@@ -3108,8 +3090,10 @@ Make your decision based on the user's request and the above criteria.`
     const { getMCPManager } = await import('./mcp.js');
     const mcpManager = getMCPManager();
 
-    // Parse the tool name (format: serverName__toolName)
-    const [serverName, actualToolName] = toolName.split('__');
+    // Split only on the first __ to preserve underscores in tool names
+    const firstUnderscoreIndex = toolName.indexOf('__');
+    const serverName = toolName.substring(0, firstUnderscoreIndex);
+    const actualToolName = toolName.substring(firstUnderscoreIndex + 2);
     
     // Get server info for display
     const server = mcpManager.getServer(serverName);

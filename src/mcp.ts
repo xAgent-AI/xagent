@@ -167,9 +167,9 @@ export class MCPServer {
           { headers }
         );
 
-        if (response.data.result) {
-          await this.loadTools(headers);
-        }
+        // Some MCP servers return SSE-over-HTTP format, so we always call loadTools
+        // which handles both regular JSON and SSE format responses
+        await this.loadTools(headers);
       } catch (error: any) {
         console.error(`HTTP connection failed: ${error.message}`);
         if (error.response) {
@@ -266,8 +266,15 @@ export class MCPServer {
   }
 
   private handleJsonRpcMessage(message: any): void {
-    if (message.method === 'tools/list') {
+    // Handle response format: {id: 1, result: {tools: [...]}}
+    if (message.result && message.result.tools) {
       this.handleToolsList(message.result);
+      return;
+    }
+
+    // Handle notification format: {method: 'tools/list', params: {...}}
+    if (message.method === 'tools/list') {
+      this.handleToolsList(message.params);
     } else if (message.method === 'notifications/initialized') {
       console.log('MCP Server initialized');
     }
@@ -332,6 +339,8 @@ export class MCPServer {
 
       if (resultData?.result?.tools) {
         this.handleToolsList(resultData.result);
+      } else if (resultData?.tools) {
+        this.handleToolsList(resultData);
       } else if (resultData?.error) {
         console.error(`MCP tools/list error: ${resultData.error.message}`);
       }
@@ -514,11 +523,13 @@ export class MCPManager {
   }
 
   async callTool(toolName: string, params: any): Promise<any> {
-    const [serverName, actualToolName] = toolName.split('__');
-    
-    if (!serverName || !actualToolName) {
+    // Split only on the first __ to preserve underscores in tool names
+    const firstUnderscoreIndex = toolName.indexOf('__');
+    if (firstUnderscoreIndex === -1) {
       throw new Error(`Invalid tool name format: ${toolName}`);
     }
+    const serverName = toolName.substring(0, firstUnderscoreIndex);
+    const actualToolName = toolName.substring(firstUnderscoreIndex + 2);
 
     const server = this.servers.get(serverName);
     if (!server) {

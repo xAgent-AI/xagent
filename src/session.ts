@@ -791,14 +791,8 @@ export class InteractiveSession {
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
       const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
-      // Add language instruction based on user's language configuration
-      const language = this.configManager.getLanguage();
-      const languageInstruction = language === 'zh'
-        ? '\n\nIMPORTANT: You must respond in Chinese (中文). All your responses, including thinking process and explanations, should be in Chinese.'
-        : '\n\nIMPORTANT: You must respond in English. All your responses, including thinking process and explanations, should be in English.';
-
       const messages: ChatMessage[] = [
-        { role: 'system', content: `${enhancedSystemPrompt}${languageInstruction}\n\n${memory}`, timestamp: Date.now() },
+        { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}`, timestamp: Date.now() },
         ...this.conversation.map(msg => ({
           role: msg.role,
           content: msg.content,
@@ -986,15 +980,9 @@ export class InteractiveSession {
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
       const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
-      // Add language instruction based on user's language configuration (consistent with local mode)
-      const language = this.configManager.getLanguage();
-      const languageInstruction = language === 'zh'
-        ? '\n\nIMPORTANT: You must respond in Chinese (中文). All your responses, including thinking process and explanations, should be in Chinese.'
-        : '\n\nIMPORTANT: You must respond in English. All your responses, including thinking process and explanations, should be in English.';
-
       // Build messages with system prompt (与本地模式一致)
       const messages: ChatMessage[] = [
-        { role: 'system', content: `${enhancedSystemPrompt}${languageInstruction}\n\n${memory}`, timestamp: Date.now() },
+        { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}`, timestamp: Date.now() },
         ...this.conversation.map(msg => ({
           role: msg.role,
           content: msg.content,

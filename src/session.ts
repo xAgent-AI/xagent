@@ -81,7 +81,7 @@ export class InteractiveSession {
    */
   async updateSystemPrompt(): Promise<void> {
     const toolRegistry = getToolRegistry();
-    const promptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+    const promptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
 
     // Use the current agent's original system prompt as base
     const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are xAgent, an AI-powered CLI tool.';
@@ -732,18 +732,18 @@ export class InteractiveSession {
         : [];
 
       // MCP servers are already connected during initialization (eager mode)
-      const allLocalToolDefinitions = toolRegistry.getToolDefinitions();
+      const toolDefinitions = toolRegistry.getToolDefinitions();
       const mcpToolDefinitions = this.mcpManager.getToolDefinitions();
-      
+
       // Merge local tools and MCP tools
-      const allToolDefinitions = [...allLocalToolDefinitions, ...mcpToolDefinitions];
-      
+      const allToolDefinitions = [...toolDefinitions, ...mcpToolDefinitions];
+
       const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
         ? allToolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
         : allToolDefinitions;
 
       const baseSystemPrompt = this.currentAgent?.systemPrompt;
-      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
       const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
       const messages: Message[] = [

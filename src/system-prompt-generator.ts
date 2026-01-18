@@ -2,6 +2,7 @@ import { ToolRegistry } from './tools.js';
 import { ExecutionMode, AgentConfig } from './types.js';
 import { getAgentManager } from './agents.js';
 import { getSkillInvoker, SkillInfo } from './skill-invoker.js';
+import { MCPManager } from './mcp.js';
 
 export interface ToolParameter {
   type: string;
@@ -24,33 +25,44 @@ export class SystemPromptGenerator {
   private toolRegistry: ToolRegistry;
   private executionMode: ExecutionMode;
   private agentConfig?: AgentConfig;
+  private mcpManager?: MCPManager;
 
-  constructor(toolRegistry: ToolRegistry, executionMode: ExecutionMode, agentConfig?: AgentConfig) {
+  constructor(toolRegistry: ToolRegistry, executionMode: ExecutionMode, agentConfig?: AgentConfig, mcpManager?: MCPManager) {
     this.toolRegistry = toolRegistry;
     this.executionMode = executionMode;
     this.agentConfig = agentConfig;
+    this.mcpManager = mcpManager;
   }
 
   async generateEnhancedSystemPrompt(baseSystemPrompt: string): Promise<string> {
-    let availableTools = this.toolRegistry.getAll().filter(
+    let localTools = this.toolRegistry.getAll().filter(
       tool => tool.allowedModes.includes(this.executionMode)
     );
 
     if (this.agentConfig) {
       const agentManager = getAgentManager();
       const allowedToolNames = agentManager.getAvailableToolsForAgent(this.agentConfig, this.executionMode);
-      availableTools = availableTools.filter(tool => allowedToolNames.includes(tool.name));
+      localTools = localTools.filter(tool => allowedToolNames.includes(tool.name));
     }
+
+    // Get MCP tools with fullName (serverName__toolName)
+    let mcpToolDefs: any[] = [];
+    if (this.mcpManager) {
+      mcpToolDefs = this.mcpManager.getToolDefinitions();
+    }
+
+    // Combine for system prompt - MCP tools use fullName
+    const allAvailableTools = [...localTools, ...mcpToolDefs];
 
     let enhancedPrompt = baseSystemPrompt;
 
     // Only add tool-related content if tools are available
-    if (availableTools.length > 0) {
-      const toolSchemas = this.getToolSchemas(availableTools);
+    if (allAvailableTools.length > 0) {
+      const toolSchemas = this.getToolSchemas(allAvailableTools);
       const toolUsageGuide = this.generateToolUsageGuide(toolSchemas);
-      const hasInvokeSkillTool = availableTools.some(tool => tool.name === 'InvokeSkill');
+      const hasInvokeSkillTool = localTools.some(tool => tool.name === 'InvokeSkill');
       const skillInstructions = hasInvokeSkillTool ? await this.generateSkillInstructions() : '';
-      const decisionMakingGuide = this.generateDecisionMakingGuide(availableTools);
+      const decisionMakingGuide = this.generateDecisionMakingGuide(localTools);
       const executionStrategy = this.generateExecutionStrategy();
 
 
@@ -745,7 +757,7 @@ When a user asks you to:
       tool => tool.allowedModes.includes(this.executionMode)
     );
 
-    return tools.map(tool => {
+    const localTools = tools.map(tool => {
       const schema = this.createToolSchema(tool);
       const properties: Record<string, any> = {};
       const required: string[] = [];
@@ -782,5 +794,13 @@ When a user asks you to:
         }
       };
     });
+
+    // Add MCP tools with fullName (serverName__toolName)
+    let mcpTools: any[] = [];
+    if (this.mcpManager) {
+      mcpTools = this.mcpManager.getToolDefinitions();
+    }
+
+    return [...localTools, ...mcpTools];
   }
 }

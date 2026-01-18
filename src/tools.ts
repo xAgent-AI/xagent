@@ -3038,8 +3038,10 @@ Make your decision based on the user's request and the above criteria.`
     const { getMCPManager } = await import('./mcp.js');
     const mcpManager = getMCPManager();
 
-    // Parse the tool name (format: serverName__toolName)
-    const [serverName, actualToolName] = toolName.split('__');
+    // Split only on the first __ to preserve underscores in tool names
+    const firstUnderscoreIndex = toolName.indexOf('__');
+    const serverName = toolName.substring(0, firstUnderscoreIndex);
+    const actualToolName = toolName.substring(firstUnderscoreIndex + 2);
     
     // Get server info for display
     const server = mcpManager.getServer(serverName);

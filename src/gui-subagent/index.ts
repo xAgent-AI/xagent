@@ -13,14 +13,14 @@ export * from './types/index.js';
 export * from './operator/index.js';
 export * from './agent/index.js';
 
-// Export VLMCaller type供外部使用
+// Export VLMCaller type for external use
 export type { VLMCaller } from './agent/gui-agent.js';
 
 import { ComputerOperator, type ComputerOperatorOptions } from './operator/computer-operator.js';
 import { GUIAgent, type GUIAgentConfig, type GUIAgentData, type Conversation, GUIAgentStatus } from './agent/gui-agent.js';
 import type { Operator } from './operator/base-operator.js';
-
 import type { VLMCaller } from './agent/gui-agent.js';
+import { getCancellationManager } from '../cancellation.js';
 
 /**
  * GUI Subagent configuration
@@ -31,9 +31,9 @@ export interface GUISubAgentConfig {
   modelApiKey?: string;
   /**
    * Externally injected VLM caller function
-   * If this function is provided，GUI Agent will use it来调用 VLM
-   * 这使得 GUI Agent 可以与远程服务配合使用
-   * Parameters: image - image, prompt-提示词, systemPrompt-系统提示词
+   * If this function is provided, GUI Agent will use it to call VLM
+   * This allows GUI Agent to work with remote services
+   * Parameters: image - image, prompt - user prompt, systemPrompt - system prompt
    */
   vlmCaller?: (image: string, prompt: string, systemPrompt: string) => Promise<string>;
   headless?: boolean;
@@ -74,6 +74,16 @@ export async function createGUISubAgent<T extends Operator>(
     },
   }) as unknown as T;
 
+  // Create AbortController for cancellation support
+  const abortController = new AbortController();
+
+  // Listen to cancellationManager for ESC key
+  const cancellationManager = getCancellationManager();
+  const cancelHandler = () => {
+    abortController.abort();
+  };
+  cancellationManager.on('cancelled', cancelHandler);
+
   const agentConfig: GUIAgentConfig<T> = {
     operator: agentOperator,
     model: mergedConfig.model,
@@ -83,9 +93,14 @@ export async function createGUISubAgent<T extends Operator>(
     loopIntervalInMs: mergedConfig.loopIntervalInMs,
     maxLoopCount: mergedConfig.maxLoopCount,
     showAIDebugInfo: mergedConfig.showAIDebugInfo,
+    signal: abortController.signal,
   };
 
   const agent = new GUIAgent<T>(agentConfig);
+
+  // Store cancel handler for cleanup
+  (agent as any)._cancelHandler = cancelHandler;
+  (agent as any)._cancellationManager = cancellationManager;
 
   await agent.initialize();
 
@@ -99,10 +114,31 @@ export async function createGUIAgent<T extends Operator>(
   operator: T,
   config?: Partial<GUIAgentConfig<T>>
 ): Promise<GUIAgent<T>> {
+  // Create AbortController for cancellation support if not provided
+  const abortController = config?.signal ? undefined : new AbortController();
+
+  // Listen to cancellationManager for ESC key if no signal provided
+  let cancelHandler: (() => void) | undefined;
+  if (!config?.signal) {
+    const cancellationManager = getCancellationManager();
+    cancelHandler = () => {
+      abortController?.abort();
+    };
+    cancellationManager.on('cancelled', cancelHandler);
+  }
+
   const agent = new GUIAgent<T>({
     operator,
     ...config,
+    signal: config?.signal ?? abortController?.signal,
   });
+
+  // Store cancel handler for cleanup
+  if (cancelHandler) {
+    const cancellationManager = getCancellationManager();
+    (agent as any)._cancelHandler = cancelHandler;
+    (agent as any)._cancellationManager = cancellationManager;
+  }
 
   await agent.initialize();
 

@@ -1025,6 +1025,15 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
   async cleanup(): Promise<void> {
     this.logger.debug('Cleaning up GUI Agent...');    
     await this.operator.cleanup();
+
+    // Cleanup cancellation listener if attached
+    const cancelHandler = (this as any)._cancelHandler;
+    const cancellationManager = (this as any)._cancellationManager;
+    if (cancelHandler && cancellationManager) {
+      cancellationManager.off('cancelled', cancelHandler);
+      (this as any)._cancelHandler = undefined;
+      (this as any)._cancellationManager = undefined;
+    }
   }
 }
 

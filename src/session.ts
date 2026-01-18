@@ -17,14 +17,14 @@ import { getSessionManager, SessionManager } from './session-manager.js';
 import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
-import { getStdinManager } from './stdin-manager.js';
+import { getCancellationManager, CancellationManager } from './cancellation.js';
 import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
+import { Logger, LogLevel } from './logger.js';
 
 export class InteractiveSession {
   private conversationManager: ConversationManager;
   private sessionManager: SessionManager;
   private contextCompressor: ContextCompressor;
-  private stdinManager = getStdinManager();
   private aiClient: AIClient | null = null;
   private remoteAIClient: RemoteAIClient | null = null;
   private conversation: ChatMessage[] = [];
@@ -37,35 +37,73 @@ export class InteractiveSession {
   private mcpManager: MCPManager;
   private checkpointManager: CheckpointManager;
   private currentAgent: any = null;
+  private rl: readline.Interface;
+  private cancellationManager: CancellationManager;
   private indentLevel: number;
   private indentString: string;
   private remoteConversationId: string | null = null;
 
-  constructor(indentLevel: number = 0) {
-    this.configManager = getConfigManager(process.cwd());
-    this.agentManager = getAgentManager(process.cwd());
-    this.memoryManager = getMemoryManager(process.cwd());
-    this.mcpManager = getMCPManager();
-    this.checkpointManager = getCheckpointManager(process.cwd());
-    this.conversationManager = getConversationManager();
-    this.sessionManager = getSessionManager(process.cwd());
-    this.slashCommandHandler = new SlashCommandHandler();
+    constructor(indentLevel: number = 0) {
 
-    // Register /clear callback, clear local conversation when clearing dialogue
-    this.slashCommandHandler.setClearCallback(() => {
-      this.conversation = [];
-    });
+      this.rl = readline.createInterface({
 
-    // Register MCP update callback, update system prompt
-    this.slashCommandHandler.setSystemPromptUpdateCallback(async () => {
-      await this.updateSystemPrompt();
-    });
+        input: process.stdin,
 
-    this.executionMode = ExecutionMode.DEFAULT;
-    this.indentLevel = indentLevel;
-    this.indentString = '  '.repeat(indentLevel);
-    this.contextCompressor = getContextCompressor();
-  }
+        output: process.stdout
+
+      });
+
+  
+
+      this.configManager = getConfigManager(process.cwd());
+
+      this.agentManager = getAgentManager(process.cwd());
+
+      this.memoryManager = getMemoryManager(process.cwd());
+
+      this.mcpManager = getMCPManager();
+
+      this.checkpointManager = getCheckpointManager(process.cwd());
+
+      this.conversationManager = getConversationManager();
+
+      this.sessionManager = getSessionManager(process.cwd());
+
+      this.slashCommandHandler = new SlashCommandHandler();
+
+  
+
+      // Register /clear callback, clear local conversation when clearing dialogue
+
+      this.slashCommandHandler.setClearCallback(() => {
+
+        this.conversation = [];
+
+      });
+
+  
+
+      // Register MCP update callback, update system prompt
+
+      this.slashCommandHandler.setSystemPromptUpdateCallback(async () => {
+
+        await this.updateSystemPrompt();
+
+      });
+
+  
+
+      this.executionMode = ExecutionMode.DEFAULT;
+
+      this.cancellationManager = getCancellationManager();
+
+      this.indentLevel = indentLevel;
+
+      this.indentString = ' '.repeat(indentLevel);
+
+      this.contextCompressor = getContextCompressor();
+
+    }
 
   private getIndent(): string {
     return this.indentString;
@@ -124,6 +162,16 @@ export class InteractiveSession {
     // Track if an operation is in progress
     (this as any)._isOperationInProgress = false;
 
+    // Listen for ESC cancellation - only cancel operations, don't exit the program
+    const cancelHandler = () => {
+      if ((this as any)._isOperationInProgress) {
+        // An operation is running, let it be cancelled
+        return;
+      }
+      // No operation running, ignore ESC or show a message
+    };
+    this.cancellationManager.on('cancelled', cancelHandler);
+
     this.promptLoop();
 
     // Keep the promise pending until shutdown
@@ -179,8 +227,15 @@ export class InteractiveSession {
           await this.setupAuthentication();
           authConfig = this.configManager.getAuthConfig();
 
-          // Restore stdin state after inquirer
-          this.stdinManager.restoreAfterInquirer();
+          // Recreate readline interface after inquirer
+          this.rl.close();
+          this.rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+          });
+          this.rl.on('close', () => {
+            console.error('DEBUG: readline interface closed');
+          });
           spinner.start();
         }
       } else if (!authConfig.apiKey) {
@@ -189,8 +244,15 @@ export class InteractiveSession {
         await this.setupAuthentication();
         authConfig = this.configManager.getAuthConfig();
 
-        // Restore stdin state after inquirer
-        this.stdinManager.restoreAfterInquirer();
+        // Recreate readline interface after inquirer
+        this.rl.close();
+        this.rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
+        });
+        this.rl.on('close', () => {
+          console.error('DEBUG: readline interface closed');
+        });
         spinner.start();
       }
       // For OPENAI_COMPATIBLE with API key, skip validation and proceed directly
@@ -417,23 +479,37 @@ export class InteractiveSession {
       return;
     }
 
+    // Recreate readline interface for input
+    if (this.rl) {
+      this.rl.close();
+    }
+
+    // Enable raw mode BEFORE emitKeypressEvents for better ESC detection
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+    process.stdin.resume();
+    readline.emitKeypressEvents(process.stdin);
+
+    this.rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
     const prompt = `${colors.primaryBright('❯')} `;
+    this.rl.question(prompt, async (input: string) => {
+      if ((this as any)._isShuttingDown) {
+        return;
+      }
 
-    // Use StdinManager for input
-    const input = await this.stdinManager.question(prompt);
+      try {
+        await this.handleInput(input);
+      } catch (err: any) {
+        console.log(colors.error(`Error: ${err.message}`));
+      }
 
-    if ((this as any)._isShuttingDown) {
-      return;
-    }
-
-    try {
-      await this.handleInput(input);
-    } catch (err: any) {
-      console.log(colors.error(`Error: ${err.message}`));
-    }
-
-    // Continue next loop
-    this.promptLoop();
+      this.promptLoop();
+    });
   }
 
   private async handleInput(input: string): Promise<void> {
@@ -825,11 +901,16 @@ export class InteractiveSession {
             //   this.displayAIDebugInfo('INPUT', messages, availableTools);
             // }
       
-            const response = await chatCompletion(messages, {
-        tools: availableTools,
-        toolChoice: availableTools.length > 0 ? 'auto' : 'none',
-        thinkingTokens
-      });
+            // Generate AI response with cancellation support
+      const operationId = `ai-response-${Date.now()}`;
+      const response = await this.cancellationManager.withCancellation(
+        chatCompletion(messages, {
+          tools: availableTools,
+          toolChoice: availableTools.length > 0 ? 'auto' : 'none',
+          thinkingTokens
+        }),
+        operationId
+      );
 
       clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r'); // Clear spinner line
@@ -1504,6 +1585,8 @@ export class InteractiveSession {
   // }
 
   shutdown(): void {
+    this.rl.close();
+    this.cancellationManager.cleanup();
     this.mcpManager.disconnectAllServers();
 
     // End the current session

@@ -280,7 +280,7 @@ export class InteractiveSession {
       // Initialize remote AI client for OAuth XAGENT mode
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
         const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-        this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
+        this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl, authConfig.showAIDebugInfo);
         logger.debug('[DEBUG Initialize] RemoteAIClient created successfully');
       } else {
         logger.debug('[DEBUG Initialize] RemoteAIClient NOT created (condition not met)');
@@ -1205,7 +1205,7 @@ export class InteractiveSession {
         if (authConfig.apiKey) {
           const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
           logger.debug('[DEBUG generateRemoteResponse] Reinitializing RemoteAIClient with new token');
-          this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
+          this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl, authConfig.showAIDebugInfo);
         } else {
           logger.debug('[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!');
         }

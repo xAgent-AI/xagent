@@ -209,14 +209,11 @@ export class InteractiveSession {
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
         spinner.text = colors.textMuted('Validating authentication...');
         const baseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-        logger.debug(`[DEBUG] 验证 Token, baseUrl: ${baseUrl}`);
         let isValid = await this.validateToken(baseUrl, authConfig.apiKey);
-        logger.debug(`[DEBUG] Token 验证结果: ${isValid}`);
 
         // Try refresh token if validation failed
         if (!isValid && authConfig.refreshToken) {
           spinner.text = colors.textMuted('Refreshing authentication...');
-          logger.debug('[DEBUG] Token validation failed, trying refresh token...');
           const newToken = await this.refreshToken(baseUrl, authConfig.refreshToken);
 
           if (newToken) {
@@ -225,9 +222,6 @@ export class InteractiveSession {
             await this.configManager.save('global');
             authConfig.apiKey = newToken;
             isValid = true;
-            logger.debug('[DEBUG] Token refreshed successfully and saved');
-          } else {
-            logger.debug('[DEBUG] Token refresh failed');
           }
         }
 
@@ -244,15 +238,11 @@ export class InteractiveSession {
           await this.configManager.set('selectedAuthType', AuthType.OAUTH_XAGENT);
           await this.configManager.save('global');
 
-          logger.debug('[DEBUG] Clearing invalid credentials and reloading config...');
           await this.configManager.load();
           authConfig = this.configManager.getAuthConfig();
-          logger.debug('[DEBUG] After reload, authConfig.apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
 
           await this.setupAuthentication();
           authConfig = this.configManager.getAuthConfig();
-
-          logger.debug('[DEBUG Initialize] After setupAuthentication, authConfig:', JSON.stringify(authConfig, null, 2));
 
           // Recreate readline interface after inquirer
           this.rl.close();
@@ -261,7 +251,7 @@ export class InteractiveSession {
             output: process.stdout
           });
           this.rl.on('close', () => {
-            logger.debug('DEBUG: readline interface closed');
+            // readline closed
           });
           spinner.start();
         }
@@ -271,8 +261,6 @@ export class InteractiveSession {
         await this.setupAuthentication();
         authConfig = this.configManager.getAuthConfig();
 
-        logger.debug('[DEBUG Initialize] After setupAuthentication (no apiKey case), authConfig:', JSON.stringify(authConfig, null, 2));
-
         // Recreate readline interface after inquirer
         this.rl.close();
         this.rl = readline.createInterface({
@@ -280,7 +268,7 @@ export class InteractiveSession {
           output: process.stdout
         });
         this.rl.on('close', () => {
-          logger.debug('DEBUG: readline interface closed');
+          // readline closed
         });
         spinner.start();
       }
@@ -289,15 +277,9 @@ export class InteractiveSession {
       this.aiClient = new AIClient(authConfig);
       this.contextCompressor.setAIClient(this.aiClient);
 
-      logger.debug('[DEBUG Initialize] About to check remoteAIClient condition:');
-      logger.debug('  - authConfig.apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
-      logger.debug('  - selectedAuthType:', String(selectedAuthType));
-      logger.debug('  - selectedAuthType === AuthType.OAUTH_XAGENT:', String(selectedAuthType === AuthType.OAUTH_XAGENT));
-
       // Initialize remote AI client for OAuth XAGENT mode
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
         const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-        logger.debug('[DEBUG Initialize] Creating RemoteAIClient with webBaseUrl:', webBaseUrl);
         this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
         logger.debug('[DEBUG Initialize] RemoteAIClient created successfully');
       } else {
@@ -376,9 +358,6 @@ export class InteractiveSession {
       // For OAuth XAGENT auth, use /api/auth/me endpoint
       const url = `${baseUrl}/api/auth/me`;
 
-      logger.debug(`[DEBUG] validateToken: Calling ${url}`);
-      logger.debug(`[DEBUG] validateToken: Token prefix: ${apiKey.substring(0, 20)}...`);
-
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -387,13 +366,9 @@ export class InteractiveSession {
         }
       });
 
-      logger.debug(`[DEBUG] validateToken: Response status: ${response.status}`);
-      logger.debug(`[DEBUG] validateToken: Response ok: ${response.ok}`);
-
       return response.ok;
     } catch (error: any) {
       // Network error - log details but still consider token may be invalid
-      logger.debug(`[DEBUG] validateToken: Network error: ${error.message}`);
       // For network errors, we still return false to trigger re-authentication
       // This ensures security but the user can retry
       return false;
@@ -404,8 +379,6 @@ export class InteractiveSession {
     try {
       const url = `${baseUrl}/api/auth/refresh`;
 
-      logger.debug(`[DEBUG] refreshToken: Calling ${url}`);
-
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -414,19 +387,13 @@ export class InteractiveSession {
         body: JSON.stringify({ refreshToken })
       });
 
-      logger.debug(`[DEBUG] refreshToken: Response status: ${response.status}`);
-
       if (response.ok) {
         const data = await response.json() as { token?: string; refreshToken?: string };
-        logger.debug('[DEBUG] refreshToken: Success');
         return data.token || null;
       } else {
-        const errorData = await response.json().catch(() => ({})) as { error?: string };
-        logger.debug(`[DEBUG] refreshToken: Failed - ${response.status} ${errorData.error || ''}`);
         return null;
       }
     } catch (error: any) {
-      logger.debug(`[DEBUG] refreshToken: Network error - ${error.message}`);
       return null;
     }
   }
@@ -1102,15 +1069,6 @@ export class InteractiveSession {
           }
         }
       }));
-
-      // Debug: Print tool list，特别是确认 gui-subagent 是否在列表中
-      const hasGuiSubagent = tools.some((t: any) => t.function.name === 'task');
-      const guiSubagentTool = tools.find((t: any) => t.function.name === 'task');
-      logger.debug(`[DEBUG] 工具总数: ${tools.length}, includes task 工具: ${hasGuiSubagent}`);
-      if (guiSubagentTool) {
-        const hasGuiSubagentInDesc = guiSubagentTool.function.description?.includes('gui-subagent');
-        logger.debug(`[DEBUG] task 工具描述中includes gui-subagent: ${hasGuiSubagentInDesc}`);
-      }
 
       // Generate system prompt (与本地模式一致)
       const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';

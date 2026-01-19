@@ -140,10 +140,6 @@ export class AuthService {
   }
 
   async authenticate(): Promise<boolean> {
-    console.log('[AUTH] ========== authenticate() 开始 ==========');
-    console.log('[AUTH] authConfig.type:', this.authConfig.type);
-    console.log('[AUTH] authConfig.apiKey:', this.authConfig.apiKey ? this.authConfig.apiKey.substring(0, 30) + '...' : 'empty');
-
     let result: boolean;
     switch (this.authConfig.type) {
       case AuthType.OAUTH_XAGENT:
@@ -159,44 +155,30 @@ export class AuthService {
         throw new Error(`Unknown auth type: ${this.authConfig.type}`);
     }
 
-    console.log('[AUTH] authenticate() 结果:', result);
-    console.log('[AUTH] 最终 authConfig.apiKey:', this.authConfig.apiKey ? this.authConfig.apiKey.substring(0, 30) + '...' : 'empty');
-    console.log('[AUTH] ========== authenticate() 结束 ==========');
     return result;
   }
 
   private async authenticateWithXAgent(): Promise<boolean> {
-    console.log('[AUTH] authenticateWithXAgent() 开始');
     logger.info('Authenticating with xAgent...', 'Please complete the authentication in your browser');
 
     try {
       // 1. Start HTTP server to receive callback
-      console.log('[AUTH] 调用 retrieveXAgentToken()...');
       const token = await this.retrieveXAgentToken();
-      console.log('[AUTH] 收到 token:', token ? token.substring(0, 30) + '...' : 'empty');
 
       // 2. 调用后端验证用户
       const xagentApiBaseUrl = this.authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-      console.log('[AUTH] 验证用户, baseUrl:', xagentApiBaseUrl);
       const response = await axios.get(`${xagentApiBaseUrl}/api/auth/me`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      console.log('[AUTH] 验证结果:', response.status, response.data?.user ? '用户存在' : '用户不存在');
 
       // 3. Set authentication configuration
       this.authConfig.baseUrl = 'http://xagent-colife.net:3000/v1';
       this.authConfig.xagentApiBaseUrl = xagentApiBaseUrl;
       this.authConfig.apiKey = token;
 
-      console.log('[AUTH] authConfig.apiKey 已设置');
       logger.success('Successfully authenticated with xAgent!');
       return true;
     } catch (error: any) {
-      console.log('[AUTH] 认证失败:', error.message);
-      if (error.response) {
-        console.log('[AUTH] HTTP 状态码:', error.response.status);
-        console.log('[AUTH] 响应数据:', JSON.stringify(error.response.data));
-      }
       logger.error('Authentication failed', 'Please try again.');
       return false;
     }
@@ -440,14 +422,8 @@ export class AuthService {
       if (existingRefreshToken) {
         loginUrl += `&existingRefreshToken=${encodeURIComponent(existingRefreshToken)}`;
       }
-      logger.debug(`[OAuth] Existing token found, passing to web`);
     }
 
-    logger.debug(`[OAuth] Opening browser for authentication`);
-    logger.debug(`[OAuth] Login URL: ${loginUrl}`);
-
-    // DEBUG: Log before Promise creation
-          logger.debug('[DEBUG OAuth] About to create Promise for token retrieval');
     // Start HTTP server to receive callback, then open browser
     return new Promise((resolve, reject) => {
       let timeoutId: NodeJS.Timeout | null = null;
@@ -461,51 +437,31 @@ export class AuthService {
       };
 
       const serverCallback = (req: any, res: any) => {
-        logger.debug('[OAuth] ========== serverCallback 开始 ==========');
-                  logger.debug('[OAuth] 收到请求 URL:', req.url || 'empty');
-                  logger.debug('[OAuth] 收到请求 Host:', req.headers.host || 'empty');        logger.debug('[OAuth] 收到请求 Referer:', req.headers.referer || 'none');
-        logger.debug('[OAuth] this.authConfig.apiKey (当前):', this.authConfig.apiKey ? this.authConfig.apiKey.substring(0, 30) + '...' : 'empty');
-        logger.debug(`[OAuth] Received request: ${req.url}`);
-
         if (req.url.startsWith('/callback')) {
           const url = new URL(req.url, `http://${req.headers.host}`);
           const token = url.searchParams.get('token');
           const refreshToken = url.searchParams.get('refreshToken');
 
-          logger.debug('[OAuth] 解析 callback URL:', String(req.url));
-          logger.debug('[OAuth] Token 长度:', token ? String(token.length) : '0');
-          logger.debug('[OAuth] RefreshToken 长度:', refreshToken ? String(refreshToken.length) : '0');
-
           if (token) {
-            logger.debug('[OAuth] ========== 收到有效 token!!! ==========');
-            logger.debug('[OAuth] Token 前缀:', token.substring(0, 50) + '...');
-            logger.debug('[OAuth] Token Payload:', token.split('.')[1] ? Buffer.from(token.split('.')[1], 'base64').toString() : 'invalid');
-
-            logger.info('[OAuth] Authentication successful! Received token');
+            logger.info('Authentication successful! Received token');
             cleanup();
 
             // Save refresh token if provided
             if (refreshToken) {
               this.authConfig.refreshToken = refreshToken;
-              logger.debug('[OAuth] Refresh token 保存到 this.authConfig');
-              logger.debug(`[OAuth] Refresh token saved`);
             }
 
             // Redirect directly to home page after successful authentication
             // Use the same webBaseUrl that was used to open the login page
             const redirectUrl = `${webBaseUrl}/`;
-            logger.debug(`[OAuth] 重定向到: ${redirectUrl}`);
             res.writeHead(302, { 'Location': redirectUrl });
             res.end();
             if (server) {
               server.close();
             }
-            logger.debug('[OAuth] 调用 resolve(token)');
             resolve(token);
-            logger.debug('[OAuth] ========== Promise 已 resolve ==========');
           } else {
-            logger.debug('[OAuth] !!! Token 为空 !!!');
-            logger.warn('[OAuth] No token in callback URL');
+            logger.warn('No token in callback URL');
             cleanup();
 
             res.writeHead(400, { 'Content-Type': 'text/html' });
@@ -517,24 +473,19 @@ export class AuthService {
           }
         } else if (req.url === '/' || req.url === '') {
           // Root path - likely a redirect from the web app
-          logger.debug('[OAuth] 收到根路径请求 (/)');
-          logger.debug(`[OAuth] Root path request, sending simple response`);
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end('<html><body><h1>XAGENT CLI Authentication Callback Server</h1><p>Waiting for authentication...</p></body></html>');
         } else {
-          logger.debug('[OAuth] 收到未知路径:', req.url);
-          logger.debug(`[OAuth] Unknown request path: ${req.url}`);
           res.writeHead(404, { 'Content-Type': 'text/plain' });
           res.end('Not Found');
         }
-        logger.debug('[OAuth] ========== serverCallback 结束 ==========');
       };
 
       server = http.createServer(serverCallback);
 
       // Set timeout timer (after server is created)
       timeoutId = setTimeout(() => {
-        logger.warn('[OAuth] Authentication timeout after 30 minutes');
+        logger.warn('Authentication timeout after 30 minutes');
         if (server) {
           server.close();
         }
@@ -543,9 +494,6 @@ export class AuthService {
 
       server.listen(8080, '0.0.0.0', async () => {
         logger.info('Waiting for authentication...', 'Opening browser for login...');
-        logger.info(`[OAuth] Callback server listening on http://xagent-colife.net:8080`);
-        logger.info(`[OAuth] Opening browser: ${loginUrl}`);
-        logger.debug(`[OAuth] Waiting for callback at http://xagent-colife.net:8080/callback?token=...`);
         await open(loginUrl);
       });
     });
@@ -702,7 +650,6 @@ export class AuthService {
 }
 
 export async function selectAuthType(): Promise<AuthType> {
-  logger.debug('[DEBUG selectAuthType] 即将显示认证方式选择提示...');
   const { authType } = await inquirer.prompt([
     {
       type: 'list',
@@ -714,7 +661,6 @@ export async function selectAuthType(): Promise<AuthType> {
       ]
     }
   ]);
-  logger.debug('[DEBUG selectAuthType] 用户选择了:', authType);
 
   return authType;
 }

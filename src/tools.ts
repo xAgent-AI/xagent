@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import readline from 'readline';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
@@ -345,14 +346,28 @@ export class BashTool implements Tool {
       effectiveCwd = undefined;
     }
     
+    // Set up environment with NODE_PATH only for node commands
+    const nodeModulesPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules');
+    const env = {
+      ...process.env,
+      NODE_PATH: nodeModulesPath
+    };
+    
+    // Only add NODE_PATH prefix for node commands
+    const isNodeCommand = /\bnode\b/.test(command);
+    const finalCommand = isNodeCommand 
+      ? `set NODE_PATH=${nodeModulesPath} && ${command}`
+      : command;
+    
     try {
       if (run_in_bg) {
         const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
-        const childProcess = spawn(command, {
+        const childProcess = spawn(finalCommand, {
           cwd: effectiveCwd || process.cwd(),
           shell: true,
-          detached: true
+          detached: true,
+          env
         });
         
         const output: string[] = [];
@@ -385,10 +400,11 @@ export class BashTool implements Tool {
           taskId
         };
       } else {
-        const { stdout, stderr } = await execAsync(command, {
+        const { stdout, stderr } = await execAsync(finalCommand, {
           cwd: effectiveCwd || process.cwd(),
           maxBuffer: 1024 * 1024 * 10,
-          timeout: timeout * 1000
+          timeout: timeout * 1000,
+          env
         });
 
         return {

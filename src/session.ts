@@ -216,13 +216,18 @@ export class InteractiveSession {
         // Try refresh token if validation failed
         if (!isValid && authConfig.refreshToken) {
           spinner.text = colors.textMuted('Refreshing authentication...');
+          logger.debug('[DEBUG] Token validation failed, trying refresh token...');
           const newToken = await this.refreshToken(baseUrl, authConfig.refreshToken);
-          
+
           if (newToken) {
-            // Save new token
+            // Save new token and persist
             await this.configManager.set('apiKey', newToken);
+            await this.configManager.save('global');
             authConfig.apiKey = newToken;
             isValid = true;
+            logger.debug('[DEBUG] Token refreshed successfully and saved');
+          } else {
+            logger.debug('[DEBUG] Token refresh failed');
           }
         }
 
@@ -233,10 +238,16 @@ export class InteractiveSession {
           console.log(colors.info('Please log in again to continue.'));
           console.log('');
 
-          // Clear invalid credentials
+          // Clear invalid credentials and persist
           await this.configManager.set('apiKey', '');
           await this.configManager.set('refreshToken', '');
           await this.configManager.set('selectedAuthType', AuthType.OAUTH_XAGENT);
+          await this.configManager.save('global');
+
+          logger.debug('[DEBUG] Clearing invalid credentials and reloading config...');
+          await this.configManager.load();
+          authConfig = this.configManager.getAuthConfig();
+          logger.debug('[DEBUG] After reload, authConfig.apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
 
           await this.setupAuthentication();
           authConfig = this.configManager.getAuthConfig();
@@ -365,6 +376,9 @@ export class InteractiveSession {
       // For OAuth XAGENT auth, use /api/auth/me endpoint
       const url = `${baseUrl}/api/auth/me`;
 
+      logger.debug(`[DEBUG] validateToken: Calling ${url}`);
+      logger.debug(`[DEBUG] validateToken: Token prefix: ${apiKey.substring(0, 20)}...`);
+
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -373,9 +387,15 @@ export class InteractiveSession {
         }
       });
 
+      logger.debug(`[DEBUG] validateToken: Response status: ${response.status}`);
+      logger.debug(`[DEBUG] validateToken: Response ok: ${response.ok}`);
+
       return response.ok;
-    } catch (error) {
-      // Network error - could be server down, consider token invalid
+    } catch (error: any) {
+      // Network error - log details but still consider token may be invalid
+      logger.debug(`[DEBUG] validateToken: Network error: ${error.message}`);
+      // For network errors, we still return false to trigger re-authentication
+      // This ensures security but the user can retry
       return false;
     }
   }
@@ -1187,14 +1207,25 @@ export class InteractiveSession {
         console.log(colors.info('Your browser session has been logged out. Please log in again.'));
         console.log('');
 
-        // Clear invalid credentials
+        // Clear invalid credentials and persist
         await this.configManager.set('apiKey', '');
         await this.configManager.set('refreshToken', '');
         await this.configManager.set('selectedAuthType', AuthType.OAUTH_XAGENT);
+        await this.configManager.save('global');
+
+        logger.debug('[DEBUG generateRemoteResponse] Cleared invalid credentials, starting re-authentication...');
 
         // Re-authenticate
         await this.setupAuthentication();
+
+        // Reload config to ensure we have the latest authConfig
+        logger.debug('[DEBUG generateRemoteResponse] Re-authentication completed, reloading config...');
+        await this.configManager.load();
         const authConfig = this.configManager.getAuthConfig();
+
+        logger.debug('[DEBUG generateRemoteResponse] After re-auth:');
+        logger.debug('  - authConfig.apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
+        logger.debug('  - authConfig.apiKey prefix:', authConfig.apiKey ? authConfig.apiKey.substring(0, 20) + '...' : 'empty');
 
         // Recreate readline interface after inquirer
         this.rl.close();
@@ -1209,7 +1240,10 @@ export class InteractiveSession {
         // Reinitialize RemoteAIClient with new token
         if (authConfig.apiKey) {
           const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+          logger.debug('[DEBUG generateRemoteResponse] Reinitializing RemoteAIClient with new token');
           this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
+        } else {
+          logger.debug('[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!');
         }
 
         // Retry the current operation

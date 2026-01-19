@@ -209,9 +209,9 @@ export class InteractiveSession {
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
         spinner.text = colors.textMuted('Validating authentication...');
         const baseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-        console.log(`[DEBUG] 验证 Token, baseUrl: ${baseUrl}`);
+        logger.debug(`[DEBUG] 验证 Token, baseUrl: ${baseUrl}`);
         let isValid = await this.validateToken(baseUrl, authConfig.apiKey);
-        console.log(`[DEBUG] Token 验证结果: ${isValid}`);
+        logger.debug(`[DEBUG] Token 验证结果: ${isValid}`);
 
         // Try refresh token if validation failed
         if (!isValid && authConfig.refreshToken) {

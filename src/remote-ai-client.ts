@@ -1,6 +1,9 @@
 import { EventEmitter } from 'events';
 import { ChatMessage, SessionOutput, ToolCall } from './types.js';
 import { ChatCompletionResponse, ChatCompletionOptions, Message } from './ai-client.js';
+import { getLogger } from './logger.js';
+
+const logger = getLogger();
 
 /**
  * Token invalid error - thrown when the authentication token is no longer valid
@@ -62,7 +65,7 @@ export class RemoteAIClient extends EventEmitter {
 
   constructor(authToken: string, webBaseUrl: string, showAIDebugInfo: boolean = false) {
     super();
-    console.log('[RemoteAIClient] Constructor called, authToken:', authToken ? authToken.substring(0, 30) + '...' : 'empty');
+    logger.debug(`[RemoteAIClient] Constructor called, authToken: ${authToken ? authToken.substring(0, 30) + '...' : 'empty'}`);
     this.authToken = authToken;
     this.webBaseUrl = webBaseUrl.replace(/\/$/, ''); // Remove trailing slash
     this.agentApi = `${this.webBaseUrl}/api/agent`;
@@ -70,10 +73,10 @@ export class RemoteAIClient extends EventEmitter {
     this.showAIDebugInfo = showAIDebugInfo;
 
     if (this.showAIDebugInfo) {
-      console.log('[RemoteAIClient] Initialization complete');
-      console.log('[RemoteAIClient] Web Base URL:', this.webBaseUrl);
-      console.log('[RemoteAIClient] Agent API:', this.agentApi);
-      console.log('[RemoteAIClient] VLM API:', this.vlmApi);
+      logger.debug('[RemoteAIClient] Initialization complete');
+      logger.debug(`[RemoteAIClient] Web Base URL: ${this.webBaseUrl}`);
+      logger.debug(`[RemoteAIClient] Agent API: ${this.agentApi}`);
+      logger.debug(`[RemoteAIClient] VLM API: ${this.vlmApi}`);
     }
   }
 
@@ -98,11 +101,11 @@ export class RemoteAIClient extends EventEmitter {
 
     const url = `${this.agentApi}/chat`;
     if (this.showAIDebugInfo) {
-      console.log('[RemoteAIClient] Sending request to:', url);
-      console.log('[RemoteAIClient] Token prefix:', this.authToken.substring(0, 20) + '...');
-      console.log('[RemoteAIClient] Message count:', messages.length);
+      logger.debug(`[RemoteAIClient] Sending request to: ${url}`);
+      logger.debug(`[RemoteAIClient] Token prefix: ${this.authToken.substring(0, 20)}...`);
+      logger.debug(`[RemoteAIClient] Message count: ${messages.length}`);
       if (options.tools) {
-        console.log('[RemoteAIClient] Tool count:', options.tools.length);
+        logger.debug(`[RemoteAIClient] Tool count: ${options.tools.length}`);
       }
     }
 

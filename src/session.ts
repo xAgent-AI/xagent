@@ -404,6 +404,8 @@ export class InteractiveSession {
     try {
       const url = `${baseUrl}/api/auth/refresh`;
 
+      logger.debug(`[DEBUG] refreshToken: Calling ${url}`);
+
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -412,13 +414,19 @@ export class InteractiveSession {
         body: JSON.stringify({ refreshToken })
       });
 
+      logger.debug(`[DEBUG] refreshToken: Response status: ${response.status}`);
+
       if (response.ok) {
         const data = await response.json() as { token?: string; refreshToken?: string };
+        logger.debug('[DEBUG] refreshToken: Success');
         return data.token || null;
       } else {
+        const errorData = await response.json().catch(() => ({})) as { error?: string };
+        logger.debug(`[DEBUG] refreshToken: Failed - ${response.status} ${errorData.error || ''}`);
         return null;
       }
-    } catch (error) {
+    } catch (error: any) {
+      logger.debug(`[DEBUG] refreshToken: Network error - ${error.message}`);
       return null;
     }
   }

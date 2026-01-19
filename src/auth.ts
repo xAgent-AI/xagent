@@ -173,30 +173,31 @@ export class AuthService {
       // 1. Start HTTP server to receive callback
       console.log('[AUTH] 调用 retrieveXAgentToken()...');
       const token = await this.retrieveXAgentToken();
-      console.log('[AUTH] retrieveXAgentToken() 返回 token:', token ? token.substring(0, 30) + '...' : 'empty');
+      console.log('[AUTH] 收到 token:', token ? token.substring(0, 30) + '...' : 'empty');
 
-      // 2. Set authentication configuration
+      // 2. 调用后端验证用户
+      const xagentApiBaseUrl = this.authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+      console.log('[AUTH] 验证用户, baseUrl:', xagentApiBaseUrl);
+      const response = await axios.get(`${xagentApiBaseUrl}/api/auth/me`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      console.log('[AUTH] 验证结果:', response.status, response.data?.user ? '用户存在' : '用户不存在');
+
+      // 3. Set authentication configuration
       this.authConfig.baseUrl = 'http://xagent-colife.net:3000/v1';
-      this.authConfig.xagentApiBaseUrl = 'http://xagent-colife.net:3000';
+      this.authConfig.xagentApiBaseUrl = xagentApiBaseUrl;
       this.authConfig.apiKey = token;
 
-      console.log('[AUTH] authConfig.apiKey 已设置:', token ? token.substring(0, 30) + '...' : 'empty');
-
+      console.log('[AUTH] authConfig.apiKey 已设置');
       logger.success('Successfully authenticated with xAgent!');
-      logger.info(`LLM API: http://xagent-colife.net:3000/v1`);
-      logger.info(`VLM API: http://xagent-colife.net:3000/v3`);
-      console.log('[AUTH] authenticateWithXAgent() 返回 true');
       return true;
     } catch (error: any) {
-      const errorMsg = error?.message || 'Unknown error';
-      console.log('[AUTH] authenticateWithXAgent() 捕获到错误:', errorMsg);
-      if (errorMsg.includes('timeout') || errorMsg.includes('Timeout')) {
-        logger.error('Authentication timed out', 'The browser authentication took too long. Please try again.');
-      } else if (errorMsg.includes('No token') || errorMsg.includes('no token')) {
-        logger.error('Authentication was cancelled or failed', 'No token was received from the browser. Please try again.');
-      } else {
-        logger.error('xAgent authentication failed', errorMsg || 'Check your network connection and try again');
+      console.log('[AUTH] 认证失败:', error.message);
+      if (error.response) {
+        console.log('[AUTH] HTTP 状态码:', error.response.status);
+        console.log('[AUTH] 响应数据:', JSON.stringify(error.response.data));
       }
+      logger.error('Authentication failed', 'Please try again.');
       return false;
     }
   }

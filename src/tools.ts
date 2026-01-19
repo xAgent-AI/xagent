@@ -1079,8 +1079,6 @@ export class TaskTool implements Tool {
   /**
    * Execute GUI subagent by directly calling GUIAgent.run()
    * This bypasses the normal subagent message loop for better GUI control
-   *
-   * @param remoteAIClient - Optional RemoteAIClient instance for remote mode
    */
   private async executeGUIAgent(
     prompt: string,
@@ -1088,8 +1086,7 @@ export class TaskTool implements Tool {
     agent: any,
     mode: ExecutionMode,
     config: any,
-    indentLevel: number = 1,
-    remoteAIClient?: any
+    indentLevel: number = 1
   ): Promise<{ success: boolean; cancelled?: boolean; message: string; result?: any }> {
     const indent = '  '.repeat(indentLevel);
 
@@ -1097,16 +1094,16 @@ export class TaskTool implements Tool {
     console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
     console.log('');
 
-    // Get local VLM configuration
+    // Get VLM configuration
     const baseUrl = config.get('guiSubagentBaseUrl') || config.get('baseUrl') || '';
     const apiKey = config.get('guiSubagentApiKey') || config.get('apiKey') || '';
     const modelName = config.get('guiSubagentModel') || config.get('modelName') || '';
 
-    // Transparency: use remote mode if remoteAIClient exists, otherwise use local mode
-    const isRemoteMode = !!remoteAIClient;
-    if (isRemoteMode) {
-      console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
-    } else {
+    // Get auth config to determine mode
+    const authConfig = config.getAuthConfig();
+    const isLocalMode = authConfig.type === 'openai_compatible';
+
+    if (isLocalMode) {
       console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
       // Local mode requires configuration check
       if (!baseUrl) {
@@ -1117,9 +1114,28 @@ export class TaskTool implements Tool {
       }
     }
 
-    // Transparency: create unified vlmCaller, caller doesn't care about internal implementation
-    const abortController = new AbortController();
-    const vlmCaller = this.createVLMCaller(remoteAIClient, { baseUrl, apiKey, modelName }, abortController.signal);
+    // Create vlmCaller for remote mode
+    let vlmCaller: ((image: string, prompt: string, systemPrompt: string) => Promise<string>) | undefined;
+
+    if (!isLocalMode && authConfig.baseUrl) {
+      const remoteBaseUrl = `${authConfig.baseUrl}/api/agent/vlm`;
+      vlmCaller = async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
+        const response = await fetch(remoteBaseUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authConfig.apiKey || ''}`,
+          },
+          body: JSON.stringify({ image, prompt: userPrompt, systemPrompt }),
+        });
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Remote VLM error: ${response.status} - ${errorText}`);
+        }
+        const result = await response.json() as { response?: string; content?: string; message?: string };
+        return result.response || result.content || result.message || '';
+      };
+    }
 
     // Set up stdin polling for ESC cancellation
     let rawModeEnabled = false;
@@ -1179,7 +1195,11 @@ export class TaskTool implements Tool {
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
 
       const guiAgent = await createGUISubAgent({
+        model: isLocalMode ? modelName : undefined,
+        modelBaseUrl: isLocalMode ? baseUrl : undefined,
+        modelApiKey: isLocalMode ? apiKey : undefined,
         vlmCaller,
+        isLocalMode,
         maxLoopCount: 30,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
@@ -1317,8 +1337,7 @@ export class TaskTool implements Tool {
         agent,
         mode,
         config,
-        indentLevel,
-        remoteAIClient
+        indentLevel
       );
     }
 
@@ -2581,14 +2600,23 @@ export class ToolRegistry {
   registerMCPTools(mcpTools: Map<string, any>): void {
     let registeredCount = 0;
 
-    for (const [fullName, tool] of mcpTools) {
-      // Split only on the first __ to preserve underscores in tool names
-      const firstUnderscoreIndex = fullName.indexOf('__');
-      if (firstUnderscoreIndex === -1) {
-        continue;
-      }
-      const serverName = fullName.substring(0, firstUnderscoreIndex);
-      const originalName = fullName.substring(firstUnderscoreIndex + 2);
+        for (const [fullName, tool] of mcpTools) {
+
+          const firstUnderscoreIndex = fullName.indexOf('__');
+
+          if (firstUnderscoreIndex === -1 || firstUnderscoreIndex === 0 || 
+
+              firstUnderscoreIndex === fullName.length - 2) continue;
+
+          
+
+          const serverName = fullName.substring(0, firstUnderscoreIndex);
+
+          const originalName = fullName.substring(firstUnderscoreIndex + 2);
+
+    
+
+          if (!originalName || originalName.trim() === '') continue;
 
       // Auto-rename if conflict, ensure unique name
       let toolName = originalName;

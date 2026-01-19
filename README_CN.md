@@ -46,10 +46,10 @@
 
 ```bash
 # 安装
-npm i -g xagent-cli
+npm i -g @xagent-ai/cli
 
 # 启动
-xagent
+xagent start
 ```
 
 **就这么简单！** 几秒钟内开始自动化你的数字生活。

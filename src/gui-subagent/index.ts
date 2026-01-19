@@ -36,6 +36,12 @@ export interface GUISubAgentConfig {
    * Parameters: image - image, prompt - user prompt, systemPrompt - system prompt
    */
   vlmCaller?: (image: string, prompt: string, systemPrompt: string) => Promise<string>;
+  /**
+   * Whether to use local mode
+   * If true, use model/modelBaseUrl/modelApiKey for VLM calls
+   * If false, use vlmCaller for remote VLM calls
+   */
+  isLocalMode: boolean;
   headless?: boolean;
   loopIntervalInMs?: number;
   maxLoopCount?: number;
@@ -51,6 +57,7 @@ export const DEFAULT_GUI_CONFIG = {
   modelBaseUrl: '',
   modelApiKey: '',
   vlmCaller: undefined as VLMCaller | undefined,
+  isLocalMode: true,
   headless: false,
   loopIntervalInMs: 0,
   maxLoopCount: 100,
@@ -61,7 +68,7 @@ export const DEFAULT_GUI_CONFIG = {
  * Create a GUI subagent with the specified configuration
  */
 export async function createGUISubAgent<T extends Operator>(
-  config: GUISubAgentConfig = {},
+  config: GUISubAgentConfig = {} as GUISubAgentConfig,
   operator?: T
 ): Promise<GUIAgent<T>> {
   const mergedConfig = { ...DEFAULT_GUI_CONFIG, ...config };
@@ -90,6 +97,7 @@ export async function createGUISubAgent<T extends Operator>(
     modelBaseUrl: mergedConfig.modelBaseUrl,
     modelApiKey: mergedConfig.modelApiKey,
     vlmCaller: mergedConfig.vlmCaller,
+    isLocalMode: mergedConfig.isLocalMode ?? false,
     loopIntervalInMs: mergedConfig.loopIntervalInMs,
     maxLoopCount: mergedConfig.maxLoopCount,
     showAIDebugInfo: mergedConfig.showAIDebugInfo,
@@ -130,6 +138,7 @@ export async function createGUIAgent<T extends Operator>(
   const agent = new GUIAgent<T>({
     operator,
     ...config,
+    isLocalMode: config?.isLocalMode ?? true,
     signal: config?.signal ?? abortController?.signal,
   });
 

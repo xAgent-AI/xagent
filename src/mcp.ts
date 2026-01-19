@@ -12,6 +12,7 @@ export class MCPServer {
   private process: ChildProcess | null = null;
   private tools: Map<string, MCPTool> = new Map();
   private isConnected: boolean = false;
+  private sessionId: string | null = null;  // Save MCP session-id
 
   constructor(config: MCPServerConfig) {
     this.config = config;
@@ -167,6 +168,12 @@ export class MCPServer {
           { headers }
         );
 
+        // Save session-id for subsequent requests (MCP HTTP protocol requirement)
+        const mcpSessionId = response.headers['mcp-session-id'];
+        if (mcpSessionId) {
+          this.sessionId = mcpSessionId;
+        }
+
         // Some MCP servers return SSE-over-HTTP format, so we always call loadTools
         // which handles both regular JSON and SSE format responses
         await this.loadTools(headers);
@@ -210,6 +217,12 @@ export class MCPServer {
 
       if (!initResponse.ok) {
         throw new Error(`SSE initialize failed: ${initResponse.status} ${initResponse.statusText}`);
+      }
+
+      // Save session-id (MCP SSE protocol requirement)
+      const mcpSessionId = initResponse.headers.get('mcp-session-id');
+      if (mcpSessionId) {
+        this.sessionId = mcpSessionId;
       }
 
       // For SSE endpoints, try to load tools via a separate POST request
@@ -289,6 +302,7 @@ export class MCPServer {
   private handleToolsList(result: any): void {
     if (result && result.tools) {
       for (const tool of result.tools) {
+        if (!tool.name || typeof tool.name !== 'string' || tool.name.trim() === '') continue;
         this.tools.set(tool.name, tool);
       }
       console.log(`Loaded ${result.tools.length} tools from MCP Server`);
@@ -304,6 +318,17 @@ export class MCPServer {
     const axios = (await import('axios')).default;
 
     try {
+      // Build headers with session-id for MCP protocol
+      const requestHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...this.config.headers,
+        ...headers
+      };
+      
+      if (this.sessionId) {
+        requestHeaders['MCP-session-id'] = this.sessionId;
+      }
+
       const response = await axios.post(
         this.config.url,
         {
@@ -312,25 +337,27 @@ export class MCPServer {
           method: 'tools/list'
         },
         {
-          headers: {
-            'Content-Type': 'application/json',
-            ...this.config.headers,
-            ...headers
-          },
+          headers: requestHeaders,
           timeout: 10000
         }
       );
 
       let resultData = response.data;
 
-      // Check if response is SSE format (starts with "id:" or "data:")
+      // Auto-detect response format (HTTP vs SSE)
+      const contentType = response.headers['content-type'] || '';
       const dataStr = response.data?.toString() || '';
-      if (dataStr.startsWith('id:') || dataStr.startsWith('data:')) {
+
+      const isSSE = contentType.includes('text/event-stream') || 
+                    dataStr.startsWith('id:') || 
+                    dataStr.startsWith('data:');
+
+      if (isSSE) {
         // Parse SSE format: "id:1\nevent:message\ndata:{...}"
-        const dataMatch = dataStr.match(/data:(\{.*\})/);
+        const dataMatch = dataStr.match(/data:(.+)$/m);
         if (dataMatch) {
           try {
-            resultData = JSON.parse(dataMatch[1]);
+            resultData = JSON.parse(dataMatch[1].trim());
           } catch (e: any) {
             console.error(`Failed to parse SSE data: ${e.message}`);
           }
@@ -380,15 +407,67 @@ export class MCPServer {
     const axios = (await import('axios')).default;
 
     try {
+      // Build headers with auth token
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json, text/event-stream',
+        ...this.config.headers
+      };
+
+      if (this.config.authToken) {
+        if (this.config.authToken.startsWith('Bearer ')) {
+          headers['Authorization'] = this.config.authToken;
+        } else {
+          headers['Authorization'] = `Bearer ${this.config.authToken}`;
+        }
+      }
+
+      // Add session-id to request headers (MCP HTTP protocol requirement)
+      if (this.sessionId) {
+        headers['MCP-session-id'] = this.sessionId;
+      }
+
       const response = await axios.post(this.config.url!, message, {
-        headers: {
-          'Content-Type': 'application/json',
-          ...this.config.headers
-        },
+        headers,
         timeout: this.config.timeout || 30000
       });
 
-      return response.data.result;
+      // Update session-id if new one provided in response
+      const responseSessionId = response.headers['mcp-session-id'];
+      if (responseSessionId) {
+        this.sessionId = responseSessionId;
+      }
+
+      // Auto-detect response format (HTTP vs SSE)
+      const contentType = response.headers['content-type'] || '';
+      let resultData;
+
+      if (contentType.includes('text/event-stream') || 
+          (typeof response.data === 'string' && response.data.startsWith('id:'))) {
+        // Parse SSE format: "id:1\nevent:message\ndata:{...}"
+        const sseData = response.data;
+        const dataMatch = sseData.match(/data:(.+)$/m);
+        if (dataMatch) {
+          try {
+            resultData = JSON.parse(dataMatch[1].trim());
+          } catch (e: any) {
+            throw new Error(`Failed to parse SSE data: ${e.message}`);
+          }
+        } else {
+          throw new Error('No data field found in SSE response');
+        }
+      } else {
+        // Direct JSON response
+        resultData = response.data;
+      }
+
+      // Check for error response
+      if (resultData?.isError) {
+        const errorMsg = resultData?.content?.[0]?.text || 'Unknown error';
+        throw new Error(`MCP error: ${errorMsg}`);
+      }
+
+      return resultData?.result;
     } catch (error: any) {
       throw new Error(`MCP Tool call failed: ${error.message}`);
     }
@@ -407,7 +486,16 @@ export class MCPServer {
 
       const responseHandler = (data: Buffer) => {
         try {
-          const response = JSON.parse(data.toString());
+          const rawResponse = data.toString();
+          const response = JSON.parse(rawResponse);
+
+          if (process.env.DEBUG === 'mcp' || process.env.DEBUG === 'all') {
+            console.log('\n========== MCP STDIO Raw Response ==========');
+            console.log('Raw:', rawResponse);
+            console.log('Parsed:', JSON.stringify(response, null, 2));
+            console.log('==========================================\n');
+          }
+
           if (response.id === message.id) {
             clearTimeout(timeout);
             this.process?.stdout?.off('data', responseHandler);
@@ -419,6 +507,10 @@ export class MCPServer {
             }
           }
         } catch (error) {
+          console.error('\n========== MCP STDIO Parse Error ==========');
+          console.error('Raw data:', data.toString());
+          console.error('Error:', error);
+          console.error('==========================================\n');
           reject(error);
         }
       };
@@ -515,6 +607,7 @@ export class MCPManager {
 
     this.servers.forEach((server, serverName) => {
       server.getTools().forEach(tool => {
+        if (!tool.name) return;
         allTools.set(`${serverName}__${tool.name}`, tool);
       });
     });
@@ -549,12 +642,18 @@ export class MCPManager {
 
     this.servers.forEach((server, serverName) => {
       server.getTools().forEach(tool => {
+        if (!tool.name) return;
+        
         tools.push({
           type: 'function',
           function: {
             name: `${serverName}__${tool.name}`,
-            description: tool.description,
-            parameters: tool.inputSchema
+            description: tool.description || `MCP tool: ${tool.name}`,
+            parameters: tool.inputSchema || {
+              type: 'object',
+              properties: {},
+              required: []
+            }
           }
         });
       });

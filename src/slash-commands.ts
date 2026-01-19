@@ -1,7 +1,7 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
-import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig } from './types.js';
+import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { getToolRegistry } from './tools.js';
 import { getAgentManager } from './agents.js';
@@ -41,14 +41,14 @@ export class SlashCommandHandler {
   }
 
   /**
-   * 设置清除对话的回调函数
+   * Set callback for clearing conversation
    */
   setClearCallback(callback: () => void): void {
     this.onClearCallback = callback;
   }
 
   /**
-   * 设置系统提示更新的回调函数
+   * Set callback for system prompt update
    */
   setSystemPromptUpdateCallback(callback: () => Promise<void>): void {
     this.onSystemPromptUpdate = callback;
@@ -85,6 +85,9 @@ export class SlashCommandHandler {
       case 'auth':
         await this.handleAuth();
         break;
+      case 'login':
+        await this.handleLogin();
+        break;
       case 'mode':
         await this.handleMode(args);
         break;
@@ -115,9 +118,9 @@ export class SlashCommandHandler {
       case 'theme':
         await this.handleTheme();
         break;
-      case 'language':
-        await this.handleLanguage();
-        break;
+      // case 'language':
+      //   await this.handleLanguage();
+      //   break;
       case 'about':
         await this.handleAbout();
         break;
@@ -216,12 +219,12 @@ export class SlashCommandHandler {
         detail: 'Enable/disable AI thinking process display',
         example: '/think on\n/think off\n/think display compact'
       },
-      {
-        cmd: '/language [zh|en]',
-        desc: 'Switch language',
-        detail: 'Switch between Chinese and English interface',
-        example: '/language zh\n/language en'
-      },
+      // {
+      //   cmd: '/language [zh|en]',
+      //   desc: 'Switch language',
+      //   detail: 'Switch between Chinese and English interface',
+      //   example: '/language zh\n/language en'
+      // },
       {
         cmd: '/theme',
         desc: 'Switch theme',
@@ -344,13 +347,13 @@ export class SlashCommandHandler {
   }
 
   private async handleClear(): Promise<void> {
-    // 清空本地对话历史
+    // Clear local conversation history
     this.conversationHistory = [];
 
-    // 清空 ConversationManager 中的当前对话
+    // Clear ConversationManager 中的当前对话
     await this.conversationManager.clearCurrentConversation();
 
-    // 调用回调通知 InteractiveSession 清空对话
+    // Call callback to notify InteractiveSession 清空对话
     if (this.onClearCallback) {
       this.onClearCallback();
     }
@@ -400,6 +403,64 @@ export class SlashCommandHandler {
       if (selectAuthType) {
         logger.warn('Please restart xAgent CLI and run /auth again', 'Authentication changes require restart');
       }
+    }
+  }
+
+  private async handleLogin(): Promise<void> {
+    logger.section('Login to xAgent');
+
+    const authConfig = this.configManager.getAuthConfig();
+    const currentAuthType = authConfig.type;
+
+    if (currentAuthType !== AuthType.OAUTH_XAGENT) {
+      console.log(chalk.yellow('\n⚠️  Current authentication type is not OAuth xAgent.'));
+      const { proceed } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'proceed',
+          message: 'Do you want to switch to OAuth xAgent authentication?',
+          default: false
+        }
+      ]);
+
+      if (!proceed) {
+        return;
+      }
+
+      // Switch to OAuth xAgent
+      await this.configManager.setAuthConfig({
+        selectedAuthType: AuthType.OAUTH_XAGENT,
+        apiKey: '',
+        refreshToken: '',
+        baseUrl: ''
+      });
+      await this.configManager.save('global');
+      console.log(chalk.green('✅ Switched to OAuth xAgent authentication.'));
+    }
+
+    console.log(chalk.cyan('\n🔐 Starting OAuth xAgent login...'));
+    console.log(chalk.gray('   A browser will open for you to complete authentication.\n'));
+
+    try {
+      const authService = new AuthService({
+        type: AuthType.OAUTH_XAGENT,
+        apiKey: '',
+        baseUrl: '',
+        refreshToken: ''
+      });
+
+      const success = await authService.authenticate();
+
+      if (success) {
+        const newConfig = this.configManager.getAuthConfig();
+        console.log(chalk.green('\n✅ Login successful!'));
+        console.log(chalk.cyan(`   Token saved to: ~/.xagent/settings.json`));
+        console.log(chalk.gray('   You can now use xAgent CLI with remote AI services.\n'));
+      } else {
+        console.log(chalk.red('\n❌ Login failed or was cancelled.'));
+      }
+    } catch (error: any) {
+      console.log(chalk.red(`\n❌ Login error: ${error.message || 'Unknown error'}`));
     }
   }
 

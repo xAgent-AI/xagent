@@ -4,6 +4,7 @@ import ora from 'ora';
 import inquirer from 'inquirer';
 import { ExecutionMode, ChatMessage, ToolCall, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
+import { RemoteAIClient } from './remote-ai-client.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { getToolRegistry } from './tools.js';
@@ -16,15 +17,16 @@ import { getSessionManager, SessionManager } from './session-manager.js';
 import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
-import { getStdinManager } from './stdin-manager.js';
+import { getCancellationManager, CancellationManager } from './cancellation.js';
 import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
+import { Logger, LogLevel } from './logger.js';
 
 export class InteractiveSession {
   private conversationManager: ConversationManager;
   private sessionManager: SessionManager;
   private contextCompressor: ContextCompressor;
-  private stdinManager = getStdinManager();
   private aiClient: AIClient | null = null;
+  private remoteAIClient: RemoteAIClient | null = null;
   private conversation: ChatMessage[] = [];
   private toolCalls: ToolCall[] = [];
   private executionMode: ExecutionMode;
@@ -35,34 +37,73 @@ export class InteractiveSession {
   private mcpManager: MCPManager;
   private checkpointManager: CheckpointManager;
   private currentAgent: any = null;
+  private rl: readline.Interface;
+  private cancellationManager: CancellationManager;
   private indentLevel: number;
   private indentString: string;
+  private remoteConversationId: string | null = null;
 
-  constructor(indentLevel: number = 0) {
-    this.configManager = getConfigManager(process.cwd());
-    this.agentManager = getAgentManager(process.cwd());
-    this.memoryManager = getMemoryManager(process.cwd());
-    this.mcpManager = getMCPManager();
-    this.checkpointManager = getCheckpointManager(process.cwd());
-    this.conversationManager = getConversationManager();
-    this.sessionManager = getSessionManager(process.cwd());
-    this.slashCommandHandler = new SlashCommandHandler();
+    constructor(indentLevel: number = 0) {
 
-    // 注册 /clear 回调，清除对话时同步清空本地 conversation
-    this.slashCommandHandler.setClearCallback(() => {
-      this.conversation = [];
-    });
+      this.rl = readline.createInterface({
 
-    // 注册 MCP 更新回调，更新系统提示
-    this.slashCommandHandler.setSystemPromptUpdateCallback(async () => {
-      await this.updateSystemPrompt();
-    });
+        input: process.stdin,
 
-    this.executionMode = ExecutionMode.DEFAULT;
-    this.indentLevel = indentLevel;
-    this.indentString = '  '.repeat(indentLevel);
-    this.contextCompressor = getContextCompressor();
-  }
+        output: process.stdout
+
+      });
+
+  
+
+      this.configManager = getConfigManager(process.cwd());
+
+      this.agentManager = getAgentManager(process.cwd());
+
+      this.memoryManager = getMemoryManager(process.cwd());
+
+      this.mcpManager = getMCPManager();
+
+      this.checkpointManager = getCheckpointManager(process.cwd());
+
+      this.conversationManager = getConversationManager();
+
+      this.sessionManager = getSessionManager(process.cwd());
+
+      this.slashCommandHandler = new SlashCommandHandler();
+
+  
+
+      // Register /clear callback, clear local conversation when clearing dialogue
+
+      this.slashCommandHandler.setClearCallback(() => {
+
+        this.conversation = [];
+
+      });
+
+  
+
+      // Register MCP update callback, update system prompt
+
+      this.slashCommandHandler.setSystemPromptUpdateCallback(async () => {
+
+        await this.updateSystemPrompt();
+
+      });
+
+  
+
+      this.executionMode = ExecutionMode.DEFAULT;
+
+      this.cancellationManager = getCancellationManager();
+
+      this.indentLevel = indentLevel;
+
+      this.indentString = ' '.repeat(indentLevel);
+
+      this.contextCompressor = getContextCompressor();
+
+    }
 
   private getIndent(): string {
     return this.indentString;
@@ -121,6 +162,16 @@ export class InteractiveSession {
     // Track if an operation is in progress
     (this as any)._isOperationInProgress = false;
 
+    // Listen for ESC cancellation - only cancel operations, don't exit the program
+    const cancelHandler = () => {
+      if ((this as any)._isOperationInProgress) {
+        // An operation is running, let it be cancelled
+        return;
+      }
+      // No operation running, ignore ESC or show a message
+    };
+    this.cancellationManager.on('cancelled', cancelHandler);
+
     this.promptLoop();
 
     // Keep the promise pending until shutdown
@@ -176,8 +227,15 @@ export class InteractiveSession {
           await this.setupAuthentication();
           authConfig = this.configManager.getAuthConfig();
 
-          // 恢复 stdin 状态 after inquirer
-          this.stdinManager.restoreAfterInquirer();
+          // Recreate readline interface after inquirer
+          this.rl.close();
+          this.rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+          });
+          this.rl.on('close', () => {
+            console.error('DEBUG: readline interface closed');
+          });
           spinner.start();
         }
       } else if (!authConfig.apiKey) {
@@ -186,14 +244,29 @@ export class InteractiveSession {
         await this.setupAuthentication();
         authConfig = this.configManager.getAuthConfig();
 
-        // 恢复 stdin 状态 after inquirer
-        this.stdinManager.restoreAfterInquirer();
+        // Recreate readline interface after inquirer
+        this.rl.close();
+        this.rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
+        });
+        this.rl.on('close', () => {
+          console.error('DEBUG: readline interface closed');
+        });
         spinner.start();
       }
       // For OPENAI_COMPATIBLE with API key, skip validation and proceed directly
 
       this.aiClient = new AIClient(authConfig);
       this.contextCompressor.setAIClient(this.aiClient);
+
+      // Initialize remote AI client for OAuth XAGENT mode
+      if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
+        const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+        console.log('[Session] Initialize remote AI client, webBaseUrl:', webBaseUrl);
+        this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
+      }
+
       this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
 
       await this.agentManager.loadAgents();
@@ -209,7 +282,7 @@ export class InteractiveSession {
         this.executionMode
       );
 
-      // 同步对话历史到 slashCommandHandler
+      // Sync conversation history to slashCommandHandler
       this.slashCommandHandler.setConversationHistory(this.conversation);
 
       const mcpServers = this.configManager.getMcpServers();
@@ -406,23 +479,37 @@ export class InteractiveSession {
       return;
     }
 
+    // Recreate readline interface for input
+    if (this.rl) {
+      this.rl.close();
+    }
+
+    // Enable raw mode BEFORE emitKeypressEvents for better ESC detection
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+    process.stdin.resume();
+    readline.emitKeypressEvents(process.stdin);
+
+    this.rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout
+    });
+
     const prompt = `${colors.primaryBright('❯')} `;
+    this.rl.question(prompt, async (input: string) => {
+      if ((this as any)._isShuttingDown) {
+        return;
+      }
 
-    // 使用 StdinManager 进行输入
-    const input = await this.stdinManager.question(prompt);
+      try {
+        await this.handleInput(input);
+      } catch (err: any) {
+        console.log(colors.error(`Error: ${err.message}`));
+      }
 
-    if ((this as any)._isShuttingDown) {
-      return;
-    }
-
-    try {
-      await this.handleInput(input);
-    } catch (err: any) {
-      console.log(colors.error(`Error: ${err.message}`));
-    }
-
-    // 继续下一个循环
-    this.promptLoop();
+      this.promptLoop();
+    });
   }
 
   private async handleInput(input: string): Promise<void> {
@@ -436,7 +523,7 @@ export class InteractiveSession {
       const handled = await this.slashCommandHandler.handleCommand(trimmedInput);
       if (handled) {
         this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
-        // 同步对话历史到 slashCommandHandler
+        // Sync conversation history to slashCommandHandler
         this.slashCommandHandler.setConversationHistory(this.conversation);
       }
       return;
@@ -529,10 +616,15 @@ export class InteractiveSession {
     this.conversation.push(userMessage);
     await this.conversationManager.addMessage(userMessage);
 
-    // 检查是否需要压缩上下文
+    // Check if context compression is needed
     await this.checkAndCompressContext(lastUserMessage);
 
-    await this.generateResponse(thinkingTokens);
+    // Use remote AI client if available (OAuth XAGENT mode)
+    if (this.remoteAIClient) {
+      await this.generateRemoteResponse(thinkingTokens);
+    } else {
+      await this.generateResponse(thinkingTokens);
+    }
   }
 
   private displayThinkingContent(reasoningContent: string): void {
@@ -583,7 +675,7 @@ export class InteractiveSession {
   }
 
   /**
-   * 检查并压缩对话上下文
+   * Check and compress conversation context
    */
   private async checkAndCompressContext(lastUserMessage?: ChatMessage): Promise<void> {
     const compressionConfig = this.configManager.getContextCompressionConfig();
@@ -618,7 +710,7 @@ export class InteractiveSession {
         // console.log(`${indent}${colors.success(`✓ Compressed ${result.originalMessageCount} messages to ${result.compressedMessageCount} messages`)}`);
         console.log(`${indent}${colors.textMuted(`✓ Size: ${result.originalSize} → ${result.compressedSize} chars (${Math.round((1 - result.compressedSize / result.originalSize) * 100)}% reduction)`)}`);
 
-        // 显示压缩后的摘要内容
+        // Display compressed summary content
         const summaryMessage = result.compressedMessages.find(m => m.role === 'assistant');
         if (summaryMessage && summaryMessage.content) {
           const maxPreviewLength = 800;
@@ -641,12 +733,12 @@ export class InteractiveSession {
           console.log(`${indent}${colors.border(separator)}`);
         }
 
-        // 压缩后恢复用户消息，确保 API 调用时有 user 消息
+        // Restore user messages after compression, ensuring user message exists for API calls
         if (lastUserMessage) {
           this.conversation.push(lastUserMessage);
         }
 
-        // 同步压缩后的对话历史到 slashCommandHandler
+        // Sync compressed conversation history to slashCommandHandler
         this.slashCommandHandler.setConversationHistory(this.conversation);
       }
     }
@@ -703,8 +795,37 @@ export class InteractiveSession {
     }
   }
 
-  private async generateResponse(thinkingTokens: number = 0): Promise<void> {
+  /**
+   * Create unified LLM Caller
+   * Implement transparency: caller doesn't need to care about remote vs local mode
+   * Remote mode takes priority
+   */
+  private createLLMCaller() {
+    // Remote mode takes priority
+    if (this.remoteAIClient) {
+      return {
+        chatCompletion: (messages: ChatMessage[], options: any) => 
+          this.remoteAIClient!.chatCompletion(messages, options),
+        isRemote: true
+      };
+    }
+
+    // Local mode
     if (!this.aiClient) {
+      throw new Error('AI client not initialized');
+    }
+    return {
+      chatCompletion: (messages: ChatMessage[], options: any) => 
+        this.aiClient!.chatCompletion(messages as any, options),
+      isRemote: false
+    };
+  }
+
+  private async generateResponse(thinkingTokens: number = 0): Promise<void> {
+    // Use unified LLM Caller
+    const { chatCompletion, isRemote } = this.createLLMCaller();
+
+    if (!isRemote && !this.aiClient) {
       console.log(colors.error('AI client not initialized'));
       return;
     }
@@ -744,21 +865,22 @@ export class InteractiveSession {
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
       const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
-      const messages: Message[] = [
-        { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}` },
+      const messages: ChatMessage[] = [
+        { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}`, timestamp: Date.now() },
         ...this.conversation.map(msg => ({
           role: msg.role,
-          content: msg.content
+          content: msg.content,
+          timestamp: msg.timestamp
         }))
       ];
 
-      // Debug: 打印完整的 prompt 信息
+      // Debug: Print full prompt info
       // const logger = new Logger({ minLevel: LogLevel.DEBUG });
-      // logger.debug('[DEBUG] 即将发送给 AI 的完整 Prompt:');
+      // logger.debug('[DEBUG] Full Prompt to be sent to AI:');
       // console.log('\n' + '='.repeat(60));
       // console.log('【SYSTEM PROMPT】');
       // console.log('-'.repeat(60));
-      // console.log(messages[0]?.content || '(无)');
+      // console.log(messages[0]?.content || '(none)');
       // console.log('='.repeat(60));
       // console.log('【CONVERSATION】');
       // console.log('-'.repeat(60));
@@ -767,28 +889,33 @@ export class InteractiveSession {
       //   console.log(`[${idx + 1}] [${msg.role}]: ${contentStr.substring(0, 200)}${contentStr.length > 200 ? '...' : ''}`);
       // });
       // console.log('='.repeat(60));
-      // console.log(`【AVAILABLE TOOLS】: ${availableTools.length} 个工具`);
+      // console.log(`【AVAILABLE TOOLS】: ${availableTools.length} items`);
       // availableTools.forEach((tool: any) => {
       //   console.log(`  - ${tool.function.name}`);
             // });      // console.log('='.repeat(60) + '\n');
       
-            // Debug: 打印AI输入信息 (已移至 ai-client.ts)
+            // Debug: Print AI input info (moved to ai-client.ts)
             // if (this.configManager.get('showAIDebugInfo')) {
             //   this.displayAIDebugInfo('INPUT', messages, availableTools);
             // }
       
-            const response = await this.aiClient.chatCompletion(messages, {
-        tools: availableTools,
-        toolChoice: availableTools.length > 0 ? 'auto' : 'none',
-        thinkingTokens
-      });
+            // Generate AI response with cancellation support
+      const operationId = `ai-response-${Date.now()}`;
+      const response = await this.cancellationManager.withCancellation(
+        chatCompletion(messages, {
+          tools: availableTools,
+          toolChoice: availableTools.length > 0 ? 'auto' : 'none',
+          thinkingTokens
+        }),
+        operationId
+      );
 
       clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r'); // Clear spinner line
 
       const assistantMessage = response.choices[0].message;
 
-      // Debug: 打印AI输出信息 (已移至 ai-client.ts)
+      // Debug: Print AI output info (moved to ai-client.ts)
       // if (this.configManager.get('showAIDebugInfo')) {
       //   this.displayAIDebugInfo('OUTPUT', response, assistantMessage);
       // }
@@ -857,6 +984,170 @@ export class InteractiveSession {
       }
 
       console.log(colors.error(`Error: ${error.message}`));
+    }
+  }
+
+  /**
+   * Generate response using remote AI service（OAuth XAGENT 模式）
+   * Support full tool calling loop
+   * 与本地模式 generateResponse 保持一致
+   */
+  private async generateRemoteResponse(thinkingTokens: number = 0): Promise<void> {
+    // 使用统一的 LLM Caller
+    const { chatCompletion, isRemote } = this.createLLMCaller();
+
+    if (!isRemote) {
+      // 如果不是远程模式，回退到本地模式
+      return this.generateResponse(thinkingTokens);
+    }
+
+    const indent = this.getIndent();
+    const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
+    const icon = colors.primary(icons.brain);
+    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let frameIndex = 0;
+
+    // Mark that an operation is in progress
+    (this as any)._isOperationInProgress = true;
+
+    // Custom spinner: only icon rotates, text stays static
+    const spinnerInterval = setInterval(() => {
+      process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
+      frameIndex = (frameIndex + 1) % frames.length;
+    }, 120);
+
+    try {
+      // Load memory (与本地模式一致)
+      const memory = await this.memoryManager.loadMemory();
+
+      // Get tool definitions
+      const toolRegistry = getToolRegistry();
+      const allowedToolNames = this.currentAgent
+        ? this.agentManager.getAvailableToolsForAgent(this.currentAgent, this.executionMode)
+        : [];
+
+      const allToolDefinitions = toolRegistry.getToolDefinitions();
+      
+      const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
+        ? allToolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
+        : allToolDefinitions;
+
+      // Convert to the format expected by backend (与本地模式一致使用 availableTools)
+      const tools = availableTools.map((tool: any) => ({
+        type: 'function' as const,
+        function: {
+          name: tool.function.name,
+          description: tool.function.description || '',
+          parameters: tool.function.parameters || {
+            type: 'object' as const,
+            properties: {}
+          }
+        }
+      }));
+
+      // Debug: Print tool list，特别是确认 gui-subagent 是否在列表中
+      const hasGuiSubagent = tools.some((t: any) => t.function.name === 'task');
+      const guiSubagentTool = tools.find((t: any) => t.function.name === 'task');
+      console.log(`[DEBUG] 工具总数: ${tools.length}, includes task 工具: ${hasGuiSubagent}`);
+      if (guiSubagentTool) {
+        const hasGuiSubagentInDesc = guiSubagentTool.function.description?.includes('gui-subagent');
+        console.log(`[DEBUG] task 工具描述中includes gui-subagent: ${hasGuiSubagentInDesc}`);
+      }
+
+      // Generate system prompt (与本地模式一致)
+      const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
+      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+      const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
+
+      // Build messages with system prompt (与本地模式一致)
+      const messages: ChatMessage[] = [
+        { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}`, timestamp: Date.now() },
+        ...this.conversation.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp
+        }))
+      ];
+
+      // Call unified LLM API
+      const response = await chatCompletion(messages, {
+        tools,
+        toolChoice: tools.length > 0 ? 'auto' : 'none',
+        thinkingTokens
+      });
+
+      clearInterval(spinnerInterval);
+      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
+      console.log('');
+
+      // 使用统一的响应格式（与本地模式一致）
+      const assistantMessage = response.choices[0].message;
+      const content = typeof assistantMessage.content === 'string'
+        ? assistantMessage.content
+        : '';
+      const reasoningContent = assistantMessage.reasoning_content || '';
+      const toolCalls = assistantMessage.tool_calls || [];
+
+      // Display reasoning content if available and thinking mode is enabled (与本地模式一致)
+      if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
+        this.displayThinkingContent(reasoningContent);
+      }
+
+      console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
+      console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
+      console.log('');
+      const renderedContent = renderMarkdown(content, (process.stdout.columns || 80) - indent.length * 2);
+      console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
+      console.log('');
+
+      // Add assistant message to conversation (consistent with local mode, including reasoningContent)
+      this.conversation.push({
+        role: 'assistant',
+        content,
+        timestamp: Date.now(),
+        reasoningContent,
+        toolCalls: toolCalls
+      });
+
+      // Record output to session manager (consistent with local mode, including reasoningContent and toolCalls)
+      await this.sessionManager.addOutput({
+        role: 'assistant',
+        content,
+        timestamp: Date.now(),
+        reasoningContent,
+        toolCalls
+      });
+
+      // Handle tool calls
+      if (toolCalls.length > 0) {
+        await this.handleRemoteToolCalls(toolCalls);
+      }
+
+      // Checkpoint support (consistent with local mode)
+      if (this.checkpointManager.isEnabled()) {
+        await this.checkpointManager.createCheckpoint(
+          `Response generated at ${new Date().toLocaleString()}`,
+          [...this.conversation],
+          [...this.toolCalls]
+        );
+      }
+
+      // Operation completed successfully
+      (this as any)._isOperationInProgress = false;
+
+    } catch (error: any) {
+      clearInterval(spinnerInterval);
+      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
+
+      // Clear the operation flag
+      (this as any)._isOperationInProgress = false;
+
+      if (error.message === 'Operation cancelled by user') {
+        return;
+      }
+
+      console.log(colors.error(`Error: ${error.message}`));
+      return;
     }
   }
 
@@ -1034,6 +1325,146 @@ export class InteractiveSession {
   }
 
   /**
+   * Handle tool calls for remote AI mode
+   * Executes tools and then continues the conversation with results
+   */
+  private async handleRemoteToolCalls(toolCalls: any[]): Promise<void> {
+    // Mark that tool execution is in progress
+    (this as any)._isOperationInProgress = true;
+
+    const toolRegistry = getToolRegistry();
+    const showToolDetails = this.configManager.get('showToolDetails') || false;
+    const indent = this.getIndent();
+
+    // Prepare all tool calls
+    const preparedToolCalls = toolCalls.map((toolCall, index) => {
+      const { name, arguments: params } = toolCall.function;
+
+      let parsedParams: any;
+      try {
+        parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
+      } catch (e) {
+        parsedParams = params;
+      }
+
+      return { name, params: parsedParams, index };
+    });
+
+    // Display all tool calls info
+    for (const { name, params } of preparedToolCalls) {
+      if (showToolDetails) {
+        console.log('');
+        console.log(`${indent}${colors.warning(`${icons.tool} Tool Call: ${name}`)}`);
+        console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
+      } else {
+        const toolDescription = this.getToolDescription(name, params);
+        console.log('');
+        console.log(`${indent}${colors.textMuted(`${icons.loading} ${toolDescription}`)}`);
+      }
+    }
+
+    // Execute all tools in parallel
+    const results = await toolRegistry.executeAll(
+      preparedToolCalls.map(tc => ({ name: tc.name, params: tc.params })),
+      this.executionMode
+    );
+
+    // Process results and maintain order
+    for (const { tool, result, error } of results) {
+      const toolCall = preparedToolCalls.find(tc => tc.name === tool);
+      if (!toolCall) continue;
+
+      const { params } = toolCall;
+
+      if (error) {
+        // Clear the operation flag
+        (this as any)._isOperationInProgress = false;
+
+        if (error === 'Operation cancelled by user') {
+          return;
+        }
+
+        console.log('');
+        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
+
+        this.conversation.push({
+          role: 'tool',
+          content: JSON.stringify({ error }),
+          timestamp: Date.now()
+        });
+      } else {
+        // Use correct indent for gui-subagent tasks
+        const isGuiSubagent = tool === 'task' && params?.subagent_type === 'gui-subagent';
+        const displayIndent = isGuiSubagent ? indent + '  ' : indent;
+
+        // Always show details for todo tools so users can see their task lists
+        const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
+        if (isTodoTool) {
+          console.log('');
+          console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
+          console.log(this.renderTodoList(result.todos || result.todos, displayIndent));
+          // Show summary if available
+          if (result.message) {
+            console.log(`${displayIndent}${colors.textDim(result.message)}`);
+          }
+        } else if (showToolDetails) {
+          console.log('');
+          console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
+          console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
+        } else if (result.success === false) {
+          // GUI task or other tool failed
+          console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
+        } else {
+          console.log(`${displayIndent}${colors.success(`${icons.check} Completed`)}`);
+        }
+
+        const toolCallRecord: ToolCall = {
+          tool,
+          params,
+          result,
+          timestamp: Date.now()
+        };
+
+        this.toolCalls.push(toolCallRecord);
+
+        // Record tool output to session manager
+        await this.sessionManager.addOutput({
+          role: 'tool',
+          content: JSON.stringify(result),
+          toolName: tool,
+          toolParams: params,
+          toolResult: result,
+          timestamp: Date.now()
+        });
+
+        this.conversation.push({
+          role: 'tool',
+          content: JSON.stringify(result),
+          timestamp: Date.now()
+        });
+      }
+    }
+
+    // Logic: Only skip returning results to main agent when user explicitly cancelled (ESC)
+    // For all other cases (success, failure, errors), always return results for further processing
+    const guiSubagentFailed = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent');
+    const guiSubagentCancelled = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent' && results.some(r => r.tool === 'task' && (r.result as any)?.cancelled === true));
+
+    // If GUI agent was cancelled by user, don't continue generating response
+    // This avoids wasting API calls and tokens on cancelled tasks
+    if (guiSubagentCancelled) {
+      console.log('');
+      console.log(`${indent}${colors.textMuted('GUI task cancelled by user')}`);
+      (this as any)._isOperationInProgress = false;
+      return;
+    }
+
+    // For all other cases (GUI success/failure, other tool errors), return results to main agent
+    // This allows main agent to decide how to handle failures (retry, fallback, user notification, etc.)
+    await this.generateRemoteResponse();
+  }
+
+  /**
    * Truncate path for display
    */
   private truncatePath(path: string, maxLength: number = 30): string {
@@ -1080,7 +1511,7 @@ export class InteractiveSession {
   /**
    * Display AI debug information (input or output)
    */
-  // AI 调试信息已移至 ai-client.ts 实现
+  // AI debug info moved to ai-client.ts implementation
   // private displayAIDebugInfo(type: 'INPUT' | 'OUTPUT', data: any, extra?: any): void {
   //   const indent = this.getIndent();
   //   const boxChar = {
@@ -1102,19 +1533,18 @@ export class InteractiveSession {
   //     const messages = data as any[];
   //     const tools = extra as any[];
   //
-  //     // System prompt
-  //     const systemMsg = messages.find((m: any) => m.role === 'system');
-  //     console.log(colors.border(`${boxChar.vertical}`) + ' 🟫 SYSTEM: ' +
-  //       colors.textMuted(systemMsg?.content?.toString().substring(0, 50) || '(无)') + ' '.repeat(3) + colors.border(boxChar.vertical));
-  //
-  //     // Messages count
-  //     console.log(colors.border(`${boxChar.vertical}`) + ' 💬 MESSAGES: ' +
-  //       colors.text(messages.length.toString()) + ' 条' + ' '.repeat(40) + colors.border(boxChar.vertical));
-  //
-  //     // Tools count
-  //     console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOLS: ' +
-  //       colors.text((tools?.length || 0).toString()) + ' 个' + ' '.repeat(43) + colors.border(boxChar.vertical));
-  //
+      //     // System prompt
+      //     const systemMsg = messages.find((m: any) => m.role === 'system');
+      //     console.log(colors.border(`${boxChar.vertical}`) + ' 🟫 SYSTEM: ' +
+      //       colors.textMuted(systemMsg?.content?.toString().substring(0, 50) || '(none)') + ' '.repeat(3) + colors.border(boxChar.vertical));
+      //
+      //     // Messages count
+      //     console.log(colors.border(`${boxChar.vertical}`) + ' 💬 MESSAGES: ' +
+      //       colors.text(messages.length.toString()) + ' items' + ' '.repeat(40) + colors.border(boxChar.vertical));
+      //
+      //     // Tools count
+      //     console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOLS: ' +
+      //       colors.text((tools?.length || 0).toString()) + '' + ' '.repeat(43) + colors.border(boxChar.vertical));  //
   //     // Show last 2 messages
   //     const recentMessages = messages.slice(-2);
   //     for (const msg of recentMessages) {
@@ -1138,8 +1568,8 @@ export class InteractiveSession {
   //       colors.text(`Prompt: ${response.usage?.prompt_tokens || '?'}, Completion: ${response.usage?.completion_tokens || '?'}`) +
   //       ' '.repeat(15) + colors.border(boxChar.vertical));
   //
-  //     console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOL_CALLS: ' +
-  //       colors.text((message.tool_calls?.length || 0).toString()) + ' 个' + ' '.repeat(37) + colors.border(boxChar.vertical));
+        // console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOL_CALLS: ' +
+        //   colors.text((message.tool_calls?.length || 0).toString()) + '' + ' '.repeat(37) + colors.border(boxChar.vertical));
   //
   //     // Content preview
   //     const contentStr = typeof message.content === 'string'
@@ -1155,6 +1585,8 @@ export class InteractiveSession {
   // }
 
   shutdown(): void {
+    this.rl.close();
+    this.cancellationManager.cleanup();
     this.mcpManager.disconnectAllServers();
 
     // End the current session

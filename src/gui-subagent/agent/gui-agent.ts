@@ -47,11 +47,25 @@ export enum GUIAgentStatus {
   CALL_USER = 'call_user',
 }
 
+/**
+ * VLM Caller callback function type
+ * Inject this function externally来处理 VLM 调用，GUI Agent doesn't need to know VLM 的实现细节
+ * systemPrompt 由 GUI Agent 生成并传递给调用方
+ */
+export type VLMCaller = (image: string, prompt: string, systemPrompt: string) => Promise<string>;
+
 export interface GUIAgentConfig<T extends Operator> {
   operator: T;
   model?: string;
   modelBaseUrl?: string;
   modelApiKey?: string;
+  /**
+   * Externally injected VLM caller function
+   * If this function is provided，GUI Agent will use it来调用 VLM，
+   * 而不是直接调用 modelBaseUrl/modelApiKey
+   * 这使得 GUI Agent 可以与远程服务配合使用，而不暴露任何配置信息
+   */
+  vlmCaller?: VLMCaller;
   systemPrompt?: string;
   loopIntervalInMs?: number;
   maxLoopCount?: number;
@@ -113,6 +127,7 @@ export class GUIAgent<T extends Operator> {
   private readonly model: string;
   private readonly modelBaseUrl: string;
   private readonly modelApiKey: string;
+  private readonly vlmCaller?: VLMCaller;
   private readonly systemPrompt: string;
   private readonly loopIntervalInMs: number;
   private readonly maxLoopCount: number;
@@ -133,6 +148,7 @@ export class GUIAgent<T extends Operator> {
     this.model = config.model || '';
     this.modelBaseUrl = config.modelBaseUrl || '';
     this.modelApiKey = config.modelApiKey || '';
+    this.vlmCaller = config.vlmCaller;
     this.loopIntervalInMs = config.loopIntervalInMs || 0;
     this.maxLoopCount = config.maxLoopCount || MAX_LOOP_COUNT;
     this.logger = config.logger || guiLogger;
@@ -770,11 +786,54 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
   /**
    * Call the model API with debug logging
+   * If vlmCaller is provided, use it instead of direct API calls
    */
   private async callModelAPI(
     messages: any[],
     screenContext: ScreenContext
   ): Promise<{ prediction: string; parsedPredictions: PredictionParsed[] }> {
+    // If vlmCaller is provided，Use externally injected caller function
+    if (this.vlmCaller) {
+      const lastUserMessage = messages[messages.length - 1];
+      let image = '';
+      let prompt = '';
+
+      if (lastUserMessage && Array.isArray(lastUserMessage.content)) {
+        const imageBlock = lastUserMessage.content.find((c: any) => c.type === 'image_url');
+        const textBlock = lastUserMessage.content.find((c: any) => c.type === 'text');
+
+        if (imageBlock) {
+          // Extract base64 from data URL or use direct URL
+          const imageUrl = imageBlock.image_url?.url || '';
+          if (imageUrl.startsWith('data:image')) {
+            image = imageUrl.split(',')[1] || '';
+          } else {
+            image = imageUrl;
+          }
+        }
+        prompt = textBlock?.text || '';
+      }
+
+      // 使用Externally injected VLM caller function（传递 systemPrompt）
+      const prediction = await this.vlmCaller(image, prompt, this.systemPrompt);
+
+      // 解析预测结果
+      const { parsed: parsedPredictions } = actionParser({
+        prediction,
+        factor: [1000, 1000],
+        screenContext: {
+          width: screenContext.width,
+          height: screenContext.height,
+        },
+      });
+
+      return {
+        prediction,
+        parsedPredictions,
+      };
+    }
+
+    // Original logic：Call model API directly
     const baseUrl = this.modelBaseUrl || process.env.MODEL_BASE_URL || 'https://api.openai.com/v1';
     const apiKey = this.modelApiKey || process.env.MODEL_API_KEY || '';
 
@@ -966,6 +1025,15 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
   async cleanup(): Promise<void> {
     this.logger.debug('Cleaning up GUI Agent...');    
     await this.operator.cleanup();
+
+    // Cleanup cancellation listener if attached
+    const cancelHandler = (this as any)._cancelHandler;
+    const cancellationManager = (this as any)._cancellationManager;
+    if (cancelHandler && cancellationManager) {
+      cancellationManager.off('cancelled', cancelHandler);
+      (this as any)._cancelHandler = undefined;
+      (this as any)._cancellationManager = undefined;
+    }
   }
 }
 

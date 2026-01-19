@@ -10,6 +10,7 @@ import { Tool, ExecutionMode, AuthType } from './types.js';
 import type { Message, ToolDefinition } from './ai-client.js';
 import { colors, icons, styleHelpers } from './theme.js';
 import { getLogger } from './logger.js';
+import { getCancellationManager } from './cancellation.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { InteractiveSession } from './session.js';
 
@@ -1007,8 +1008,69 @@ export class TaskTool implements Tool {
   }
 
   /**
+   * Create unified VLM caller
+   * Uses remote VLM if remoteAIClient is provided, otherwise uses local VLM
+   */
+  private createVLMCaller(
+    remoteAIClient: any,
+    localConfig: { baseUrl: string; apiKey: string; modelName: string }
+  ): (image: string, prompt: string, systemPrompt: string) => Promise<string> {
+    // Remote mode takes priority
+    if (remoteAIClient) {
+      return async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
+        try {
+          return await remoteAIClient.invokeVLM(image, userPrompt, systemPrompt);
+        } catch (error: any) {
+          throw new Error(`Remote VLM call failed: ${error.message}`);
+        }
+      };
+    }
+
+    // Local mode
+    const { baseUrl, apiKey, modelName } = localConfig;
+    return async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
+      const messages = [
+        ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: userPrompt },
+            { type: 'image_url', image_url: { url: `data:image/png;base64,${image}` } }
+          ]
+        }
+      ];
+
+      const requestBody = {
+        model: modelName,
+        messages,
+        max_tokens: 1024,
+        temperature: 0.1,
+      };
+
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`VLM API error: ${errorText}`);
+      }
+
+      const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+      return result.choices?.[0]?.message?.content || '';
+    };
+  }
+
+  /**
    * Execute GUI subagent by directly calling GUIAgent.run()
    * This bypasses the normal subagent message loop for better GUI control
+   *
+   * @param remoteAIClient - Optional RemoteAIClient instance for remote mode
    */
   private async executeGUIAgent(
     prompt: string,
@@ -1016,72 +1078,97 @@ export class TaskTool implements Tool {
     agent: any,
     mode: ExecutionMode,
     config: any,
-    indentLevel: number = 1
-  ): Promise<{ success: boolean; message: string; result?: any }> {
+    indentLevel: number = 1,
+    remoteAIClient?: any
+  ): Promise<{ success: boolean; cancelled?: boolean; message: string; result?: any }> {
     const indent = '  '.repeat(indentLevel);
 
     console.log(`${indent}${colors.primaryBright(`${icons.robot} GUI Agent`)}: ${description}`);
     console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
     console.log('');
 
-    // Get model config for GUI agent
-    // Priority: guiSubagentBaseUrl (test first) -> baseUrl (fallback)
-    // When falling back to baseUrl, also use the corresponding modelName and apiKey
-    const primaryBaseUrl = config.get('guiSubagentBaseUrl') || '';
-    const fallbackBaseUrl = config.get('baseUrl') || '';
-    const primaryApiKey = config.get('guiSubagentApiKey') || '';
-    const fallbackApiKey = config.get('apiKey') || '';
-    const primaryModelName = config.get('guiSubagentModel') || '';
-    const fallbackModelName = config.get('modelName') || '';
+    // Get local VLM configuration
+    const baseUrl = config.get('guiSubagentBaseUrl') || config.get('baseUrl') || '';
+    const apiKey = config.get('guiSubagentApiKey') || config.get('apiKey') || '';
+    const modelName = config.get('guiSubagentModel') || config.get('modelName') || '';
 
-    let baseUrl = primaryBaseUrl;
-    let modelName = primaryModelName;
-    let apiKey = primaryApiKey;
-
-    // Test API availability (like curl) and choose the right baseUrl
-    if (primaryBaseUrl) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
-        const response = await fetch(`${primaryBaseUrl.replace(/\/v1\/?$/, '')}/models`, {
-          method: 'GET',
-          headers: primaryApiKey ? { 'Authorization': `Bearer ${primaryApiKey}` } : {},
-          signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-        if (!response.ok) {
-          // Fallback to baseUrl with its corresponding model and API key
-          baseUrl = fallbackBaseUrl;
-          modelName = fallbackModelName;
-          apiKey = fallbackApiKey;
-        }
-      } catch {
-        // Fallback to baseUrl with its corresponding model and API key
-        baseUrl = fallbackBaseUrl;
-        modelName = fallbackModelName;
-        apiKey = fallbackApiKey;
-      }
+    // Transparency: use remote mode if remoteAIClient exists, otherwise use local mode
+    const isRemoteMode = !!remoteAIClient;
+    if (isRemoteMode) {
+      console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
     } else {
-      baseUrl = fallbackBaseUrl;
-      modelName = fallbackModelName;
-      apiKey = fallbackApiKey;
+      console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
+      // Local mode requires configuration check
+      if (!baseUrl) {
+        return {
+          success: false,
+          message: `GUI task "${description}" failed: No valid API URL configured`
+        };
+      }
     }
 
-    if (!baseUrl) {
-      return {
-        success: false,
-        message: `GUI task "${description}" failed: No valid API URL configured`
-      };
-    }
+    // Transparency: create unified vlmCaller, caller doesn't care about internal implementation
+    const vlmCaller = this.createVLMCaller(remoteAIClient, { baseUrl, apiKey, modelName });
+
+    // Set up stdin polling for ESC cancellation
+    let rawModeEnabled = false;
+    let stdinPollingInterval: NodeJS.Timeout | null = null;
+    const cancellationManager = getCancellationManager();
+    const logger = getLogger();
+
+    const setupStdinPolling = () => {
+      if (process.stdin.isTTY) {
+        try {
+          process.stdin.setRawMode(true);
+          rawModeEnabled = true;
+          process.stdin.resume();
+          readline.emitKeypressEvents(process.stdin);
+        } catch (e) {
+          logger.debug(`[GUIAgent] Could not set raw mode: ${e}`);
+        }
+
+        stdinPollingInterval = setInterval(() => {
+          try {
+            if (rawModeEnabled) {
+              const chunk = process.stdin.read(1);
+              if (chunk && chunk.length > 0) {
+                const code = chunk[0];
+                if (code === 0x1B) { // ESC
+                  logger.debug('[GUIAgent] ESC detected!');
+                  cancellationManager.cancel();
+                }
+              }
+            }
+          } catch (e) {
+            // Ignore polling errors
+          }
+        }, 10);
+      }
+    };
+
+    const cleanupStdinPolling = () => {
+      if (stdinPollingInterval) {
+        clearInterval(stdinPollingInterval);
+        stdinPollingInterval = null;
+      }
+    };
+
+    // Set up cancellation
+    let cancelled = false;
+    const cancelHandler = () => {
+      cancelled = true;
+    };
+    cancellationManager.on('cancelled', cancelHandler);
+
+    // Start polling for ESC
+    setupStdinPolling();
 
     try {
       // Import and create GUIAgent
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
 
       const guiAgent = await createGUISubAgent({
-        model: modelName,
-        modelBaseUrl: baseUrl || undefined,
-        modelApiKey: apiKey || undefined,
+        vlmCaller,
         maxLoopCount: 30,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
@@ -1095,6 +1182,23 @@ export class TaskTool implements Tool {
 
       // Cleanup
       await guiAgent.cleanup();
+
+      // Check cancellation
+      if (cancelled || cancellationManager.isOperationCancelled()) {
+        cleanupStdinPolling();
+        cancellationManager.off('cancelled', cancelHandler);
+        // Flush stdout to prevent residual output after prompt
+        process.stdout.write('\n');
+        return {
+          success: true,
+          cancelled: true,  // Mark as cancelled so main agent won't continue
+          message: `GUI task "${description}" cancelled by user`,
+          result: 'Task cancelled'
+        };
+      }
+
+      cleanupStdinPolling();
+      cancellationManager.off('cancelled', cancelHandler);
 
       // Flush stdout to ensure all output is displayed before returning
       process.stdout.write('\n');
@@ -1123,8 +1227,30 @@ export class TaskTool implements Tool {
         };
       }
     } catch (error: any) {
+      cleanupStdinPolling();
+      cancellationManager.off('cancelled', cancelHandler);
+
       // Flush stdout to prevent residual output
       process.stdout.write('\n');
+
+      // If the user cancelled the task, ignore any API errors (like 429)
+      // and return cancelled status instead
+      if (cancelled || cancellationManager.isOperationCancelled()) {
+        return {
+          success: true,
+          cancelled: true,  // Mark as cancelled so main agent won't continue
+          message: `GUI task "${description}" cancelled by user`,
+          result: 'Task cancelled'
+        };
+      }
+
+      if (error.message === 'Operation cancelled by user') {
+        return {
+          success: true,
+          message: `GUI task "${description}" cancelled by user`,
+          result: 'Task cancelled'
+        };
+      }
 
       // Return failure without throwing - let the main agent handle it
       return {
@@ -1155,13 +1281,33 @@ export class TaskTool implements Tool {
 
     // Special handling for gui-subagent: directly call GUIAgent.run() instead of subagent message loop
     if (subagent_type === 'gui-subagent') {
+      // Get RemoteAIClient instance (if available)
+      let remoteAIClient: any;
+      try {
+        const { RemoteAIClient } = await import('./remote-ai-client.js');
+        const { getConfigManager } = await import('./config.js');
+        const cfg = getConfigManager();
+        const authConfig = cfg.getAuthConfig();
+        const selectedAuthType = cfg.get('selectedAuthType');
+
+        if (selectedAuthType === AuthType.OAUTH_XAGENT && authConfig.apiKey) {
+          const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+          const showAIDebugInfo = cfg.get('showAIDebugInfo') || false;
+          remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl, showAIDebugInfo);
+        }
+      } catch (e) {
+        // RemoteAIClient not available, keep undefined
+        remoteAIClient = undefined;
+      }
+
       return this.executeGUIAgent(
         prompt,
         description,
         agent,
         mode,
         config,
-        indentLevel
+        indentLevel,
+        remoteAIClient
       );
     }
 
@@ -1214,6 +1360,70 @@ export class TaskTool implements Tool {
     const fullPrompt = constraints.length > 0
       ? `${prompt}\n\nConstraints:\n${constraints.map(c => `- ${c}`).join('\n')}`
       : prompt;
+
+    // Set up raw mode and stdin polling for ESC detection
+    const cancellationManager = getCancellationManager();
+    const logger = getLogger();
+    let cancelled = false;
+
+    let rawModeEnabled = false;
+    let stdinPollingInterval: NodeJS.Timeout | null = null;
+
+    const setupStdinPolling = () => {
+      if (process.stdin.isTTY) {
+        try {
+          process.stdin.setRawMode(true);
+          rawModeEnabled = true;
+          process.stdin.resume();
+          readline.emitKeypressEvents(process.stdin);
+        } catch (e) {
+          logger.debug(`[TaskTool] Could not set raw mode: ${e}`);
+        }
+
+        // Start polling for ESC key (10ms interval for faster response)
+        stdinPollingInterval = setInterval(() => {
+          try {
+            if (rawModeEnabled) {
+              const chunk = process.stdin.read(1);
+              if (chunk && chunk.length > 0) {
+                const code = chunk[0];
+                if (code === 0x1B) { // ESC
+                  logger.debug('[TaskTool] ESC detected via polling!');
+                  cancellationManager.cancel();
+                }
+              }
+            }
+          } catch (e) {
+            // Ignore polling errors
+          }
+        }, 10);
+      }
+    };
+
+    const cleanupStdinPolling = () => {
+      if (stdinPollingInterval) {
+        clearInterval(stdinPollingInterval);
+        stdinPollingInterval = null;
+      }
+    };
+
+    // Start polling for ESC
+    setupStdinPolling();
+
+    // Listen for cancellation
+    const cancelHandler = () => {
+      cancelled = true;
+    };
+    cancellationManager.on('cancelled', cancelHandler);
+
+    // Check if operation is cancelled
+    const checkCancellation = () => {
+      if (cancelled || cancellationManager.isOperationCancelled()) {
+        cancellationManager.off('cancelled', cancelHandler);
+        cleanupStdinPolling();
+        throw new Error('Operation cancelled by user');
+      }
+    };
     
     let messages: Message[] = [
       { role: 'system', content: enhancedSystemPrompt },
@@ -1244,10 +1454,20 @@ export class TaskTool implements Tool {
     while (iteration < maxIterations) {
       iteration++;
       
-      const result = await subAgentClient.chatCompletion(messages, {
-        tools: toolDefinitions,
-        temperature: 0.7
-      }) as any;
+      // Check for cancellation before each iteration
+      checkCancellation();
+      
+      // Use withCancellation to make API call cancellable
+      const result = await cancellationManager.withCancellation(
+        subAgentClient.chatCompletion(messages, {
+          tools: toolDefinitions,
+          temperature: 0.7
+        }),
+        `api-${subagent_type}-${iteration}`
+      ) as any;
+
+      // Check for cancellation after API call
+      checkCancellation();
 
       if (!result || !result.choices || result.choices.length === 0) {
         throw new Error(`Sub-agent ${subagent_type} returned empty response`);
@@ -1310,7 +1530,13 @@ export class TaskTool implements Tool {
           console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${name}`)}`);
 
           try {
-            const toolResult = await toolRegistry.execute(name, parsedParams, mode, indent);
+            // Check cancellation before tool execution
+            checkCancellation();
+            
+            const toolResult = await cancellationManager.withCancellation(
+              toolRegistry.execute(name, parsedParams, mode, indent),
+              `subagent-${subagent_type}-${name}-${iteration}`
+            );
 
             // Display tool result with proper indentation for multi-line content
             const resultPreview = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
@@ -1324,6 +1550,16 @@ export class TaskTool implements Tool {
               tool_call_id: toolCall.id
             });
           } catch (error: any) {
+            if (error.message === 'Operation cancelled by user') {
+              console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
+              cancellationManager.off('cancelled', cancelHandler);
+              cleanupStdinPolling();
+              return {
+                success: false,
+                message: `Task "${description}" cancelled by user`,
+                result: contentStr
+              };
+            }
             console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error.message}\n`);
 
             messages.push({
@@ -1338,6 +1574,8 @@ export class TaskTool implements Tool {
       }
 
       // No more tool calls, return the result
+      cancellationManager.off('cancelled', cancelHandler);
+      cleanupStdinPolling();
       return {
         success: true,
         message: `Task "${description}" completed by ${subagent_type}`,
@@ -1350,6 +1588,8 @@ export class TaskTool implements Tool {
     const lastAssistantMsg = messages.filter(m => m.role === 'assistant').pop();
     const lastContent = lastAssistantMsg?.content || '';
 
+    cancellationManager.off('cancelled', cancelHandler);
+    cleanupStdinPolling();
     return {
       success: true,
       message: `Task "${description}" completed (max iterations reached) by ${subagent_type}`,
@@ -1368,12 +1608,75 @@ export class TaskTool implements Tool {
   ): Promise<{ success: boolean; message: string; results: any[]; errors: any[] }> {
     const indent = '  '.repeat(indentLevel);
     const indentNext = '  '.repeat(indentLevel + 1);
+    const cancellationManager = getCancellationManager();
+    const logger = getLogger();
+
+    // Set up raw mode and stdin polling for ESC detection
+    let rawModeEnabled = false;
+    let stdinPollingInterval: NodeJS.Timeout | null = null;
+
+    const setupStdinPolling = () => {
+      if (process.stdin.isTTY) {
+        try {
+          process.stdin.setRawMode(true);
+          rawModeEnabled = true;
+          process.stdin.resume();
+          readline.emitKeypressEvents(process.stdin);
+        } catch (e) {
+          logger.debug(`[ParallelAgents] Could not set raw mode: ${e}`);
+        }
+
+        stdinPollingInterval = setInterval(() => {
+          try {
+            if (rawModeEnabled) {
+              const chunk = process.stdin.read(1);
+              if (chunk && chunk.length > 0) {
+                const code = chunk[0];
+                if (code === 0x1B) { // ESC
+                  logger.debug('[ParallelAgents] ESC detected via polling!');
+                  cancellationManager.cancel();
+                }
+              }
+            }
+          } catch (e) {
+            // Ignore polling errors
+          }
+        }, 10);
+      }
+    };
+
+    const cleanupStdinPolling = () => {
+      if (stdinPollingInterval) {
+        clearInterval(stdinPollingInterval);
+        stdinPollingInterval = null;
+      }
+    };
+
+    // Start polling for ESC
+    setupStdinPolling();
+
+    // Listen for cancellation to stop parallel execution
+    let cancelled = false;
+    const cancelHandler = () => {
+      cancelled = true;
+    };
+    cancellationManager.on('cancelled', cancelHandler);
 
     console.log(`\n${indent}${colors.accent('◆')} ${colors.primaryBright('Parallel Agents')}: ${agents.length} running...`);
 
     const startTime = Date.now();
 
     const agentPromises = agents.map(async (agentTask, index) => {
+      // Check if cancelled
+      if (cancelled || cancellationManager.isOperationCancelled()) {
+        return {
+          success: false,
+          agent: agentTask.subagent_type,
+          description: agentTask.description,
+          error: 'Operation cancelled by user'
+        };
+      }
+
       try {
         const result = await this.executeSingleAgent(
           agentTask.subagent_type,
@@ -1421,6 +1724,10 @@ export class TaskTool implements Tool {
       }
       console.log('');
     }
+
+    // Cleanup
+    cancellationManager.off('cancelled', cancelHandler);
+    cleanupStdinPolling();
 
     return {
       success: failedAgents.length === 0,
@@ -2041,7 +2348,7 @@ export class InvokeSkillTool implements Tool {
     task: string;
     result?: any;
     files?: string[];
-    /** 告诉 Agent 接下来要做什么 */
+    /** Tell the agent what to do next */
     nextSteps?: Array<{
       step: number;
       action: string;
@@ -2077,7 +2384,7 @@ export class InvokeSkillTool implements Tool {
               confidence: match.confidence,
               matchedKeywords: match.matchedKeywords
             },
-            guidance: '请按照匹配到的技能继续执行任务。'
+            guidance: 'Please continue executing the task using the matched skill.'
           };
         }
         throw new Error(`Skill not found: ${skillId}`);
@@ -2092,28 +2399,28 @@ export class InvokeSkillTool implements Tool {
       });
 
       if (result.success) {
-        // 生成指导信息，告诉 Agent 接下来要做什么
+        // Generate guidance info, tell the agent what to do next
         let guidance = '';
         if (result.nextSteps && result.nextSteps.length > 0) {
-          guidance = `\n## 🎯 下一步操作\n\n请按照以下步骤继续执行任务：\n\n`;
+          guidance = `\n## 🎯 Next Steps\n\nPlease continue executing the task with the following steps:\n\n`;
           for (const step of result.nextSteps) {
-            guidance += `### 步骤 ${step.step}: ${step.action}\n`;
-            guidance += `- **描述**: ${step.description}\n`;
-            guidance += `- **原因**: ${step.reason}\n`;
+            guidance += `### Step ${step.step}: ${step.action}\n`;
+            guidance += `- **Description**: ${step.description}\n`;
+            guidance += `- **Reason**: ${step.reason}\n`;
             if (step.command) {
-              guidance += `- **命令**: \`${step.command}\`\n`;
+              guidance += `- **Command**: \`${step.command}\`\n`;
             }
             if (step.file) {
-              guidance += `- **文件**: ${step.file}\n`;
+              guidance += `- **File**: ${step.file}\n`;
             }
             guidance += '\n';
           }
-          guidance += `---\n**重要**: 上述步骤是根据 SKILL.md 自动生成的执行指南。请按照这些步骤继续完成任务，而不是结束对话。\n`;
+          guidance += `---\n**Important**: The above steps are automatically generated execution guidelines from SKILL.md. Please continue completing the task following these steps instead of ending the conversation.\n`;
         }
 
         return {
           success: true,
-          message: `技能已激活: ${skillDetails.name}`,
+          message: `Skill activated: ${skillDetails.name}`,
           skill: skillId,
           task: taskDescription,
           result: result.output + (guidance ? guidance : ''),
@@ -2964,6 +3271,7 @@ Make your decision based on the user's request and the above criteria.`
    */
   private async executeLocalTool(toolName: string, params: any, executionMode: ExecutionMode, indent: string): Promise<any> {
     const tool = this.get(toolName);
+    const cancellationManager = getCancellationManager();
 
     if (!tool) {
       throw new Error(`Tool not found: ${toolName}`);
@@ -2986,7 +3294,10 @@ Make your decision based on the user's request and the above criteria.`
           const logger = getLogger();
           logger.debug(`[SmartApprovalEngine] Tool '${toolName}' bypassed smart approval completely`);
         }
-        return tool.execute(params, executionMode);
+        return await cancellationManager.withCancellation(
+          tool.execute(params, executionMode),
+          `tool-${toolName}`
+        );
       }
 
       const { getSmartApprovalEngine } = await import('./smart-approval.js');
@@ -3010,7 +3321,10 @@ Make your decision based on the user's request and the above criteria.`
         console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
         console.log(`${indent}${colors.textDim(`  Latency: ${result.latency}ms`)}`);
         console.log('');
-        return tool.execute(params, executionMode);
+        return await cancellationManager.withCancellation(
+          tool.execute(params, executionMode),
+          `tool-${toolName}`
+        );
       } else if (result.decision === 'requires_confirmation') {
         // Requires user confirmation
         const confirmed = await approvalEngine.requestConfirmation(result);
@@ -3019,7 +3333,10 @@ Make your decision based on the user's request and the above criteria.`
           console.log('');
           console.log(`${indent}${colors.success(`✅ [Smart Mode] User confirmed execution of tool '${toolName}'`)}`);
           console.log('');
-          return tool.execute(params, executionMode);
+          return await cancellationManager.withCancellation(
+            tool.execute(params, executionMode),
+            `tool-${toolName}`
+          );
         } else {
           console.log('');
           console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled execution of tool '${toolName}'`)}`);
@@ -3037,7 +3354,10 @@ Make your decision based on the user's request and the above criteria.`
     }
 
     // Other modes execute directly
-    return await tool.execute(params, executionMode);
+    return await cancellationManager.withCancellation(
+      tool.execute(params, executionMode),
+      `tool-${toolName}`
+    );
   }
 
   /**
@@ -3046,6 +3366,7 @@ Make your decision based on the user's request and the above criteria.`
   private async executeMCPTool(toolName: string, params: any, executionMode: ExecutionMode, indent: string = ''): Promise<any> {
     const { getMCPManager } = await import('./mcp.js');
     const mcpManager = getMCPManager();
+    const cancellationManager = getCancellationManager();
 
     // Split only on the first __ to preserve underscores in tool names
     const firstUnderscoreIndex = toolName.indexOf('__');
@@ -3089,8 +3410,12 @@ Make your decision based on the user's request and the above criteria.`
       }
     }
 
-    // Execute the MCP tool call
-    return mcpManager.callTool(toolName, params);
+    // Execute the MCP tool call with cancellation support
+    const operationId = `mcp-${serverName}-${actualToolName}-${Date.now()}`;
+    return await cancellationManager.withCancellation(
+      mcpManager.callTool(toolName, params),
+      operationId
+    );
   }
 
   async executeAll(

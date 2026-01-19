@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { WorkflowConfig } from './workflow.js';
 import { getConfigManager } from './config.js';
 
@@ -72,34 +73,8 @@ export class SkillLoader {
   }
 
   private detectSkillsPath(): string {
-    // Strategy: Find skills folder relative to the script location
-    // This works regardless of where the user runs xagent from
-    const scriptDir = path.dirname(process.argv[1]);
-
-    // Possible locations relative to where xagent script is installed
-    const possiblePaths = [
-      path.join(scriptDir, '..', 'skills', 'skills'),
-      path.join(scriptDir, '..', '..', 'skills', 'skills'),
-      path.join(scriptDir, 'skills', 'skills'),
-      path.join(scriptDir, '..', '..', '..', 'skills', 'skills'),
-      // Also try process.cwd() as fallback
-      path.join(process.cwd(), 'skills', 'skills')
-    ];
-
-    for (const p of possiblePaths) {
-      try {
-        const resolvedPath = path.resolve(p);
-        const stat = fsSync.statSync(resolvedPath);
-        if (stat.isDirectory()) {
-          return resolvedPath;
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    // Ultimate fallback
-    return path.join(process.cwd(), 'skills', 'skills');
+    // Skills folder is always at {xagent_root}/skills/skills
+    return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'skills');
   }
 
   async loadAllSkills(): Promise<SkillInfo[]> {

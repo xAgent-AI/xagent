@@ -46,7 +46,7 @@
 
 ```bash
 # Install
-npm i -g xagent-cli
+npm i -g @xagent-ai/cli
 
 # Launch
 xagent

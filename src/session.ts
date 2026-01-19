@@ -732,15 +732,13 @@ export class InteractiveSession {
         : [];
 
       // MCP servers are already connected during initialization (eager mode)
+      // MCP tools are already registered as local tools via registerMCPTools
       const toolDefinitions = toolRegistry.getToolDefinitions();
-      const mcpToolDefinitions = this.mcpManager.getToolDefinitions();
 
-      // Merge local tools and MCP tools
-      const allToolDefinitions = [...toolDefinitions, ...mcpToolDefinitions];
-
+      // Available tools for this session
       const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
-        ? allToolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
-        : allToolDefinitions;
+        ? toolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
+        : toolDefinitions;
 
       const baseSystemPrompt = this.currentAgent?.systemPrompt;
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
@@ -936,20 +934,22 @@ export class InteractiveSession {
         if (isTodoTool) {
           console.log('');
           console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
-          console.log(this.renderTodoList(result.todos || result.todos, displayIndent));
+          console.log(this.renderTodoList(result?.todos || [], displayIndent));
           // Show summary if available
-          if (result.message) {
+          if (result?.message) {
             console.log(`${displayIndent}${colors.textDim(result.message)}`);
           }
         } else if (showToolDetails) {
           console.log('');
           console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
           console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
-        } else if (result.success === false) {
+        } else if (result && result.success === false) {
           // GUI task or other tool failed
           console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
-        } else {
+        } else if (result) {
           console.log(`${displayIndent}${colors.success(`${icons.check} Completed`)}`);
+        } else {
+          console.log(`${displayIndent}${colors.textDim('(no result)')}`);
         }
 
         const toolCallRecord: ToolCall = {

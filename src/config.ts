@@ -66,32 +66,32 @@ export class ConfigManager {
   }
 
   async load(): Promise<Settings> {
-    console.log('[CONFIG] ========== load() 开始 ==========');
-    console.log('[CONFIG] globalConfigPath:', this.globalConfigPath);
-    console.log('[CONFIG] projectConfigPath:', this.projectConfigPath);
-    console.log('[CONFIG] 检查文件是否存在...');
+    logger.debug('[CONFIG] ========== load() 开始 ==========');
+    logger.debug('[CONFIG] globalConfigPath:', this.globalConfigPath);
+    logger.debug('[CONFIG] projectConfigPath:', this.projectConfigPath);
+    logger.debug('[CONFIG] 检查文件是否存在...');
 
     try {
       const globalConfig = this.readConfigFile(this.globalConfigPath);
-      console.log('[CONFIG] globalConfig 读取成功:', JSON.stringify(globalConfig, null, 2));
+      logger.debug('[CONFIG] globalConfig 读取成功:', JSON.stringify(globalConfig, null, 2));
 
       this.settings = { ...DEFAULT_SETTINGS, ...globalConfig };
-      console.log('[CONFIG] 合并后的 settings:', JSON.stringify(this.settings, null, 2));
+      logger.debug('[CONFIG] 合并后的 settings:', JSON.stringify(this.settings, null, 2));
 
       if (this.projectConfigPath) {
         const projectConfig = this.readConfigFile(this.projectConfigPath);
-        console.log('[CONFIG] projectConfig 读取成功:', JSON.stringify(projectConfig, null, 2));
+        logger.debug('[CONFIG] projectConfig 读取成功:', JSON.stringify(projectConfig, null, 2));
         this.settings = { ...this.settings, ...projectConfig };
       }
 
-      console.log('[CONFIG] 最终 settings.apiKey:', this.settings.apiKey ? this.settings.apiKey.substring(0, 30) + '...' : 'empty');
-      console.log('[CONFIG] 最终 settings.refreshToken:', this.settings.refreshToken ? 'exists' : 'empty');
-      console.log('[CONFIG] ========== load() 结束 ==========');
+      logger.debug('[CONFIG] 最终 settings.apiKey:', this.settings.apiKey ? this.settings.apiKey.substring(0, 30) + '...' : 'empty');
+      logger.debug('[CONFIG] 最终 settings.refreshToken:', this.settings.refreshToken ? 'exists' : 'empty');
+      logger.debug('[CONFIG] ========== load() 结束 ==========');
 
       return this.settings;
     } catch (error) {
-      console.log('[CONFIG] load() 捕获到错误:', error);
-      console.log('[CONFIG] ========== load() 结束 (使用默认值) ==========');
+      logger.debug('[CONFIG] load() 捕获到错误:', error instanceof Error ? error.message : String(error));
+      logger.debug('[CONFIG] ========== load() 结束 (使用默认值) ==========');
       return { ...DEFAULT_SETTINGS };
     }
   }
@@ -136,12 +136,12 @@ export class ConfigManager {
       showAIDebugInfo: this.settings.showAIDebugInfo
     };
 
-    console.log('[CONFIG] getAuthConfig() 返回:');
-    console.log('  - type:', result.type);
-    console.log('  - apiKey:', result.apiKey ? result.apiKey.substring(0, 30) + '...' : 'empty');
-    console.log('  - refreshToken:', result.refreshToken ? 'exists' : 'empty');
-    console.log('  - baseUrl:', result.baseUrl);
-    console.log('  - xagentApiBaseUrl:', result.xagentApiBaseUrl);
+    logger.debug('[CONFIG] getAuthConfig() 返回:');
+    logger.debug('  - type:', result.type);
+    logger.debug('  - apiKey:', result.apiKey ? result.apiKey.substring(0, 30) + '...' : 'empty');
+    logger.debug('  - refreshToken:', result.refreshToken ? 'exists' : 'empty');
+    logger.debug('  - baseUrl:', result.baseUrl);
+    logger.debug('  - xagentApiBaseUrl:', result.xagentApiBaseUrl);
 
     return result;
   }

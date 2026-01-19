@@ -446,8 +446,7 @@ export class AuthService {
     logger.debug(`[OAuth] Login URL: ${loginUrl}`);
 
     // DEBUG: Log before Promise creation
-    console.log('[DEBUG OAuth] About to create Promise for token retrieval');
-
+          logger.debug('[DEBUG OAuth] About to create Promise for token retrieval');
     // Start HTTP server to receive callback, then open browser
     return new Promise((resolve, reject) => {
       let timeoutId: NodeJS.Timeout | null = null;
@@ -461,12 +460,10 @@ export class AuthService {
       };
 
       const serverCallback = (req: any, res: any) => {
-        console.log('[OAuth] ========== serverCallback 开始 ==========');
-        console.log('[OAuth] 收到请求 URL:', req.url);
-        console.log('[OAuth] 收到请求 Host:', req.headers.host);
-        console.log('[OAuth] 收到请求 Referer:', req.headers.referer || 'none');
-        console.log('[OAuth] this.authConfig.apiKey (当前):', this.authConfig.apiKey ? this.authConfig.apiKey.substring(0, 30) + '...' : 'empty');
-
+        logger.debug('[OAuth] ========== serverCallback 开始 ==========');
+                  logger.debug('[OAuth] 收到请求 URL:', req.url || 'empty');
+                  logger.debug('[OAuth] 收到请求 Host:', req.headers.host || 'empty');        logger.debug('[OAuth] 收到请求 Referer:', req.headers.referer || 'none');
+        logger.debug('[OAuth] this.authConfig.apiKey (当前):', this.authConfig.apiKey ? this.authConfig.apiKey.substring(0, 30) + '...' : 'empty');
         logger.debug(`[OAuth] Received request: ${req.url}`);
 
         if (req.url.startsWith('/callback')) {
@@ -474,18 +471,14 @@ export class AuthService {
           const token = url.searchParams.get('token');
           const refreshToken = url.searchParams.get('refreshToken');
 
-          console.log('[OAuth] 解析 callback URL:', req.url);
-          console.log('[OAuth] Token 长度:', token ? token.length : 0);
-          console.log('[OAuth] RefreshToken 长度:', refreshToken ? refreshToken.length : 0);
-
-          logger.debug(`[OAuth] Callback URL: ${req.url}`);
-          logger.debug(`[OAuth] Token present: ${!!token}`);
-          logger.debug(`[OAuth] Refresh token present: ${!!refreshToken}`);
+          logger.debug('[OAuth] 解析 callback URL:', String(req.url));
+          logger.debug('[OAuth] Token 长度:', token ? String(token.length) : '0');
+          logger.debug('[OAuth] RefreshToken 长度:', refreshToken ? String(refreshToken.length) : '0');
 
           if (token) {
-            console.log('[OAuth] ========== 收到有效 token!!! ==========');
-            console.log('[OAuth] Token 前缀:', token.substring(0, 50) + '...');
-            console.log('[OAuth] Token Payload:', token.split('.')[1] ? Buffer.from(token.split('.')[1], 'base64').toString() : 'invalid');
+            logger.debug('[OAuth] ========== 收到有效 token!!! ==========');
+            logger.debug('[OAuth] Token 前缀:', token.substring(0, 50) + '...');
+            logger.debug('[OAuth] Token Payload:', token.split('.')[1] ? Buffer.from(token.split('.')[1], 'base64').toString() : 'invalid');
 
             logger.info('[OAuth] Authentication successful! Received token');
             cleanup();
@@ -493,24 +486,24 @@ export class AuthService {
             // Save refresh token if provided
             if (refreshToken) {
               this.authConfig.refreshToken = refreshToken;
-              console.log('[OAuth] Refresh token 保存到 this.authConfig');
+              logger.debug('[OAuth] Refresh token 保存到 this.authConfig');
               logger.debug(`[OAuth] Refresh token saved`);
             }
 
             // Redirect directly to home page after successful authentication
             // Use the same webBaseUrl that was used to open the login page
             const redirectUrl = `${webBaseUrl}/`;
-            console.log(`[OAuth] 重定向到: ${redirectUrl}`);
+            logger.debug(`[OAuth] 重定向到: ${redirectUrl}`);
             res.writeHead(302, { 'Location': redirectUrl });
             res.end();
             if (server) {
               server.close();
             }
-            console.log('[OAuth] 调用 resolve(token)');
+            logger.debug('[OAuth] 调用 resolve(token)');
             resolve(token);
-            console.log('[OAuth] ========== Promise 已 resolve ==========');
+            logger.debug('[OAuth] ========== Promise 已 resolve ==========');
           } else {
-            console.log('[OAuth] !!! Token 为空 !!!');
+            logger.debug('[OAuth] !!! Token 为空 !!!');
             logger.warn('[OAuth] No token in callback URL');
             cleanup();
 
@@ -523,17 +516,17 @@ export class AuthService {
           }
         } else if (req.url === '/' || req.url === '') {
           // Root path - likely a redirect from the web app
-          console.log('[OAuth] 收到根路径请求 (/)');
+          logger.debug('[OAuth] 收到根路径请求 (/)');
           logger.debug(`[OAuth] Root path request, sending simple response`);
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end('<html><body><h1>XAGENT CLI Authentication Callback Server</h1><p>Waiting for authentication...</p></body></html>');
         } else {
-          console.log('[OAuth] 收到未知路径:', req.url);
+          logger.debug('[OAuth] 收到未知路径:', req.url);
           logger.debug(`[OAuth] Unknown request path: ${req.url}`);
           res.writeHead(404, { 'Content-Type': 'text/plain' });
           res.end('Not Found');
         }
-        console.log('[OAuth] ========== serverCallback 结束 ==========');
+        logger.debug('[OAuth] ========== serverCallback 结束 ==========');
       };
 
       server = http.createServer(serverCallback);
@@ -708,7 +701,7 @@ export class AuthService {
 }
 
 export async function selectAuthType(): Promise<AuthType> {
-  console.log('[DEBUG selectAuthType] 即将显示认证方式选择提示...');
+  logger.debug('[DEBUG selectAuthType] 即将显示认证方式选择提示...');
   const { authType } = await inquirer.prompt([
     {
       type: 'list',
@@ -720,7 +713,7 @@ export async function selectAuthType(): Promise<AuthType> {
       ]
     }
   ]);
-  console.log('[DEBUG selectAuthType] 用户选择了:', authType);
+  logger.debug('[DEBUG selectAuthType] 用户选择了:', authType);
 
   return authType;
 }

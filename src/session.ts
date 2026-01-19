@@ -4,7 +4,7 @@ import ora from 'ora';
 import inquirer from 'inquirer';
 import { ExecutionMode, ChatMessage, ToolCall, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
-import { RemoteAIClient } from './remote-ai-client.js';
+import { RemoteAIClient, TokenInvalidError } from './remote-ai-client.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { getToolRegistry } from './tools.js';
@@ -19,7 +19,9 @@ import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
-import { Logger, LogLevel } from './logger.js';
+import { Logger, LogLevel, getLogger } from './logger.js';
+
+const logger = getLogger();
 
 export class InteractiveSession {
   private conversationManager: ConversationManager;
@@ -181,7 +183,7 @@ export class InteractiveSession {
   }
 
   private async initialize(): Promise<void> {
-    console.log('\n[SESSION] ========== initialize() 开始 ==========\n');
+    logger.debug('\n[SESSION] ========== initialize() 开始 ==========\n');
 
     try {
       const spinner = ora({
@@ -190,24 +192,26 @@ export class InteractiveSession {
         color: 'cyan'
       }).start();
 
-      console.log('[SESSION] 调用 configManager.load()...');
+      logger.debug('[SESSION] 调用 configManager.load()...');
       await this.configManager.load();
 
-      console.log('[SESSION] 调用 configManager.getAuthConfig()...');
+      logger.debug('[SESSION] 调用 configManager.getAuthConfig()...');
       let authConfig = this.configManager.getAuthConfig();
       const selectedAuthType = this.configManager.get('selectedAuthType');
 
-      console.log('[SESSION] getAuthConfig() 返回:');
-      console.log('  - apiKey exists:', !!authConfig.apiKey);
-      console.log('  - selectedAuthType:', selectedAuthType);
-      console.log('  - authConfig.type:', authConfig.type);
-      console.log('  - authConfig.baseUrl:', authConfig.baseUrl);
+      logger.debug('[SESSION] getAuthConfig() 返回:');
+      logger.debug('  - apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
+      logger.debug('  - selectedAuthType:', String(selectedAuthType));
+      logger.debug('  - authConfig.type:', String(authConfig.type));
+      logger.debug('  - authConfig.baseUrl:', String(authConfig.baseUrl));
 
       // Only validate OAuth tokens, skip validation for third-party API keys
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
         spinner.text = colors.textMuted('Validating authentication...');
         const baseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+        console.log(`[DEBUG] 验证 Token, baseUrl: ${baseUrl}`);
         let isValid = await this.validateToken(baseUrl, authConfig.apiKey);
+        console.log(`[DEBUG] Token 验证结果: ${isValid}`);
 
         // Try refresh token if validation failed
         if (!isValid && authConfig.refreshToken) {
@@ -237,7 +241,7 @@ export class InteractiveSession {
           await this.setupAuthentication();
           authConfig = this.configManager.getAuthConfig();
 
-          console.log('[DEBUG Initialize] After setupAuthentication, authConfig:', JSON.stringify(authConfig, null, 2));
+          logger.debug('[DEBUG Initialize] After setupAuthentication, authConfig:', JSON.stringify(authConfig, null, 2));
 
           // Recreate readline interface after inquirer
           this.rl.close();
@@ -246,7 +250,7 @@ export class InteractiveSession {
             output: process.stdout
           });
           this.rl.on('close', () => {
-            console.error('DEBUG: readline interface closed');
+            logger.debug('DEBUG: readline interface closed');
           });
           spinner.start();
         }
@@ -256,7 +260,7 @@ export class InteractiveSession {
         await this.setupAuthentication();
         authConfig = this.configManager.getAuthConfig();
 
-        console.log('[DEBUG Initialize] After setupAuthentication (no apiKey case), authConfig:', JSON.stringify(authConfig, null, 2));
+        logger.debug('[DEBUG Initialize] After setupAuthentication (no apiKey case), authConfig:', JSON.stringify(authConfig, null, 2));
 
         // Recreate readline interface after inquirer
         this.rl.close();
@@ -265,7 +269,7 @@ export class InteractiveSession {
           output: process.stdout
         });
         this.rl.on('close', () => {
-          console.error('DEBUG: readline interface closed');
+          logger.debug('DEBUG: readline interface closed');
         });
         spinner.start();
       }
@@ -274,19 +278,19 @@ export class InteractiveSession {
       this.aiClient = new AIClient(authConfig);
       this.contextCompressor.setAIClient(this.aiClient);
 
-      console.log('[DEBUG Initialize] About to check remoteAIClient condition:');
-      console.log('  - authConfig.apiKey exists:', !!authConfig.apiKey);
-      console.log('  - selectedAuthType:', selectedAuthType);
-      console.log('  - selectedAuthType === AuthType.OAUTH_XAGENT:', selectedAuthType === AuthType.OAUTH_XAGENT);
+      logger.debug('[DEBUG Initialize] About to check remoteAIClient condition:');
+      logger.debug('  - authConfig.apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
+      logger.debug('  - selectedAuthType:', String(selectedAuthType));
+      logger.debug('  - selectedAuthType === AuthType.OAUTH_XAGENT:', String(selectedAuthType === AuthType.OAUTH_XAGENT));
 
       // Initialize remote AI client for OAuth XAGENT mode
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
         const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-        console.log('[DEBUG Initialize] Creating RemoteAIClient with webBaseUrl:', webBaseUrl);
+        logger.debug('[DEBUG Initialize] Creating RemoteAIClient with webBaseUrl:', webBaseUrl);
         this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
-        console.log('[DEBUG Initialize] RemoteAIClient created successfully');
+        logger.debug('[DEBUG Initialize] RemoteAIClient created successfully');
       } else {
-        console.log('[DEBUG Initialize] RemoteAIClient NOT created (condition not met)');
+        logger.debug('[DEBUG Initialize] RemoteAIClient NOT created (condition not met)');
       }
 
       this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
@@ -642,12 +646,11 @@ export class InteractiveSession {
     await this.checkAndCompressContext(lastUserMessage);
 
     // Use remote AI client if available (OAuth XAGENT mode)
-    console.log('[DEBUG processUserMessage] this.remoteAIClient exists:', !!this.remoteAIClient);
-    if (this.remoteAIClient) {
-      console.log('[DEBUG processUserMessage] Using generateRemoteResponse');
+          logger.debug('[DEBUG processUserMessage] this.remoteAIClient exists:', !!this.remoteAIClient ? 'true' : 'false');    if (this.remoteAIClient) {
+      logger.debug('[DEBUG processUserMessage] Using generateRemoteResponse');
       await this.generateRemoteResponse(thinkingTokens);
     } else {
-      console.log('[DEBUG processUserMessage] Using generateResponse (local mode)');
+      logger.debug('[DEBUG processUserMessage] Using generateResponse (local mode)');
       await this.generateResponse(thinkingTokens);
     }
   }
@@ -1075,10 +1078,10 @@ export class InteractiveSession {
       // Debug: Print tool list，特别是确认 gui-subagent 是否在列表中
       const hasGuiSubagent = tools.some((t: any) => t.function.name === 'task');
       const guiSubagentTool = tools.find((t: any) => t.function.name === 'task');
-      console.log(`[DEBUG] 工具总数: ${tools.length}, includes task 工具: ${hasGuiSubagent}`);
+      logger.debug(`[DEBUG] 工具总数: ${tools.length}, includes task 工具: ${hasGuiSubagent}`);
       if (guiSubagentTool) {
         const hasGuiSubagentInDesc = guiSubagentTool.function.description?.includes('gui-subagent');
-        console.log(`[DEBUG] task 工具描述中includes gui-subagent: ${hasGuiSubagentInDesc}`);
+        logger.debug(`[DEBUG] task 工具描述中includes gui-subagent: ${hasGuiSubagentInDesc}`);
       }
 
       // Generate system prompt (与本地模式一致)
@@ -1175,6 +1178,45 @@ export class InteractiveSession {
 
       if (error.message === 'Operation cancelled by user') {
         return;
+      }
+
+      // Handle token invalid error - trigger re-authentication
+      if (error instanceof TokenInvalidError) {
+        console.log('');
+        console.log(colors.warning('⚠️  Authentication expired or invalid'));
+        console.log(colors.info('Your browser session has been logged out. Please log in again.'));
+        console.log('');
+
+        // Clear invalid credentials
+        await this.configManager.set('apiKey', '');
+        await this.configManager.set('refreshToken', '');
+        await this.configManager.set('selectedAuthType', AuthType.OAUTH_XAGENT);
+
+        // Re-authenticate
+        await this.setupAuthentication();
+        const authConfig = this.configManager.getAuthConfig();
+
+        // Recreate readline interface after inquirer
+        this.rl.close();
+        this.rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
+        });
+        this.rl.on('close', () => {
+          logger.debug('DEBUG: readline interface closed');
+        });
+
+        // Reinitialize RemoteAIClient with new token
+        if (authConfig.apiKey) {
+          const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+          this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
+        }
+
+        // Retry the current operation
+        console.log('');
+        console.log(colors.info('Retrying with new authentication...'));
+        console.log('');
+        return this.generateRemoteResponse(thinkingTokens);
       }
 
       console.log(colors.error(`Error: ${error.message}`));

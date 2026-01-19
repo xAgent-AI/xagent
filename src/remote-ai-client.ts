@@ -2,6 +2,16 @@ import { EventEmitter } from 'events';
 import { ChatMessage, SessionOutput, ToolCall } from './types.js';
 import { ChatCompletionResponse, ChatCompletionOptions, Message } from './ai-client.js';
 
+/**
+ * Token invalid error - thrown when the authentication token is no longer valid
+ */
+export class TokenInvalidError extends Error {
+  constructor(message: string = 'Authentication token is invalid or expired') {
+    super(message);
+    this.name = 'TokenInvalidError';
+  }
+}
+
 export interface RemoteChatOptions {
   model?: string;
   conversationId?: string;
@@ -106,8 +116,9 @@ export class RemoteAIClient extends EventEmitter {
         body: JSON.stringify(requestBody)
       });
 
-      if (this.showAIDebugInfo) {
-        console.log('[RemoteAIClient] Response status:', response.status);
+      // Check for 401 and throw TokenInvalidError
+      if (response.status === 401) {
+        throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
       }
 
       if (!response.ok) {
@@ -245,6 +256,11 @@ export class RemoteAIClient extends EventEmitter {
         signal: abortSignal
       });
 
+      // Check for 401 and throw TokenInvalidError
+      if (response.status === 401) {
+        throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
+      }
+
       if (this.showAIDebugInfo) {
         console.log('[RemoteAIClient] VLM response status:', response.status);
       }
@@ -267,8 +283,42 @@ export class RemoteAIClient extends EventEmitter {
   }
 
   /**
-   * Get conversation list
+   * Validate if the current token is still valid
+   * Returns true if valid, false otherwise
    */
+  async validateToken(): Promise<boolean> {
+    try {
+      const url = `${this.webBaseUrl}/api/auth/me`;
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.authToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      return response.ok;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Check if response indicates token is invalid (401)
+   * If so, throw TokenInvalidError for the session to handle re-authentication
+   */
+  private async handleResponse<T>(response: Response): Promise<T> {
+    if (response.ok) {
+      return response.json() as Promise<T>;
+    }
+
+    if (response.status === 401) {
+      throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
+    }
+
+    const errorText = await response.text();
+    const errorData = JSON.parse(errorText) as { error?: string };
+    throw new Error(errorData.error || `HTTP ${response.status}`);
+  }
   async getConversations(): Promise<any[]> {
     const url = `${this.agentApi}/conversations`;
     if (this.showAIDebugInfo) {

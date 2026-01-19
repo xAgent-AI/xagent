@@ -381,12 +381,12 @@ program
 
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
 
-      // Create vlmCaller for remote mode
-      let vlmCaller: ((image: string, prompt: string, systemPrompt: string) => Promise<string>) | undefined;
+      // Create remoteVlmCaller for remote mode
+      let remoteVlmCaller: ((image: string, prompt: string, systemPrompt: string) => Promise<string>) | undefined;
 
       if (!isLocalMode && authConfig.baseUrl) {
         const remoteBaseUrl = `${authConfig.baseUrl}/api/agent/vlm`;
-        vlmCaller = async (image: string, prompt: string, systemPrompt: string): Promise<string> => {
+        remoteVlmCaller = async (image: string, prompt: string, systemPrompt: string): Promise<string> => {
           const response = await fetch(remoteBaseUrl, {
             method: 'POST',
             headers: {
@@ -409,7 +409,7 @@ program
         model: isLocalMode ? modelName : undefined,
         modelBaseUrl: isLocalMode ? baseUrl : undefined,
         modelApiKey: isLocalMode ? apiKey : undefined,
-        vlmCaller,
+        remoteVlmCaller,
         isLocalMode,
       });
 

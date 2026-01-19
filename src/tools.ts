@@ -1011,24 +1011,42 @@ export class TaskTool implements Tool {
    * Create unified VLM caller
    * Uses remote VLM if remoteAIClient is provided, otherwise uses local VLM
    */
-  private createVLMCaller(
+  private createRemoteVlmCaller(
     remoteAIClient: any,
     localConfig: { baseUrl: string; apiKey: string; modelName: string },
     signal?: AbortSignal
   ): (image: string, prompt: string, systemPrompt: string) => Promise<string> {
-    // Remote mode takes priority
+    // Remote mode: use RemoteAIClient
     if (remoteAIClient) {
-      return async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
-        try {
-          return await remoteAIClient.invokeVLM(image, userPrompt, systemPrompt, { signal });
-        } catch (error: any) {
-          throw new Error(`Remote VLM call failed: ${error.message}`);
-        }
-      };
+      return this.createRemoteVLMCaller(remoteAIClient, signal);
     }
 
-    // Local mode
+    // Local mode: use local API
+    return this.createLocalVLMCaller(localConfig, signal);
+  }
+
+  /**
+   * Create remote VLM caller using RemoteAIClient
+   */
+  private createRemoteVLMCaller(remoteAIClient: any, signal?: AbortSignal) {
+    return async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
+      try {
+        return await remoteAIClient.invokeVLM(image, userPrompt, systemPrompt, { signal });
+      } catch (error: any) {
+        throw new Error(`Remote VLM call failed: ${error.message}`);
+      }
+    };
+  }
+
+  /**
+   * Create local VLM caller using direct API calls
+   */
+  private createLocalVLMCaller(
+    localConfig: { baseUrl: string; apiKey: string; modelName: string },
+    signal?: AbortSignal
+  ) {
     const { baseUrl, apiKey, modelName } = localConfig;
+
     return async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
       const messages = [
         ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
@@ -1095,16 +1113,18 @@ export class TaskTool implements Tool {
     console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
     console.log('');
 
-    // Get VLM configuration
+    // Get VLM configuration (used for local mode fallback)
     const baseUrl = config.get('guiSubagentBaseUrl') || config.get('baseUrl') || '';
     const apiKey = config.get('guiSubagentApiKey') || config.get('apiKey') || '';
     const modelName = config.get('guiSubagentModel') || config.get('modelName') || '';
 
-    // Get auth config to determine mode
-    const authConfig = config.getAuthConfig();
-    const isLocalMode = authConfig.type === 'openai_compatible';
+    // Determine mode: remote if remoteAIClient exists, otherwise local
+    const isRemoteMode = !!remoteAIClient;
 
-    if (isLocalMode) {
+    // Log mode information
+    if (isRemoteMode) {
+      console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
+    } else {
       console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
       // Local mode requires configuration check
       if (!baseUrl) {
@@ -1115,14 +1135,11 @@ export class TaskTool implements Tool {
       }
       console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
       console.log(`${indent}${colors.textMuted(`  Base URL: ${baseUrl}`)}`);
-      console.log('');
-    } else {
-      console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
-      console.log('');
     }
+    console.log('');
 
-    // Create vlmCaller using the unified method (handles both local and remote modes)
-    const vlmCaller = this.createVLMCaller(remoteAIClient, { baseUrl, apiKey, modelName });
+    // Create remoteVlmCaller using the unified method (handles both local and remote modes)
+    const remoteVlmCaller = this.createRemoteVlmCaller(remoteAIClient, { baseUrl, apiKey, modelName });
 
     // Set up stdin polling for ESC cancellation
     let rawModeEnabled = false;
@@ -1182,11 +1199,11 @@ export class TaskTool implements Tool {
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
 
       const guiAgent = await createGUISubAgent({
-        model: isLocalMode ? modelName : undefined,
-        modelBaseUrl: isLocalMode ? baseUrl : undefined,
-        modelApiKey: isLocalMode ? apiKey : undefined,
-        vlmCaller,
-        isLocalMode,
+        model: !isRemoteMode ? modelName : undefined,
+        modelBaseUrl: !isRemoteMode ? baseUrl : undefined,
+        modelApiKey: !isRemoteMode ? apiKey : undefined,
+        remoteVlmCaller,
+        isLocalMode: !isRemoteMode,
         maxLoopCount: 30,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,

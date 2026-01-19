@@ -824,25 +824,40 @@ export class InteractiveSession {
   /**
    * Create unified LLM Caller
    * Implement transparency: caller doesn't need to care about remote vs local mode
-   * Remote mode takes priority
    */
   private createLLMCaller() {
-    // Remote mode takes priority
+    // Remote mode: use RemoteAIClient
     if (this.remoteAIClient) {
-      return {
-        chatCompletion: (messages: ChatMessage[], options: any) => 
-          this.remoteAIClient!.chatCompletion(messages, options),
-        isRemote: true
-      };
+      return this.createRemoteCaller();
     }
 
-    // Local mode
+    // Local mode: use AIClient
     if (!this.aiClient) {
       throw new Error('AI client not initialized');
     }
+    return this.createLocalCaller();
+  }
+
+  /**
+   * Create remote mode LLM caller
+   */
+  private createRemoteCaller() {
+    const client = this.remoteAIClient!;
     return {
       chatCompletion: (messages: ChatMessage[], options: any) => 
-        this.aiClient!.chatCompletion(messages as any, options),
+        client.chatCompletion(messages, options),
+      isRemote: true
+    };
+  }
+
+  /**
+   * Create local mode LLM caller
+   */
+  private createLocalCaller() {
+    const client = this.aiClient!;
+    return {
+      chatCompletion: (messages: ChatMessage[], options: any) => 
+        client.chatCompletion(messages as any, options),
       isRemote: false
     };
   }

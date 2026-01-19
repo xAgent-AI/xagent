@@ -49,7 +49,7 @@
 npm i -g @xagent-ai/cli
 
 # Launch
-xagent
+xagent start
 ```
 
 **That's it!** Start automating your digital life in seconds.

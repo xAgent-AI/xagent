@@ -162,6 +162,43 @@ export class RemoteAIClient extends EventEmitter {
     messages: ChatMessage[],
     options: ChatCompletionOptions = {}
   ): Promise<ChatCompletionResponse> {
+    const model = options.model || 'remote-llm';
+
+    // Debug output for request
+    if (this.showAIDebugInfo) {
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║              AI REQUEST DEBUG (REMOTE)                   ║');
+      console.log('╚══════════════════════════════════════════════════════════╝');
+      console.log(`📦 Model: ${model}`);
+      console.log(`🌐 Base URL: ${this.webBaseUrl}`);
+      console.log(`💬 Total Messages: ${messages.length} items`);
+      if (options.temperature !== undefined) console.log(`🌡️  Temperature: ${options.temperature}`);
+      if (options.maxTokens) console.log(`📏 Max Tokens: ${options.maxTokens}`);
+      if (options.tools?.length) console.log(`🔧 Tools: ${options.tools.length} items`);
+      if (options.thinkingTokens) console.log(`🧠 Thinking Tokens: ${options.thinkingTokens}`);
+      console.log('─'.repeat(60));
+
+      // Display system messages separately
+      const systemMsgs = messages.filter(m => m.role === 'system');
+      const otherMsgs = messages.filter(m => m.role !== 'system');
+
+      if (systemMsgs.length > 0) {
+        const systemContent = typeof systemMsgs[0].content === 'string'
+          ? systemMsgs[0].content
+          : JSON.stringify(systemMsgs[0].content);
+        console.log('\n┌─────────────────────────────────────────────────────────────┐');
+        console.log('│ 🟫 SYSTEM                                                     │');
+        console.log('├─────────────────────────────────────────────────────────────┤');
+        console.log(this.renderMarkdown(systemContent).split('\n').map(l => '│ ' + l).join('\n'));
+        console.log('└─────────────────────────────────────────────────────────────┘');
+      }
+
+      // Display other messages
+      this.displayMessages(otherMsgs);
+
+      console.log('\n📤 Sending request to Remote API...\n');
+    }
+
     // Call existing chat method
     const response = await this.chat(messages, {
       conversationId: undefined,
@@ -170,6 +207,67 @@ export class RemoteAIClient extends EventEmitter {
       context: undefined,
       model: options.model
     });
+
+    // Debug output for response
+    if (this.showAIDebugInfo) {
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║             AI RESPONSE DEBUG (REMOTE)                   ║');
+      console.log('╚══════════════════════════════════════════════════════════╝');
+      console.log(`🆔 ID: remote-${Date.now()}`);
+      console.log(`🤖 Model: ${model}`);
+      console.log(`🏁 Finish Reason: stop`);
+
+      console.log('\n┌─────────────────────────────────────────────────────────────┐');
+      console.log('│ 🤖 ASSISTANT                                                 │');
+      console.log('├─────────────────────────────────────────────────────────────┤');
+
+      // Display reasoning_content (if present)
+      if (response.reasoningContent) {
+        console.log('│ 🧠 REASONING:');
+        console.log('│ ───────────────────────────────────────────────────────────');
+        const reasoningLines = this.renderMarkdown(response.reasoningContent).split('\n');
+        for (const line of reasoningLines.slice(0, 15)) {
+          console.log('│ ' + line.slice(0, 62));
+        }
+        if (response.reasoningContent.length > 800) console.log('│ ... (truncated)');
+        console.log('│ ───────────────────────────────────────────────────────────');
+      }
+
+      // Display content
+      console.log('│ 💬 CONTENT:');
+      console.log('│ ───────────────────────────────────────────────────────────');
+      const lines = this.renderMarkdown(response.content).split('\n');
+      for (const line of lines.slice(0, 40)) {
+        console.log('│ ' + line.slice(0, 62));
+      }
+      if (lines.length > 40) {
+        console.log(`│ ... (${lines.length - 40} more lines)`);
+      }
+      console.log('└─────────────────────────────────────────────────────────────┘');
+
+      // Display tool calls if present
+      if (response.toolCalls && response.toolCalls.length > 0) {
+        console.log('\n┌─────────────────────────────────────────────────────────────┐');
+        console.log('│ 🔧 TOOL CALLS                                                │');
+        console.log('├─────────────────────────────────────────────────────────────┤');
+        for (let i = 0; i < response.toolCalls.length; i++) {
+          const tc = response.toolCalls[i];
+          console.log(`│ ${i + 1}. ${tc.function?.name || 'unknown'}`);
+          if (tc.function?.arguments) {
+            const args = typeof tc.function.arguments === 'string'
+              ? JSON.parse(tc.function.arguments)
+              : tc.function.arguments;
+            const argsStr = JSON.stringify(args, null, 2).split('\n').slice(0, 5).join('\n');
+            console.log('│    Args:', argsStr.slice(0, 50) + (argsStr.length > 50 ? '...' : ''));
+          }
+        }
+        console.log('└─────────────────────────────────────────────────────────────┘');
+      }
+
+      console.log('\n╔══════════════════════════════════════════════════════════╗');
+      console.log('║                    RESPONSE ENDED                        ║');
+      console.log('╚══════════════════════════════════════════════════════════╝\n');
+    }
 
     // Convert to ChatCompletionResponse format (consistent with local mode)
     return {
@@ -191,6 +289,68 @@ export class RemoteAIClient extends EventEmitter {
       ],
       usage: undefined
     };
+  }
+
+  /**
+   * Render markdown text (helper method for debug output)
+   */
+  private renderMarkdown(text: string): string {
+    let result = text;
+    // Code block rendering
+    result = result.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+      return `\n┌─[${lang || 'code'}]\n${code.trim().split('\n').map((l: string) => '│ ' + l).join('\n')}\n└─\n`;
+    });
+    // Inline code rendering
+    result = result.replace(/`([^`]+)`/g, '`$1`');
+    // Bold rendering
+    result = result.replace(/\*\*([^*]+)\*\*/g, '●$1○');
+    // Italic rendering
+    result = result.replace(/\*([^*]+)\*/g, '/$1/');
+    // List rendering
+    result = result.replace(/^- (.*$)/gm, '○ $1');
+    result = result.replace(/^\d+\. (.*$)/gm, '• $1');
+    // Heading rendering
+    result = result.replace(/^### (.*$)/gm, '\n━━━ $1 ━━━\n');
+    result = result.replace(/^## (.*$)/gm, '\n━━━━━ $1 ━━━━━\n');
+    result = result.replace(/^# (.*$)/gm, '\n━━━━━━━ $1 ━━━━━━━\n');
+    // Quote rendering
+    result = result.replace(/^> (.*$)/gm, '│ │ $1');
+    return result;
+  }
+
+  /**
+   * Display messages by category (helper method for debug output)
+   */
+  private displayMessages(messages: ChatMessage[]): void {
+    const roleColors: Record<string, string> = {
+      system: '🟫 SYSTEM',
+      user: '👤 USER',
+      assistant: '🤖 ASSISTANT',
+      tool: '🔧 TOOL'
+    };
+
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      const role = msg.role as string;
+      const roleLabel = roleColors[role] || `● ${role.toUpperCase()}`;
+
+      console.log(`\n┌─────────────────────────────────────────────────────────────┐`);
+      console.log(`│ ${roleLabel} (${i + 1}/${messages.length})                                          │`);
+      console.log('├─────────────────────────────────────────────────────────────┤');
+
+      // Display main content
+      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+
+      const lines = this.renderMarkdown(content).split('\n');
+      for (const line of lines.slice(0, 50)) {
+        console.log('│ ' + line.slice(0, 62));
+      }
+      if (lines.length > 50) {
+        console.log('│ ... (' + (lines.length - 50) + ' more lines)');
+      }
+
+      console.log('└─────────────────────────────────────────────────────────────┘');
+    }
   }
 
   /**

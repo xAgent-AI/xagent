@@ -2537,14 +2537,23 @@ export class ToolRegistry {
   registerMCPTools(mcpTools: Map<string, any>): void {
     let registeredCount = 0;
 
-    for (const [fullName, tool] of mcpTools) {
-      // Split only on the first __ to preserve underscores in tool names
-      const firstUnderscoreIndex = fullName.indexOf('__');
-      if (firstUnderscoreIndex === -1) {
-        continue;
-      }
-      const serverName = fullName.substring(0, firstUnderscoreIndex);
-      const originalName = fullName.substring(firstUnderscoreIndex + 2);
+        for (const [fullName, tool] of mcpTools) {
+
+          const firstUnderscoreIndex = fullName.indexOf('__');
+
+          if (firstUnderscoreIndex === -1 || firstUnderscoreIndex === 0 || 
+
+              firstUnderscoreIndex === fullName.length - 2) continue;
+
+          
+
+          const serverName = fullName.substring(0, firstUnderscoreIndex);
+
+          const originalName = fullName.substring(firstUnderscoreIndex + 2);
+
+    
+
+          if (!originalName || originalName.trim() === '') continue;
 
       // Auto-rename if conflict, ensure unique name
       let toolName = originalName;

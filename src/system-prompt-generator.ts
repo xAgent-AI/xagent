@@ -45,14 +45,8 @@ export class SystemPromptGenerator {
       localTools = localTools.filter(tool => allowedToolNames.includes(tool.name));
     }
 
-    // Get MCP tools with fullName (serverName__toolName)
-    let mcpToolDefs: any[] = [];
-    if (this.mcpManager) {
-      mcpToolDefs = this.mcpManager.getToolDefinitions();
-    }
-
-    // Combine for system prompt - MCP tools use fullName
-    const allAvailableTools = [...localTools, ...mcpToolDefs];
+    // Get available local tools (includes MCP wrapper tools registered via registerMCPTools)
+    let allAvailableTools = localTools;
 
     let enhancedPrompt = baseSystemPrompt;
 
@@ -529,8 +523,13 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
     };
 
     // Fallback for unknown tools (including MCP tools)
-    if (schemas[tool.name]) {
-      return schemas[tool.name];
+    // Get the tool name - for MCP tools it's in function.name, for local tools it's in name
+    const actualToolName = tool.function?.name || tool.name;
+    // Get the description - for MCP tools it's in function.description, for local tools it's in description
+    const actualDescription = tool.function?.description || tool.description;
+    
+    if (schemas[actualToolName]) {
+      return schemas[actualToolName];
     }
 
     // Convert MCP inputSchema to parameters format
@@ -547,10 +546,10 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
     }
 
     return {
-      name: tool.name,
-      description: tool.description,
+      name: actualToolName,
+      description: actualDescription,
       parameters,
-      usage: `Use ${tool.name} for related tasks`,
+      usage: `Use ${actualToolName} for related tasks`,
       examples: [],
       bestPractices: []
     };
@@ -795,12 +794,6 @@ When a user asks you to:
       };
     });
 
-    // Add MCP tools with fullName (serverName__toolName)
-    let mcpTools: any[] = [];
-    if (this.mcpManager) {
-      mcpTools = this.mcpManager.getToolDefinitions();
-    }
-
-    return [...localTools, ...mcpTools];
+    return localTools;
   }
 }

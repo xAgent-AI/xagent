@@ -1086,7 +1086,8 @@ export class TaskTool implements Tool {
     agent: any,
     mode: ExecutionMode,
     config: any,
-    indentLevel: number = 1
+    indentLevel: number = 1,
+    remoteAIClient?: any
   ): Promise<{ success: boolean; cancelled?: boolean; message: string; result?: any }> {
     const indent = '  '.repeat(indentLevel);
 
@@ -1112,30 +1113,16 @@ export class TaskTool implements Tool {
           message: `GUI task "${description}" failed: No valid API URL configured`
         };
       }
+      console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
+      console.log(`${indent}${colors.textMuted(`  Base URL: ${baseUrl}`)}`);
+      console.log('');
+    } else {
+      console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
+      console.log('');
     }
 
-    // Create vlmCaller for remote mode
-    let vlmCaller: ((image: string, prompt: string, systemPrompt: string) => Promise<string>) | undefined;
-
-    if (!isLocalMode && authConfig.baseUrl) {
-      const remoteBaseUrl = `${authConfig.baseUrl}/api/agent/vlm`;
-      vlmCaller = async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
-        const response = await fetch(remoteBaseUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${authConfig.apiKey || ''}`,
-          },
-          body: JSON.stringify({ image, prompt: userPrompt, systemPrompt }),
-        });
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(`Remote VLM error: ${response.status} - ${errorText}`);
-        }
-        const result = await response.json() as { response?: string; content?: string; message?: string };
-        return result.response || result.content || result.message || '';
-      };
-    }
+    // Create vlmCaller using the unified method (handles both local and remote modes)
+    const vlmCaller = this.createVLMCaller(remoteAIClient, { baseUrl, apiKey, modelName });
 
     // Set up stdin polling for ESC cancellation
     let rawModeEnabled = false;
@@ -1312,22 +1299,16 @@ export class TaskTool implements Tool {
 
     // Special handling for gui-subagent: directly call GUIAgent.run() instead of subagent message loop
     if (subagent_type === 'gui-subagent') {
-      // Get RemoteAIClient instance (if available)
+      // Get RemoteAIClient instance from session (if available)
       let remoteAIClient: any;
       try {
-        const { RemoteAIClient } = await import('./remote-ai-client.js');
-        const { getConfigManager } = await import('./config.js');
-        const cfg = getConfigManager();
-        const authConfig = cfg.getAuthConfig();
-        const selectedAuthType = cfg.get('selectedAuthType');
-
-        if (selectedAuthType === AuthType.OAUTH_XAGENT && authConfig.apiKey) {
-          const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-          const showAIDebugInfo = cfg.get('showAIDebugInfo') || false;
-          remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl, showAIDebugInfo);
+        const { getSingletonSession } = await import('./session.js');
+        const session = getSingletonSession();
+        if (session) {
+          remoteAIClient = session.getRemoteAIClient();
         }
       } catch (e) {
-        // RemoteAIClient not available, keep undefined
+        // Session not available, keep undefined
         remoteAIClient = undefined;
       }
 
@@ -1337,7 +1318,8 @@ export class TaskTool implements Tool {
         agent,
         mode,
         config,
-        indentLevel
+        indentLevel,
+        remoteAIClient
       );
     }
 

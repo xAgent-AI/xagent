@@ -147,6 +147,9 @@ export class InteractiveSession {
   }
 
   async start(): Promise<void> {
+    // Set this session as the singleton for access from other modules
+    setSingletonSession(this);
+
     const separator = icons.separator.repeat(60);
     console.log('');
     console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
@@ -1670,6 +1673,30 @@ export class InteractiveSession {
     console.log(colors.border(separator));
     console.log('');
   }
+
+  /**
+   * Get the RemoteAIClient instance
+   * Used by tools.ts to access the remote AI client for GUI operations
+   */
+  getRemoteAIClient(): RemoteAIClient | null {
+    return this.remoteAIClient;
+  }
+
+  /**
+   * Get a VLM caller function that uses the RemoteAIClient
+   * Returns a function compatible with GUIAgent's vlmCaller configuration
+   */
+  getVLMCaller(): ((image: string, prompt: string, systemPrompt: string) => Promise<string>) | undefined {
+    if (!this.remoteAIClient) {
+      return undefined;
+    }
+
+    const showAIDebugInfo = this.configManager.get('showAIDebugInfo') || false;
+
+    return async (image: string, prompt: string, systemPrompt: string): Promise<string> => {
+      return this.remoteAIClient!.invokeVLM(image, prompt, systemPrompt);
+    };
+  }
 }
 
 export async function startInteractiveSession(): Promise<void> {
@@ -1718,4 +1745,15 @@ export async function startInteractiveSession(): Promise<void> {
   });
 
   await session.start();
+}
+
+// Singleton session instance for access from other modules
+let singletonSession: InteractiveSession | null = null;
+
+export function setSingletonSession(session: InteractiveSession): void {
+  singletonSession = session;
+}
+
+export function getSingletonSession(): InteractiveSession | null {
+  return singletonSession;
 }

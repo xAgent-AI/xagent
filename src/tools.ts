@@ -3258,57 +3258,6 @@ export class ToolRegistry {
   }
 
   /**
-   * Generate guidance for LLM to choose between local and MCP tools
-   * This returns a message that the LLM can analyze to decide which tool to use
-   */
-  private generateLlmToolChoiceGuidance(toolName: string, params: any, executionMode: ExecutionMode, indent: string): Promise<any> {
-    const modeLabel = executionMode === ExecutionMode.YOLO ? 'YOLO' :
-                      executionMode === ExecutionMode.SMART ? 'SMART' :
-                      executionMode === ExecutionMode.ACCEPT_EDITS ? 'ACCEPT_EDITS' : 'DEFAULT';
-
-    return Promise.resolve({
-      success: false,
-      needsLlmDecision: true,
-      toolName,
-      mode: modeLabel,
-      message: `
-## Tool Choice Decision Required (${modeLabel} Mode)
-
-Both **local** and **MCP** versions of "${toolName}" are available. Please analyze the requirements and decide which tool to use.
-
-### Local Tool
-- **Pros**: No network latency, always available, no external dependencies
-- **Best for**: Filesystem operations, project-specific tasks, command execution
-
-### MCP Tool
-- **Pros**: Extended capabilities (e.g., GitHub API, database access, cloud services)
-- **Best for**: External API calls, database operations, cloud service integration
-
-### How to Specify Your Choice
-Retry the tool call with the \`_useTool\` parameter:
-
-**To use MCP tool:**
-\`\`\`json
-{"_useTool": "mcp", ...otherParams}
-\`\`\`
-
-**To use local tool:**
-\`\`\`json
-{"_useTool": "local", ...otherParams}
-\`\`\`
-
-### Decision Criteria
-Consider:
-1. Does the task require external API access?
-2. Is network latency a concern?
-3. Does the MCP tool have features not available locally?
-4. Is the local tool sufficient for the task?
-
-Make your decision based on the user's request and the above criteria.`
-    });
-  }
-
-  /**
    * Execute local tool (extracted for reuse)
    */
   private async executeLocalTool(toolName: string, params: any, executionMode: ExecutionMode, indent: string): Promise<any> {

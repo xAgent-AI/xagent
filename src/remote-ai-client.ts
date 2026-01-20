@@ -5,6 +5,55 @@ import { getLogger } from './logger.js';
 
 const logger = getLogger();
 
+// ============================================================================
+// Remote Mode Tool Sync Interface Definitions
+// ============================================================================
+
+/**
+ * MCP Tool Definition - for syncing to remote server
+ */
+export interface MCPToolDefinition {
+  name: string;              // Short name: create_issue
+  fullName: string;          // Full name: github__create_issue
+  serverName: string;        // github
+  description: string;
+  inputSchema: {
+    type: 'object';
+    properties: Record<string, any>;
+    required?: string[];
+  };
+}
+
+/**
+ * Skill Definition - for syncing to remote server
+ */
+export interface SkillDefinition {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  triggers: string[];
+}
+
+/**
+ * Tool Execution Request
+ */
+export interface ToolExecuteOptions {
+  toolName: string;
+  params: Record<string, any>;
+  toolCallId?: string;
+}
+
+/**
+ * Tool Execution Result
+ */
+export interface ToolExecuteResult {
+  success: boolean;
+  result?: any;
+  error?: string;
+  toolCallId?: string;
+}
+
 /**
  * Token invalid error - thrown when the authentication token is no longer valid
  */
@@ -547,6 +596,229 @@ export class RemoteAIClient extends EventEmitter {
 
     if (!response.ok) {
       throw new Error('Failed to delete conversation');
+    }
+  }
+
+  // ============================================================================
+  // Remote Mode Tool Sync Methods
+  // ============================================================================
+
+  /**
+   * Sync MCP tool definitions to remote server
+   * Remote server needs to support /api/agent/mcp/tools endpoint
+   */
+  async syncMCPTools(tools: MCPToolDefinition[]): Promise<void> {
+    const url = `${this.agentApi}/mcp/tools`;
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Syncing MCP tools to remote:', url);
+      console.log('[RemoteAIClient] MCP tools count:', tools.length);
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.authToken}`
+        },
+        body: JSON.stringify({ tools })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        if (this.showAIDebugInfo) {
+          console.log('[RemoteAIClient] Failed to sync MCP tools:', errorText);
+        }
+        // Non-blocking failure, just log it
+        return;
+      }
+
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] MCP tools synced successfully');
+      }
+    } catch (error) {
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] MCP sync exception:', error);
+      }
+      // Non-blocking failure, just log it
+    }
+  }
+
+  /**
+   * Sync Skill definitions to remote server
+   * Remote server needs to support /api/agent/skills endpoint
+   */
+  async syncSkills(skills: SkillDefinition[]): Promise<void> {
+    const url = `${this.agentApi}/skills`;
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Syncing skills to remote:', url);
+      console.log('[RemoteAIClient] Skills count:', skills.length);
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.authToken}`
+        },
+        body: JSON.stringify({ skills })
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        if (this.showAIDebugInfo) {
+          console.log('[RemoteAIClient] Failed to sync skills:', errorText);
+        }
+        // Non-blocking failure, just log it
+        return;
+      }
+
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] Skills synced successfully');
+      }
+    } catch (error) {
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] Skills sync exception:', error);
+      }
+      // Non-blocking failure, just log it
+    }
+  }
+
+  /**
+   * Execute tool and return result (for remote mode tool execution)
+   * Remote server needs to support /api/agent/tools/execute endpoint
+   */
+  async executeTool(options: ToolExecuteOptions): Promise<ToolExecuteResult> {
+    const url = `${this.agentApi}/tools/execute`;
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Executing tool remotely:', options.toolName);
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.authToken}`
+        },
+        body: JSON.stringify(options)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        return {
+          success: false,
+          error: errorText,
+          toolCallId: options.toolCallId
+        };
+      }
+
+      return response.json() as Promise<ToolExecuteResult>;
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        toolCallId: options.toolCallId
+      };
+    }
+  }
+
+  /**
+   * Batch execute tools
+   * Remote server needs to support /api/agent/tools/execute-batch endpoint
+   */
+  async executeTools(tools: ToolExecuteOptions[]): Promise<ToolExecuteResult[]> {
+    const url = `${this.agentApi}/tools/execute-batch`;
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Batch executing tools remotely:', tools.length);
+    }
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.authToken}`
+        },
+        body: JSON.stringify({ tools })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Tool execution failed: ${response.statusText}`);
+      }
+
+      const data = await response.json() as { results: ToolExecuteResult[] };
+      return data.results;
+    } catch (error) {
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] Batch tool execution failed:', error);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Check if remote server supports tool execution
+   * Remote server needs to support /api/agent/tools/capabilities endpoint
+   */
+  async checkToolExecutionSupport(): Promise<boolean> {
+    const url = `${this.agentApi}/tools/capabilities`;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.authToken}`
+        }
+      });
+
+      if (!response.ok) return false;
+      const data = await response.json() as { supported: boolean };
+      return data.supported;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Check if remote server supports MCP sync
+   */
+  async checkMCPSupport(): Promise<boolean> {
+    const url = `${this.agentApi}/mcp/capabilities`;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.authToken}`
+        }
+      });
+
+      if (!response.ok) return false;
+      const data = await response.json() as { supported: boolean };
+      return data.supported;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Check if remote server supports Skill sync
+   */
+  async checkSkillSupport(): Promise<boolean> {
+    const url = `${this.agentApi}/skills/capabilities`;
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${this.authToken}`
+        }
+      });
+
+      if (!response.ok) return false;
+      const data = await response.json() as { supported: boolean };
+      return data.supported;
+    } catch {
+      return false;
     }
   }
 }

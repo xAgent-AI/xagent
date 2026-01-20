@@ -3321,9 +3321,23 @@ Make your decision based on the user's request and the above criteria.`
         );
       }
 
-      const { getSmartApprovalEngine } = await import('./smart-approval.js');
+      // Remote mode (OAuth XAGENT): remote LLM has already approved the tool
+      // Auto-approve InvokeSkill tools without local AI review
       const { getConfigManager } = await import('./config.js');
       const configManager = getConfigManager();
+      const authConfig = configManager.getAuthConfig();
+      const isRemoteMode = authConfig.type === AuthType.OAUTH_XAGENT;
+      if (isRemoteMode && toolName === 'InvokeSkill') {
+        console.log('');
+        console.log(`${indent}${colors.success(`✅ [Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`)}`);
+        console.log('');
+        return await cancellationManager.withCancellation(
+          tool.execute(params, executionMode),
+          `tool-${toolName}`
+        );
+      }
+
+      const { getSmartApprovalEngine } = await import('./smart-approval.js');
 
       const approvalEngine = getSmartApprovalEngine(debugMode);
 
@@ -3406,28 +3420,38 @@ Make your decision based on the user's request and the above criteria.`
     if (executionMode === ExecutionMode.SMART) {
       const debugMode = process.env.DEBUG === 'smart-approval';
       const { getSmartApprovalEngine } = await import('./smart-approval.js');
-      const approvalEngine = getSmartApprovalEngine(debugMode);
+      const { getConfigManager } = await import('./config.js');
+      const configManager = getConfigManager();
+      const authConfig = configManager.getAuthConfig();
+      const isRemoteMode = authConfig.type === AuthType.OAUTH_XAGENT;
 
-      // Evaluate MCP tool call
-      const result = await approvalEngine.evaluate({
-        toolName: `MCP[${serverName}]::${actualToolName}`,
-        params,
-        timestamp: Date.now()
-      });
-
-      if (result.decision === 'approved') {
-        console.log(`${indent}${colors.success(`✅ [Smart Mode] MCP tool '${serverName}::${actualToolName}' passed approval`)}`);
-        console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
-      } else if (result.decision === 'requires_confirmation') {
-        const confirmed = await approvalEngine.requestConfirmation(result);
-        if (!confirmed) {
-          console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled MCP tool execution`)}`);
-          throw new Error(`Tool execution cancelled by user: ${toolName}`);
-        }
+      // Remote mode: remote LLM has already approved the tool, auto-approve
+      if (isRemoteMode) {
+        console.log(`${indent}${colors.success(`✅ [Smart Mode] Remote mode: MCP tool '${serverName}::${actualToolName}' auto-approved`)}`);
       } else {
-        console.log(`${indent}${colors.error(`❌ [Smart Mode] MCP tool execution rejected`)}`);
-        console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
-        throw new Error(`Tool execution rejected: ${toolName}`);
+        const approvalEngine = getSmartApprovalEngine(debugMode);
+
+        // Evaluate MCP tool call
+        const result = await approvalEngine.evaluate({
+          toolName: `MCP[${serverName}]::${actualToolName}`,
+          params,
+          timestamp: Date.now()
+        });
+
+        if (result.decision === 'approved') {
+          console.log(`${indent}${colors.success(`✅ [Smart Mode] MCP tool '${serverName}::${actualToolName}' passed approval`)}`);
+          console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
+        } else if (result.decision === 'requires_confirmation') {
+          const confirmed = await approvalEngine.requestConfirmation(result);
+          if (!confirmed) {
+            console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled MCP tool execution`)}`);
+            throw new Error(`Tool execution cancelled by user: ${toolName}`);
+          }
+        } else {
+          console.log(`${indent}${colors.error(`❌ [Smart Mode] MCP tool execution rejected`)}`);
+          console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
+          throw new Error(`Tool execution rejected: ${toolName}`);
+        }
       }
     }
 

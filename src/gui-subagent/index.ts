@@ -33,9 +33,9 @@ export interface GUISubAgentConfig {
    * Externally injected VLM caller function
    * If this function is provided, GUI Agent will use it to call VLM
    * This allows GUI Agent to work with remote services
-   * Parameters: image - image, prompt - user prompt, systemPrompt - system prompt
+   * Receives full messages array for consistent behavior with local mode
    */
-  remoteVlmCaller?: (image: string, prompt: string, systemPrompt: string) => Promise<string>;
+  remoteVlmCaller?: (messages: any[], systemPrompt: string) => Promise<string>;
   /**
    * Whether to use local mode
    * If true, use model/modelBaseUrl/modelApiKey for VLM calls

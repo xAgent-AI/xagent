@@ -381,19 +381,19 @@ program
 
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
 
-      // Create remoteVlmCaller for remote mode
-      let remoteVlmCaller: ((image: string, prompt: string, systemPrompt: string) => Promise<string>) | undefined;
+      // Create remoteVlmCaller for remote mode (uses full messages for consistent behavior)
+      let remoteVlmCaller: ((messages: any[], systemPrompt: string) => Promise<string>) | undefined;
 
       if (!isLocalMode && authConfig.baseUrl) {
         const remoteBaseUrl = `${authConfig.baseUrl}/api/agent/vlm`;
-        remoteVlmCaller = async (image: string, prompt: string, systemPrompt: string): Promise<string> => {
+        remoteVlmCaller = async (messages: any[], _systemPrompt: string): Promise<string> => {
           const response = await fetch(remoteBaseUrl, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${authConfig.apiKey || ''}`,
             },
-            body: JSON.stringify({ image, prompt, systemPrompt }),
+            body: JSON.stringify({ messages }),
           });
           if (!response.ok) {
             const errorText = await response.text();

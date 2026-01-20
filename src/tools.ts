@@ -1010,12 +1010,13 @@ export class TaskTool implements Tool {
   /**
    * Create unified VLM caller
    * Uses remote VLM if remoteAIClient is provided, otherwise uses local VLM
+   * Both modes receive full messages array for consistent behavior
    */
   private createRemoteVlmCaller(
     remoteAIClient: any,
     localConfig: { baseUrl: string; apiKey: string; modelName: string },
     signal?: AbortSignal
-  ): (image: string, prompt: string, systemPrompt: string) => Promise<string> {
+  ): (messages: any[], systemPrompt: string) => Promise<string> {
     // Remote mode: use RemoteAIClient
     if (remoteAIClient) {
       return this.createRemoteVLMCaller(remoteAIClient, signal);
@@ -1027,11 +1028,12 @@ export class TaskTool implements Tool {
 
   /**
    * Create remote VLM caller using RemoteAIClient
+   * Now receives full messages array for consistent behavior with local mode
    */
   private createRemoteVLMCaller(remoteAIClient: any, signal?: AbortSignal) {
-    return async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
+    return async (messages: any[], systemPrompt: string): Promise<string> => {
       try {
-        return await remoteAIClient.invokeVLM(image, userPrompt, systemPrompt, { signal });
+        return await remoteAIClient.invokeVLM(messages, systemPrompt, { signal });
       } catch (error: any) {
         throw new Error(`Remote VLM call failed: ${error.message}`);
       }
@@ -1040,6 +1042,7 @@ export class TaskTool implements Tool {
 
   /**
    * Create local VLM caller using direct API calls
+   * Receives full messages array for consistent behavior with remote mode
    */
   private createLocalVLMCaller(
     localConfig: { baseUrl: string; apiKey: string; modelName: string },
@@ -1047,18 +1050,7 @@ export class TaskTool implements Tool {
   ) {
     const { baseUrl, apiKey, modelName } = localConfig;
 
-    return async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
-      const messages = [
-        ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: userPrompt },
-            { type: 'image_url', image_url: { url: `data:image/png;base64,${image}` } }
-          ]
-        }
-      ];
-
+    return async (messages: any[], _systemPrompt: string): Promise<string> => {
       const requestBody = {
         model: modelName,
         messages,

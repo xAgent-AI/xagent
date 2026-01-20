@@ -355,40 +355,18 @@ export class RemoteAIClient extends EventEmitter {
 
   /**
    * Invoke VLM for image understanding
-   * @param image - base64 image or URL
-   * @param prompt - user prompt
-   * @param systemPrompt - system prompt (optional, generated and passed by CLI)
+   * @param messages - full messages array (consistent with local mode)
+   * @param systemPrompt - system prompt (optional, for reference)
    * @param options - other options including AbortSignal
    */
   async invokeVLM(
-    image: string,
-    prompt: string,
-    systemPrompt?: string,
+    messages: any[],
+    _systemPrompt?: string,
     options: RemoteChatOptions = {}
   ): Promise<string> {
-    // Ensure correct image format: requires data:image/xxx;base64, prefix
-    // Consistent with local mode
-    let imageUrl = image;
-    if (typeof image === 'string' && image.length > 0) {
-      if (!image.startsWith('data:') && !image.startsWith('http://') && !image.startsWith('https://')) {
-        imageUrl = `data:image/png;base64,${image}`;
-      }
-    }
-
-    // Build VLM messages (CLI generates complete messages, backend forwards)
-    const messages = [
-      ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: prompt },
-          { type: 'image_url', image_url: { url: imageUrl } }
-        ]
-      }
-    ];
-
+    // Forward complete messages to backend (same format as local mode)
     const requestBody = {
-      messages,  // Pass complete messages (including system prompt)
+      messages,  // Pass complete messages array
       context: options.context,
       options: {
         model: options.model

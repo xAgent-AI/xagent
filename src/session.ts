@@ -1700,16 +1700,15 @@ export class InteractiveSession {
   /**
    * Get a VLM caller function that uses the RemoteAIClient
    * Returns a function compatible with GUIAgent's vlmCaller configuration
+   * Now uses full messages array for consistent behavior with local mode
    */
-  getVLMCaller(): ((image: string, prompt: string, systemPrompt: string) => Promise<string>) | undefined {
+  getVLMCaller(): ((messages: any[], systemPrompt: string) => Promise<string>) | undefined {
     if (!this.remoteAIClient) {
       return undefined;
     }
 
-    const showAIDebugInfo = this.configManager.get('showAIDebugInfo') || false;
-
-    return async (image: string, prompt: string, systemPrompt: string): Promise<string> => {
-      return this.remoteAIClient!.invokeVLM(image, prompt, systemPrompt);
+    return async (messages: any[], systemPrompt: string): Promise<string> => {
+      return this.remoteAIClient!.invokeVLM(messages, systemPrompt);
     };
   }
 }

@@ -166,13 +166,13 @@ export class AuthService {
       const token = await this.retrieveXAgentToken();
 
       // 2. 调用后端验证用户
-      const xagentApiBaseUrl = this.authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+      const xagentApiBaseUrl = this.authConfig.xagentApiBaseUrl || 'https://xagent-colife.net:3000';
       const response = await axios.get(`${xagentApiBaseUrl}/api/auth/me`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
       // 3. Set authentication configuration
-      this.authConfig.baseUrl = 'http://xagent-colife.net:3000/v1';
+      this.authConfig.baseUrl = 'https://xagent-colife.net:3000/v1';
       this.authConfig.xagentApiBaseUrl = xagentApiBaseUrl;
       this.authConfig.apiKey = token;
 
@@ -406,10 +406,10 @@ export class AuthService {
 
   private async retrieveXAgentToken(): Promise<string> {
     // Use xagentApiBaseUrl from config, fallback to default
-    const webBaseUrl = this.authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+    const webBaseUrl = this.authConfig.xagentApiBaseUrl || 'https://xagent-colife.net:3000';
     const authUrl = `${webBaseUrl}/login`;
     // Callback URL must use the same domain as the web to ensure proper routing
-    const callbackUrl = 'http://xagent-colife.net:8080/callback';
+    const callbackUrl = 'https://xagent-colife.net:8080/callback';
 
     // 如果已有保存的token，通过URL参数传给Web页面
     const existingToken = this.authConfig.apiKey;

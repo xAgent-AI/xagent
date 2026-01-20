@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import readline from 'readline';
 import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
@@ -15,6 +16,27 @@ import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { InteractiveSession } from './session.js';
 
 const execAsync = promisify(exec);
+
+//
+// Tool Description Pattern
+//
+// Each tool class in this file defines a `description` property with detailed usage
+// instructions for the LLM. However, these descriptions are NOT directly used by
+// SystemPromptGenerator.createToolSchema(). Instead, SystemPromptGenerator defines
+// its own custom schemas that OVERRIDE these descriptions.
+//
+// This design allows:
+// 1. Customized descriptions optimized for system prompts
+// 2. Dynamic content (e.g., skills list) in InvokeSkill description
+// 3. Consistent formatting and structure across all tool descriptions
+//
+// The description properties here are kept for:
+// - Documentation purposes
+// - Fallback if SystemPromptGenerator schema lookup fails
+// - Potential future architecture changes
+//
+// See system-prompt-generator.ts::createToolSchema() for the override logic.
+//
 
 export class ReadTool implements Tool {
   name = 'Read';
@@ -345,14 +367,28 @@ export class BashTool implements Tool {
       effectiveCwd = undefined;
     }
     
+    // Set up environment with NODE_PATH only for node commands
+    const nodeModulesPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules');
+    const env = {
+      ...process.env,
+      NODE_PATH: nodeModulesPath
+    };
+    
+    // Only add NODE_PATH prefix for node commands
+    const isNodeCommand = /\bnode\b/.test(command);
+    const finalCommand = isNodeCommand 
+      ? `set NODE_PATH=${nodeModulesPath} && ${command}`
+      : command;
+    
     try {
       if (run_in_bg) {
         const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
-        const childProcess = spawn(command, {
+        const childProcess = spawn(finalCommand, {
           cwd: effectiveCwd || process.cwd(),
           shell: true,
-          detached: true
+          detached: true,
+          env
         });
         
         const output: string[] = [];
@@ -385,10 +421,11 @@ export class BashTool implements Tool {
           taskId
         };
       } else {
-        const { stdout, stderr } = await execAsync(command, {
+        const { stdout, stderr } = await execAsync(finalCommand, {
           cwd: effectiveCwd || process.cwd(),
           maxBuffer: 1024 * 1024 * 10,
-          timeout: timeout * 1000
+          timeout: timeout * 1000,
+          env
         });
 
         return {
@@ -2322,7 +2359,7 @@ export class ImageReadTool implements Tool {
 
 export class InvokeSkillTool implements Tool {
   name = 'InvokeSkill';
-  description = `Invoke a specialized skill to handle domain-specific tasks. Skills are AI-powered capabilities that understand complex requirements and generate high-quality outputs.
+  description = `Invoke a specialized skill to handle domain-specific tasks. Skills are AI-powered capabilities that understand complex requirements and generate high-quality outputs (see Available Skills section below for the list of skills).
 
 # When to Use
 - When user requests involve document processing (Word, PDF, PowerPoint)
@@ -2337,17 +2374,11 @@ export class InvokeSkillTool implements Tool {
 - When a regular tool can accomplish the task
 
 # Parameters
-- \`skillId\`: The skill identifier (e.g., "docx", "frontend-design", "canvas-design")
+- \`skillId\`: The skill identifier (see Available Skills section)
 - \`taskDescription\`: Detailed description of what to accomplish
 - \`inputFile\`: (Optional) Path to input file if applicable
 - \`outputFile\`: (Optional) Desired output file path
 - \`options\`: (Optional) Additional options for the skill
-
-# Examples
-- "Create a Word document with contract terms" → InvokeSkill(skillId="docx", taskDescription="Create a professional Word document with contract terms, including numbered sections, signature blocks, and professional formatting")
-- "Build a landing page for a product" → InvokeSkill(skillId="frontend-design", taskDescription="Create a visually striking landing page with hero section, features, pricing, and footer. Use bold typography and animations.")
-- "Create a poster for a music festival" → InvokeSkill(skillId="canvas-design", taskDescription="Create a poster for an electronic music festival. The topic is subtle reference to techno culture and underground rave scene.")
-- "Write API documentation" → InvokeSkill(skillId="doc-coauthoring", taskDescription="Write comprehensive API documentation for a REST API including endpoints, request/response examples, and error handling")
 
 # Best Practices
 - Provide detailed task descriptions for better results
@@ -2395,18 +2426,28 @@ export class InvokeSkillTool implements Tool {
         // Try to auto-match the skill
         const match = await skillInvoker.matchSkill(taskDescription);
         if (match) {
-          return {
-            success: true,
-            message: `Auto-matched skill: ${match.skill.name} (${match.category})`,
-            skill: match.skill.id,
-            task: taskDescription,
-            result: {
-              category: match.category,
-              confidence: match.confidence,
-              matchedKeywords: match.matchedKeywords
-            },
-            guidance: 'Please continue executing the task using the matched skill.'
-          };
+          // Auto-matched, now execute the skill to get the full guidance
+          const result = await skillInvoker.executeSkill({
+            skillId: match.skill.id,
+            taskDescription,
+            inputFile,
+            outputFile,
+            options
+          });
+
+          if (result.success) {
+            return {
+              success: true,
+              message: `Auto-matched skill: ${match.skill.name} (${match.category})`,
+              skill: match.skill.id,
+              task: taskDescription,
+              result: result.output,
+              files: result.files,
+              nextSteps: result.nextSteps
+            };
+          } else {
+            throw new Error(result.error || 'Failed to execute matched skill');
+          }
         }
         throw new Error(`Skill not found: ${skillId}`);
       }
@@ -2420,34 +2461,14 @@ export class InvokeSkillTool implements Tool {
       });
 
       if (result.success) {
-        // Generate guidance info, tell the agent what to do next
-        let guidance = '';
-        if (result.nextSteps && result.nextSteps.length > 0) {
-          guidance = `\n## 🎯 Next Steps\n\nPlease continue executing the task with the following steps:\n\n`;
-          for (const step of result.nextSteps) {
-            guidance += `### Step ${step.step}: ${step.action}\n`;
-            guidance += `- **Description**: ${step.description}\n`;
-            guidance += `- **Reason**: ${step.reason}\n`;
-            if (step.command) {
-              guidance += `- **Command**: \`${step.command}\`\n`;
-            }
-            if (step.file) {
-              guidance += `- **File**: ${step.file}\n`;
-            }
-            guidance += '\n';
-          }
-          guidance += `---\n**Important**: The above steps are automatically generated execution guidelines from SKILL.md. Please continue completing the task following these steps instead of ending the conversation.\n`;
-        }
-
         return {
           success: true,
           message: `Skill activated: ${skillDetails.name}`,
           skill: skillId,
           task: taskDescription,
-          result: result.output + (guidance ? guidance : ''),
+          result: result.output,
           files: result.files,
-          nextSteps: result.nextSteps,
-          guidance: guidance
+          nextSteps: result.nextSteps
         };
       } else {
         throw new Error(result.error);

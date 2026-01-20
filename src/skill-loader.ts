@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { WorkflowConfig } from './workflow.js';
 import { getConfigManager } from './config.js';
 
@@ -72,34 +73,8 @@ export class SkillLoader {
   }
 
   private detectSkillsPath(): string {
-    // Strategy: Find skills folder relative to the script location
-    // This works regardless of where the user runs xagent from
-    const scriptDir = path.dirname(process.argv[1]);
-
-    // Possible locations relative to where xagent script is installed
-    const possiblePaths = [
-      path.join(scriptDir, '..', 'skills', 'skills'),
-      path.join(scriptDir, '..', '..', 'skills', 'skills'),
-      path.join(scriptDir, 'skills', 'skills'),
-      path.join(scriptDir, '..', '..', '..', 'skills', 'skills'),
-      // Also try process.cwd() as fallback
-      path.join(process.cwd(), 'skills', 'skills')
-    ];
-
-    for (const p of possiblePaths) {
-      try {
-        const resolvedPath = path.resolve(p);
-        const stat = fsSync.statSync(resolvedPath);
-        if (stat.isDirectory()) {
-          return resolvedPath;
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    // Ultimate fallback
-    return path.join(process.cwd(), 'skills', 'skills');
+    // Skills folder is always at {xagent_root}/skills/skills
+    return path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'skills');
   }
 
   async loadAllSkills(): Promise<SkillInfo[]> {
@@ -211,7 +186,7 @@ export class SkillLoader {
 
           try {
             const content = await fs.readFile(skillMdPath, 'utf-8');
-            const parsed = this.parseSkillMarkdown(content);
+            const parsed = this._parseSkillMarkdown(content);
 
             if (parsed.name === skillId) {
               this.skillDirectories.set(skillId, categoryPath);
@@ -265,7 +240,7 @@ export class SkillLoader {
 
           try {
             const content = await fs.readFile(skillMdPath, 'utf-8');
-            const parsed = this.parseSkillMarkdown(content);
+            const parsed = this._parseSkillMarkdown(content);
 
             if (parsed.name) {
               this.skillDirectories.set(parsed.name, categoryPath);
@@ -320,7 +295,7 @@ export class SkillLoader {
 
     try {
       const content = await fs.readFile(skillMdPath, 'utf-8');
-      const parsed = this.parseSkillMarkdown(content);
+      const parsed = this._parseSkillMarkdown(content);
 
       if (!parsed.name) {
         const warning: SkillLoadWarning = {
@@ -360,7 +335,7 @@ export class SkillLoader {
     }
   }
 
-  private parseSkillMarkdown(content: string): { name: string; description: string; license?: string; version?: string; author?: string } {
+  private _parseSkillMarkdown(content: string): { name: string; description: string; license?: string; version?: string; author?: string } {
     const result = {
       name: '',
       description: '',
@@ -371,10 +346,27 @@ export class SkillLoader {
 
     // Normalize line endings to LF for consistent parsing
     const normalizedContent = content.replace(/\r\n/g, '\n');
+
+    // Try to extract frontmatter - support both formats:
+    // 1. Standard YAML: ---name: docx...--- 2. No opening ---: name: docx...
+    let frontmatter = '';
+    let contentStart = 0;
+
     const frontmatterMatch = normalizedContent.match(/^---\n([\s\S]*?)\n---/);
-    
     if (frontmatterMatch) {
-      const frontmatter = frontmatterMatch[1];
+      // Standard format with --- at start and end
+      frontmatter = frontmatterMatch[1];
+      contentStart = frontmatterMatch[0].length;
+    } else {
+      // Check for format without opening --- (just YAML at the start)
+      const yamlMatch = normalizedContent.match(/^([\s\S]*?)\n---/);
+      if (yamlMatch) {
+        frontmatter = yamlMatch[1];
+        contentStart = yamlMatch[0].length;
+      }
+    }
+
+    if (frontmatter) {
       const lines = frontmatter.split('\n');
       
       let currentKey = '';
@@ -423,6 +415,20 @@ export class SkillLoader {
 
   getSkill(skillId: string): SkillInfo | undefined {
     return this.loadedSkills.get(skillId);
+  }
+
+  /**
+   * Get the directory path for a skill
+   */
+  getSkillDirectory(skillId: string): string | undefined {
+    return this.skillDirectories.get(skillId);
+  }
+
+  /**
+   * Public method to parse skill markdown frontmatter
+   */
+  parseSkillMarkdown(content: string): { name: string; description: string; license?: string; version?: string; author?: string } {
+    return this._parseSkillMarkdown(content);
   }
 
   listSkills(): SkillInfo[] {

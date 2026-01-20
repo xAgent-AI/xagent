@@ -17,7 +17,7 @@
   "homepage": "https://github.com/xagent-ai/xagent-cli#readme",
   "scripts": {
     "dev": "tsx src/cli.ts",
-    "build": "tsc && node scripts/init-skills-path.js",
+    "build": "tsc",
     "start": "node dist/cli.js",
     "test": "vitest",
     "lint": "eslint src --ext .ts",

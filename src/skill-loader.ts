@@ -346,10 +346,27 @@ export class SkillLoader {
 
     // Normalize line endings to LF for consistent parsing
     const normalizedContent = content.replace(/\r\n/g, '\n');
+
+    // Try to extract frontmatter - support both formats:
+    // 1. Standard YAML: ---name: docx...--- 2. No opening ---: name: docx...
+    let frontmatter = '';
+    let contentStart = 0;
+
     const frontmatterMatch = normalizedContent.match(/^---\n([\s\S]*?)\n---/);
-    
     if (frontmatterMatch) {
-      const frontmatter = frontmatterMatch[1];
+      // Standard format with --- at start and end
+      frontmatter = frontmatterMatch[1];
+      contentStart = frontmatterMatch[0].length;
+    } else {
+      // Check for format without opening --- (just YAML at the start)
+      const yamlMatch = normalizedContent.match(/^([\s\S]*?)\n---/);
+      if (yamlMatch) {
+        frontmatter = yamlMatch[1];
+        contentStart = yamlMatch[0].length;
+      }
+    }
+
+    if (frontmatter) {
       const lines = frontmatter.split('\n');
       
       let currentKey = '';

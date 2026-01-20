@@ -186,7 +186,7 @@ export class SkillLoader {
 
           try {
             const content = await fs.readFile(skillMdPath, 'utf-8');
-            const parsed = this.parseSkillMarkdown(content);
+            const parsed = this._parseSkillMarkdown(content);
 
             if (parsed.name === skillId) {
               this.skillDirectories.set(skillId, categoryPath);
@@ -240,7 +240,7 @@ export class SkillLoader {
 
           try {
             const content = await fs.readFile(skillMdPath, 'utf-8');
-            const parsed = this.parseSkillMarkdown(content);
+            const parsed = this._parseSkillMarkdown(content);
 
             if (parsed.name) {
               this.skillDirectories.set(parsed.name, categoryPath);
@@ -295,7 +295,7 @@ export class SkillLoader {
 
     try {
       const content = await fs.readFile(skillMdPath, 'utf-8');
-      const parsed = this.parseSkillMarkdown(content);
+      const parsed = this._parseSkillMarkdown(content);
 
       if (!parsed.name) {
         const warning: SkillLoadWarning = {
@@ -335,7 +335,7 @@ export class SkillLoader {
     }
   }
 
-  private parseSkillMarkdown(content: string): { name: string; description: string; license?: string; version?: string; author?: string } {
+  private _parseSkillMarkdown(content: string): { name: string; description: string; license?: string; version?: string; author?: string } {
     const result = {
       name: '',
       description: '',
@@ -398,6 +398,20 @@ export class SkillLoader {
 
   getSkill(skillId: string): SkillInfo | undefined {
     return this.loadedSkills.get(skillId);
+  }
+
+  /**
+   * Get the directory path for a skill
+   */
+  getSkillDirectory(skillId: string): string | undefined {
+    return this.skillDirectories.get(skillId);
+  }
+
+  /**
+   * Public method to parse skill markdown frontmatter
+   */
+  parseSkillMarkdown(content: string): { name: string; description: string; license?: string; version?: string; author?: string } {
+    return this._parseSkillMarkdown(content);
   }
 
   listSkills(): SkillInfo[] {

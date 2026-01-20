@@ -1,6 +1,7 @@
 import inquirer from 'inquirer';
 import { AIClient, Message } from './ai-client.js';
 import { getConfigManager } from './config.js';
+import { AuthType } from './types.js';
 import { getLogger } from './logger.js';
 import { colors, icons } from './theme.js';
 
@@ -303,20 +304,26 @@ export class BlacklistChecker {
  */
 export class AIApprovalChecker {
   private aiClient: AIClient | null = null;
+  private isRemoteMode: boolean = false;
 
   constructor() {
     this.initializeAIClient();
   }
 
   /**
-   * Initialize AI client
+   * Initialize AI client(s)
    */
   private async initializeAIClient(): Promise<void> {
     try {
       const configManager = getConfigManager();
       const authConfig = configManager.getAuthConfig();
 
-      if (authConfig.apiKey) {
+      // Check if Remote mode (OAuth XAGENT)
+      this.isRemoteMode = authConfig.type === AuthType.OAUTH_XAGENT;
+
+      // Remote mode: AI review handled by remote LLM, no local AIClient needed
+      // Local mode: use local AIClient
+      if (!this.isRemoteMode && authConfig.apiKey) {
         this.aiClient = new AIClient(authConfig);
       }
     } catch (error) {
@@ -328,11 +335,21 @@ export class AIApprovalChecker {
    * Use AI for intelligent review
    */
   async check(context: ToolCallContext): Promise<{ approved: boolean; analysis: string; riskLevel: RiskLevel }> {
+    // In Remote mode, the remote LLM has already approved the tool_calls
+    // Local AI review approves directly, no need to repeat
+    if (this.isRemoteMode) {
+      return {
+        approved: true,
+        analysis: 'Remote mode: tool approval handled by remote LLM',
+        riskLevel: RiskLevel.LOW
+      };
+    }
+
     if (!this.aiClient) {
       // If AI client is not initialized, default to medium risk, requires user confirmation
       return {
         approved: false,
-        analysis: 'AI review not available, requires manual user confirmation',
+        analysis: 'AI review not available (no local LLM configured), requires manual user confirmation',
         riskLevel: RiskLevel.MEDIUM
       };
     }
@@ -392,6 +409,20 @@ Please return results in JSON format:
       };
     } catch (error: any) {
       logger.error('AI approval check failed', error instanceof Error ? error.message : String(error));
+
+      // In Remote mode, remote LLM already approved, local failure means auto-approve
+      const configManager = getConfigManager();
+      const authConfig = configManager.getAuthConfig();
+      const isRemoteMode = authConfig.type === AuthType.OAUTH_XAGENT;
+
+      if (isRemoteMode) {
+        return {
+          approved: true,
+          analysis: 'Remote mode: approved (remote LLM handled approval)',
+          riskLevel: RiskLevel.LOW
+        };
+      }
+
       return {
         approved: false,
         analysis: `AI review failed: ${error.message}, requires manual confirmation`,

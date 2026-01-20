@@ -1,449 +1,440 @@
-# 第三方模型配置指南
+# Third-Party Model Configuration Guide
 
-xAgent CLI 支持通过 OpenAI 兼容 API 连接各种第三方大语言模型提供商。本指南将详细介绍如何配置和使用这些模型。
+xAgent CLI supports connecting to various third-party LLM providers through OpenAI-compatible APIs. This guide details how to configure and use these models.
 
-## 目录
+## Table of Contents
 
-- [支持的模型提供商](#支持的模型提供商)
-- [快速开始](#快速开始)
-- [详细配置步骤](#详细配置步骤)
-- [各提供商配置示例](#各提供商配置示例)
-- [故障排查](#故障排查)
-- [常见问题](#常见问题)
+- [Supported Model Providers](#supported-model-providers)
+- [Quick Start](#quick-start)
+- [Detailed Configuration Steps](#detailed-configuration-steps)
+- [Configuration Examples by Provider](#configuration-examples-by-provider)
+- [Troubleshooting](#troubleshooting)
+- [FAQ](#faq)
 
-## 支持的模型提供商
+## Supported Model Providers
 
-xAgent CLI 内置支持以下第三方模型提供商：
+xAgent CLI has built-in support for the following third-party model providers:
 
-| 提供商 | 模型名称 | 描述 |
-|--------|----------|------|
-| **智谱AI** | glm-4, glm-4-flash, glm-4-plus | GLM-4 系列模型 |
-| **DeepSeek** | deepseek-chat, deepseek-coder | 深度求索系列模型 |
-| **阿里通义千问** | qwen-max, qwen-plus, qwen-turbo | 阿里云通义千问系列 |
-| **百度文心一言** | ernie-bot-4, ernie-bot-turbo | 百度智能云文心一言 |
-| **月之暗面 (Kimi)** | moonshot-v1-8k, moonshot-v1-32k, moonshot-v1-128k | 月之暗面 Kimi 系列 |
+| Provider | Model Names | Description |
+|----------|-------------|-------------|
+| **Zhipu AI (ChatGLM)** | glm-4, glm-4-flash, glm-4-plus | GLM-4 Series Models |
+| **DeepSeek** | deepseek-chat, deepseek-coder | DeepSeek Series Models |
+| **Alibaba Qwen** | qwen-max, qwen-plus, qwen-turbo | Alibaba Cloud Qwen Series |
+| **Baidu Wenxin Yiyu** | ernie-bot-4, ernie-bot-turbo | Baidu Intelligence Cloud Wenxin Series |
+| **Moonshot AI (Kimi)** | moonshot-v1-8k, moonshot-v1-32k, moonshot-v1-128k | Moonshot Kimi Series |
 
-## 快速开始
+## Quick Start
 
-### 1. 运行认证命令
+### 1. Run Authentication Command
 
 ```bash
 xagent auth
 ```
 
-### 2. 选择认证方式
+### 2. Select Authentication Method
 
-在弹出的菜单中选择：
-```
-? 选择认证方式:
-  使用xAgent账号登录 (推荐)
-  使用xAgent API Key
-❯ 使用第三方模型API (智谱GLM-4、DeepSeek等)
-```
+In the menu that appears, select:
 
-### 3. 选择模型提供商
+? Select authentication method:
+  Use xAgent account (recommended)
+  Use xAgent API Key
+❯ Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)
 
-```
-? 选择第三方模型提供商:
-❯ 智谱AI (GLM-4) - 智谱AI GLM-4系列模型
-  DeepSeek - 深度求索 DeepSeek系列模型
-  阿里通义千问 - 阿里云通义千问系列模型
-  百度文心一言 - 百度智能云文心一言系列模型
-  月之暗面 (Kimi) - 月之暗面 Kimi系列模型
-  自定义 - 手动输入API配置
-```
+### 3. Select Model Provider
 
-### 4. 输入 API Key
+? Select third-party model provider:
+❯ Zhipu AI (GLM-4) - Zhipu AI GLM-4 Series Models
+  DeepSeek - DeepSeek Series Models
+  Alibaba Qwen - Alibaba Cloud Qwen Series Models
+  Baidu Wenxin Yiyu - Baidu Intelligence Cloud Wenxin Series Models
+  Moonshot AI (Kimi) - Moonshot Kimi Series Models
+  Custom - Manually enter API configuration
 
-```
-? 输入智谱AI (GLM-4)的API Key: ****************************
-```
+### 4. Enter API Key
 
-### 5. 确认模型名称
+? Enter Zhipu AI (GLM-4) API Key: ****************************
 
-```
-? 输入模型名称 (直接回车使用默认值 glm-4): glm-4
-```
+### 5. Confirm Model Name
 
-### 6. 等待验证
+? Enter model name (press Enter for default: glm-4): glm-4
 
-系统会自动验证你的 API Key 配置是否正确。
+### 6. Wait for Verification
 
-```
-✅ 智谱AI (GLM-4)配置成功!
-```
+The system will automatically verify your API Key configuration.
 
-## 详细配置步骤
+✅ Zhipu AI (GLM-4) configuration successful!
 
-### 步骤 1: 获取 API Key
+## Detailed Configuration Steps
 
-在使用第三方模型之前，你需要先在相应的平台上注册并获取 API Key。
+### Step 1: Obtain API Key
 
-#### 智谱AI (GLM-4)
+Before using third-party models, you need to register and obtain an API Key on the respective platform.
 
-1. 访问 [智谱AI开放平台](https://open.bigmodel.cn/)
-2. 注册并登录账号
-3. 进入 [API Keys 管理页面](https://open.bigmodel.cn/usercenter/apikeys)
-4. 点击"创建新的 API Key"
-5. 复制生成的 API Key
+#### Zhipu AI (ChatGLM)
+
+1. Visit [Zhipu AI Open Platform](https://open.bigmodel.cn/)
+2. Register and log in to your account
+3. Go to [API Keys Management Page](https://open.bigmodel.cn/usercenter/apikeys)
+4. Click "Create New API Key"
+5. Copy the generated API Key
 
 #### DeepSeek
 
-1. 访问 [DeepSeek 开放平台](https://platform.deepseek.com/)
-2. 注册并登录账号
-3. 进入 [API Keys 页面](https://platform.deepseek.com/api_keys)
-4. 点击"创建 API Key"
-5. 复制生成的 API Key
+1. Visit [DeepSeek Open Platform](https://platform.deepseek.com/)
+2. Register and log in to your account
+3. Go to [API Keys Page](https://platform.deepseek.com/api_keys)
+4. Click "Create API Key"
+5. Copy the generated API Key
 
-#### 阿里通义千问
+#### Alibaba Qwen
 
-1. 访问 [阿里云百炼平台](https://bailian.console.aliyun.com/)
-2. 注册并登录阿里云账号
-3. 进入 [API-KEY 管理](https://dashscope.console.aliyun.com/apiKey)
-4. 创建新的 API-KEY
-5. 复制生成的 API Key
+1. Visit [Alibaba Cloud Bailian Platform](https://bailian.console.aliyun.com/)
+2. Register and log in to your Alibaba Cloud account
+3. Go to [API-KEY Management](https://dashscope.console.aliyun.com/apiKey)
+4. Create a new API-KEY
+5. Copy the generated API Key
 
-#### 百度文心一言
+#### Baidu Wenxin Yiyu
 
-1. 访问 [百度智能云千帆平台](https://cloud.baidu.com/product/wenxinworkshop)
-2. 注册并登录百度账号
-3. 进入 [应用列表](https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application)
-4. 创建应用并获取 API Key 和 Secret Key
-5. 复制生成的 API Key
+1. Visit [Baidu Intelligence Cloud Qianfan Platform](https://cloud.baidu.com/product/wenxinworkshop)
+2. Register and log in to your Baidu account
+3. Go to [Application List](https://console.bce.baidu.com/qianfan/ais/console/applicationConsole/application)
+4. Create an application and obtain API Key and Secret Key
+5. Copy the generated API Key
 
-#### 月之暗面 (Kimi)
+#### Moonshot AI (Kimi)
 
-1. 访问 [Moonshot AI 平台](https://platform.moonshot.cn/)
-2. 注册并登录账号
-3. 进入 [API Keys 页面](https://platform.moonshot.cn/console/api-keys)
-4. 点击"创建 API Key"
-5. 复制生成的 API Key
+1. Visit [Moonshot AI Platform](https://platform.moonshot.cn/)
+2. Register and log in to your account
+3. Go to [API Keys Page](https://platform.moonshot.cn/console/api-keys)
+4. Click "Create API Key"
+5. Copy the generated API Key
 
-### 步骤 2: 配置 xAgent CLI
+### Step 2: Configure xAgent CLI
 
-按照[快速开始](#快速开始)中的步骤进行配置。
+Follow the steps in [Quick Start](#quick-start) to configure.
 
-### 步骤 3: 验证配置
+### Step 3: Verify Configuration
 
-配置完成后，启动 xAgent CLI 进行测试：
+After configuration, start xAgent CLI to test:
 
 ```bash
 xagent start
 ```
 
-尝试发送一条简单的消息：
+Try sending a simple message:
 
 ```
-> 你好，请介绍一下你自己
+> Hello, please introduce yourself
 ```
 
-如果模型能够正常回复，说明配置成功。
+If the model responds normally, the configuration is successful.
 
-## 各提供商配置示例
+## Configuration Examples by Provider
 
-### 智谱AI (GLM-4)
+### Zhipu AI (ChatGLM)
 
-#### 配置文件方式
+#### Configuration File Method
 
-编辑 `~/.xagent/settings.json`：
+Edit `~/.xagent/settings.json`:
 
 ```json
 {
-  "selectedAuthType": "openai-compatible",
-  "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4/",
-  "apiKey": "your-glm-api-key-here",
+  "selectedAuthType": "openai_compatible",
+  "apiKey": "your-glm-api-key",
+  "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
   "modelName": "glm-4"
 }
 ```
 
-#### 可用模型
+#### Available Models
 
-- `glm-4` - GLM-4 标准版
-- `glm-4-flash` - GLM-4 Flash（快速版）
-- `glm-4-plus` - GLM-4 Plus（增强版）
-- `glm-4-0520` - GLM-4 0520 版本
-- `glm-4-air` - GLM-4 Air（轻量版）
+- `glm-4` - GLM-4 Standard
+- `glm-4-flash` - GLM-4 Flash (Fast Version)
+- `glm-4-plus` - GLM-4 Plus (Enhanced Version)
+- `glm-4-0520` - GLM-4 0520 Version
+- `glm-4-air` - GLM-4 Air (Lightweight Version)
 
-#### 使用示例
+#### Usage Example
 
 ```bash
-xagent auth
-# 选择: 使用第三方模型API (智谱GLM-4、DeepSeek等)
-# 选择: 智谱AI (GLM-4) - 智谱AI GLM-4系列模型
-# 输入API Key: (your GLM API key)
-# 输入模型名称: glm-4-plus
+$ xagent auth
+# Select: Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)
+# Select: Zhipu AI (GLM-4) - Zhipu AI GLM-4 Series Models
+# Enter API Key: (your GLM API key)
+# Enter model name: glm-4-plus
 ```
 
 ### DeepSeek
 
-#### 配置文件方式
+#### Configuration File Method
 
-编辑 `~/.xagent/settings.json`：
+Edit `~/.xagent/settings.json`:
 
 ```json
 {
-  "selectedAuthType": "openai-compatible",
-  "baseUrl": "https://api.deepseek.com/v1",
-  "apiKey": "your-deepseek-api-key-here",
+  "selectedAuthType": "openai_compatible",
+  "apiKey": "your-deepseek-api-key",
+  "baseUrl": "https://api.deepseek.com",
   "modelName": "deepseek-chat"
 }
 ```
 
-#### 可用模型
+#### Available Models
 
-- `deepseek-chat` - DeepSeek Chat 通用对话模型
-- `deepseek-coder` - DeepSeek Coder 代码生成模型
+- `deepseek-chat` - DeepSeek Chat General Dialogue Model
+- `deepseek-coder` - DeepSeek Coder Code Generation Model
 
-#### 使用示例
+#### Usage Example
 
 ```bash
-xagent auth
-# 选择: 使用第三方模型API (智谱GLM-4、DeepSeek等)
-# 选择: DeepSeek - 深度求索 DeepSeek系列模型
-# 输入API Key: (your DeepSeek API key)
-# 输入模型名称: deepseek-coder
+$ xagent auth
+# Select: Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)
+# Select: DeepSeek - DeepSeek Series Models
+# Enter API Key: (your DeepSeek API key)
+# Enter model name: deepseek-coder
 ```
 
-### 阿里通义千问
+### Alibaba Qwen
 
-#### 配置文件方式
+#### Configuration File Method
 
-编辑 `~/.xagent/settings.json`：
+Edit `~/.xagent/settings.json`:
 
 ```json
 {
-  "selectedAuthType": "openai-compatible",
+  "selectedAuthType": "openai_compatible",
+  "apiKey": "your-aliyun-api-key",
   "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  "apiKey": "your-aliyun-api-key-here",
   "modelName": "qwen-max"
 }
 ```
 
-#### 可用模型
+#### Available Models
 
-- `qwen-max` - 通义千问最强模型
-- `qwen-plus` - 通义千问增强版
-- `qwen-turbo` - 通义千问快速版
-- `qwen-long` - 通义千问长文本版
+- `qwen-max` - Qwen Most Powerful Model
+- `qwen-plus` - Qwen Enhanced Version
+- `qwen-turbo` - Qwen Fast Version
+- `qwen-long` - Qwen Long Text Version
 
-#### 使用示例
+#### Usage Example
 
 ```bash
-xagent auth
-# 选择: 使用第三方模型API (智谱GLM-4、DeepSeek等)
-# 选择: 阿里通义千问 - 阿里云通义千问系列模型
-# 输入API Key: (your Aliyun API key)
-# 输入模型名称: qwen-max
+$ xagent auth
+# Select: Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)
+# Select: Alibaba Qwen - Alibaba Cloud Qwen Series Models
+# Enter API Key: (your Aliyun API key)
+# Enter model name: qwen-max
 ```
 
-### 百度文心一言
+### Baidu Wenxin Yiyu
 
-#### 配置文件方式
+#### Configuration File Method
 
-编辑 `~/.xagent/settings.json`：
+Edit `~/.xagent/settings.json`:
 
 ```json
 {
-  "selectedAuthType": "openai-compatible",
-  "baseUrl": "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat",
-  "apiKey": "your-baidu-api-key-here",
+  "selectedAuthType": "openai_compatible",
+  "apiKey": "your-baidu-api-key",
+  "baseUrl": "https://wenxin.baidu.com/moduleApi/paapi/",
   "modelName": "ernie-bot-4"
 }
 ```
 
-#### 可用模型
+#### Available Models
 
-- `ernie-bot-4` - 文心一言 4.0
-- `ernie-bot-turbo` - 文心一言 Turbo
-- `ernie-speed` - 文心一言 Speed
+- `ernie-bot-4` - Wenxin Yiyu 4.0
+- `ernie-bot-turbo` - Wenxin Yiyu Turbo
+- `ernie-speed` - Wenxin Yiyu Speed
 
-#### 使用示例
+#### Usage Example
 
 ```bash
-xagent auth
-# 选择: 使用第三方模型API (智谱GLM-4、DeepSeek等)
-# 选择: 百度文心一言 - 百度智能云文心一言系列模型
-# 输入API Key: (your Baidu API key)
-# 输入模型名称: ernie-bot-4
+$ xagent auth
+# Select: Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)
+# Select: Baidu Wenxin Yiyu - Baidu Intelligence Cloud Wenxin Series Models
+# Enter API Key: (your Baidu API key)
+# Enter model name: ernie-bot-4
 ```
 
-### 月之暗面 (Kimi)
+### Moonshot AI (Kimi)
 
-#### 配置文件方式
+#### Configuration File Method
 
-编辑 `~/.xagent/settings.json`：
+Edit `~/.xagent/settings.json`:
 
 ```json
 {
-  "selectedAuthType": "openai-compatible",
+  "selectedAuthType": "openai_compatible",
+  "apiKey": "your-moonshot-api-key",
   "baseUrl": "https://api.moonshot.cn/v1",
-  "apiKey": "your-moonshot-api-key-here",
-  "modelName": "moonshot-v1-8k"
+  "modelName": "moonshot-v1-32k"
 }
 ```
 
-#### 可用模型
+#### Available Models
 
-- `moonshot-v1-8k` - Kimi 8K 上下文
-- `moonshot-v1-32k` - Kimi 32K 上下文
-- `moonshot-v1-128k` - Kimi 128K 上下文
+- `moonshot-v1-8k` - Kimi 8K Context
+- `moonshot-v1-32k` - Kimi 32K Context
+- `moonshot-v1-128k` - Kimi 128K Context
 
-#### 使用示例
+#### Usage Example
 
 ```bash
-xagent auth
-# 选择: 使用第三方模型API (智谱GLM-4、DeepSeek等)
-# 选择: 月之暗面 (Kimi) - 月之暗面 Kimi系列模型
-# 输入API Key: (your Moonshot API key)
-# 输入模型名称: moonshot-v1-32k
+$ xagent auth
+# Select: Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)
+# Select: Moonshot AI (Kimi) - Moonshot Kimi Series Models
+# Enter API Key: (your Moonshot API key)
+# Enter model name: moonshot-v1-32k
 ```
 
-## 自定义配置
+## Custom Configuration
 
-如果 xAgent CLI 内置的提供商列表中没有你需要的模型，可以选择"自定义"选项进行手动配置。
+If the model you need is not in the built-in provider list, you can choose "Custom" option for manual configuration.
 
-### 配置步骤
+### Configuration Steps
 
-1. 运行 `xagent auth`
-2. 选择"使用第三方模型API (智谱GLM-4、DeepSeek等)"
-3. 选择"自定义 - 手动输入API配置"
-4. 输入以下信息：
-   - API Base URL
-   - 模型名称
+1. Run `xagent auth`
+2. Select "Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)"
+3. Select "Custom - Manually enter API configuration"
+4. Enter the following information:
+   - Model Name
+   - Base URL
    - API Key
 
-### 配置文件方式
+### Configuration File Method
 
-编辑 `~/.xagent/settings.json`：
+Edit `~/.xagent/settings.json`:
 
 ```json
 {
-  "selectedAuthType": "openai-compatible",
-  "baseUrl": "https://your-custom-api.com/v1",
-  "apiKey": "your-custom-api-key-here",
+  "selectedAuthType": "openai_compatible",
+  "apiKey": "your-custom-api-key",
+  "baseUrl": "https://your-custom-api-endpoint/v1",
   "modelName": "your-model-name"
 }
 ```
 
-### 注意事项
+### Notes
 
-1. **API 兼容性**：确保你的 API 提供商支持 OpenAI 兼容的 Chat Completions API 格式
-2. **请求格式**：xAgent CLI 使用标准的 OpenAI API 请求格式
-3. **认证方式**：大多数第三方模型使用 Bearer Token 认证
-4. **端点路径**：确认 API Base URL 是否包含正确的路径（如 `/v1`）
+1. **API Compatibility**: Ensure your API provider supports OpenAI-compatible Chat Completions API format
+2. **Request Format**: xAgent CLI uses standard OpenAI API request format
+3. **Authentication Method**: Most third-party models use Bearer Token authentication
+4. **Endpoint Path**: Confirm if the API Base URL contains the correct path (e.g., `/v1`)
 
-## 故障排查
+## Troubleshooting
 
-### 问题 1: API Key 验证失败
+### Issue 1: API Key Validation Failed
 
-**错误信息**：
+**Error Message**:
+
 ```
-❌ 智谱AI (GLM-4)配置验证失败，请检查API Key和网络连接。
-```
-
-**解决方案**：
-1. 检查 API Key 是否正确复制
-2. 确认 API Key 是否有效且未过期
-3. 检查网络连接是否正常
-4. 确认 API 服务是否正常运行
-
-### 问题 2: 模型响应超时
-
-**错误信息**：
-```
-Network error: No response received from server
+❌ Zhipu AI (GLM-4) configuration validation failed. Please check API Key and network connection.
 ```
 
-**解决方案**：
-1. 检查网络连接
-2. 确认 API 服务是否正常
-3. 尝试使用其他模型
-4. 检查防火墙设置
+**Solutions**:
+1. Check if API Key is copied correctly
+2. Confirm if API Key is valid and not expired
+3. Check if network connection is normal
+4. Confirm if API service is running properly
 
-### 问题 3: 模型名称错误
+### Issue 2: Model Response Timeout
 
-**错误信息**：
+**Error Message**:
+
 ```
-API Error: 400 - {"error":{"message":"Invalid model name"}}
-```
-
-**解决方案**：
-1. 确认模型名称是否正确
-2. 参考各提供商的官方文档获取正确的模型名称
-3. 检查模型名称的大小写是否正确
-
-### 问题 4: 配额不足
-
-**错误信息**：
-```
-API Error: 429 - {"error":{"message":"Rate limit exceeded"}}
+Request timeout, please check network connection or try again
 ```
 
-**解决方案**：
-1. 检查 API 账户的配额是否充足
-2. 等待一段时间后重试
-3. 升级 API 账户套餐
+**Solutions**:
+1. Check network connection
+2. Confirm if API service is normal
+3. Try using a different model
+4. Check firewall settings
 
-## 常见问题
+### Issue 3: Incorrect Model Name
 
-### Q1: 如何切换不同的第三方模型？
+**Error Message**:
 
-**A**: 重新运行 `xagent auth` 命令，选择新的模型提供商即可。
+```
+Model not found, please check model name
+```
 
-### Q2: 可以同时配置多个模型提供商吗？
+**Solutions**:
+1. Confirm if model name is correct
+2. Refer to official documentation of each provider for correct model names
+3. Check if model name case is correct
 
-**A**: 当前版本只支持配置一个模型提供商。如需切换，需要重新运行认证命令。
+### Issue 4: Insufficient Quota
 
-### Q3: 第三方模型的费用如何计算？
+**Error Message**:
 
-**A**: 费用由各第三方模型提供商独立计算，具体价格请参考各提供商的官方定价。
+```
+API quota exceeded, please upgrade your plan or try again later
+```
 
-### Q4: 使用第三方模型会影响 xAgent 的功能吗？
+**Solutions**:
+1. Check if API account quota is sufficient
+2. Wait and try again later
+3. Upgrade API account plan
 
-**A**: 不会。xAgent 的所有功能（如工具调用、文件操作等）都可以正常使用，只是底层的大语言模型提供商不同。
+## FAQ
 
-### Q5: 如何查看当前配置的模型信息？
+### Q1: How to switch between different third-party models?
 
-**A**: 可以查看配置文件 `~/.xagent/settings.json`，或者运行以下命令：
+**A**: Re-run the `xagent auth` command and select the new model provider.
+
+### Q2: Can I configure multiple model providers at the same time?
+
+**A**: The current version only supports configuring one model provider. To switch, you need to re-run the authentication command.
+
+### Q3: How are third-party model fees calculated?
+
+**A**: Fees are calculated independently by each third-party model provider. Please refer to the official pricing of each provider for specific prices.
+
+### Q4: Will using third-party models affect xAgent's functionality?
+
+**A**: No. All xAgent features (such as tool calls, file operations, etc.) can be used normally, just with a different underlying LLM provider.
+
+### Q5: How to view the currently configured model information?
+
+**A**: You can view the configuration file `~/.xagent/settings.json`, or run the following command:
 
 ```bash
 cat ~/.xagent/settings.json
 ```
 
-### Q6: API Key 安全吗？
+### Q6: Is my API Key secure?
 
-**A**: API Key 会安全地存储在本地配置文件中，不会上传到 xAgent 服务器。请妥善保管你的 API Key。
+**A**: API Key is securely stored in the local configuration file and will not be uploaded to the xAgent server. Please keep your API Key safe.
 
-### Q7: 如何删除已配置的 API Key？
+### Q7: How to delete a configured API Key?
 
-**A**: 编辑 `~/.xagent/settings.json` 文件，删除或清空 `apiKey` 字段，然后重新运行 `xagent auth` 进行配置。
+**A**: Edit the `~/.xagent/settings.json` file, delete or clear the `apiKey` field, then re-run `xagent auth` to reconfigure.
 
-### Q8: 支持流式输出吗？
+### Q8: Does it support streaming output?
 
-**A**: 是的，xAgent CLI 支持流式输出，可以实时显示模型的回复。
+**A**: Yes, xAgent CLI supports streaming output and can display model responses in real-time.
 
-## 技术支持
+## Technical Support
 
-如果遇到问题，可以通过以下方式获取帮助：
+If you encounter issues, you can get help through:
 
-1. 查看 [xAgent 官方文档](https://platform.xagent.cn/)
-2. 提交 [GitHub Issue](https://github.com/xagent-ai/xagent-cli/issues)
-3. 联系 xAgent 技术支持
+1. View [xAgent Official Documentation](https://platform.xagent.cn/)
+2. Submit [GitHub Issue](https://github.com/xagent-ai/xagent-cli/issues)
+3. Contact xAgent Technical Support
 
-## 更新日志
+## Changelog
 
-### v1.0.0 (2026-01-02)
+- Added third-party model API support
+- Built-in support for Zhipu AI, DeepSeek, Qwen, Wenxin Yiyu, Kimi and other mainstream models
+- Optimized authentication flow with preset configuration options
+- Added secure API Key input (password mask)
+- Improved configuration verification mechanism
 
-- 新增第三方模型 API 支持
-- 内置支持智谱AI、DeepSeek、通义千问、文心一言、Kimi 等主流模型
-- 优化认证流程，提供预设配置选项
-- 添加 API Key 安全输入（密码掩码）
-- 完善配置验证机制
+## License
 
-## 许可证
+This project is licensed under the MIT License - see the [LICENSE](../LICENSE) file for details.
 
-MIT License
-
----
-
-**注意**: 使用第三方模型时，请遵守各提供商的使用条款和服务协议。
+**Note**: When using third-party models, please comply with the terms of service and agreements of each provider.

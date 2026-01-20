@@ -153,7 +153,7 @@ xagent workflow --remove <workflow-id>
 
 ### gui start
 
-Start GUI automation mode.
+Start GUI automation mode. The GUI subagent supports both local and remote VLM modes.
 
 ```bash
 xagent gui [options]
@@ -162,9 +162,34 @@ xagent gui [options]
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `--headless` | Run in headless mode |
-| `--url <url>` | Initial URL to open |
-| `--timeout <seconds>` | Timeout duration |
+| `--headless` | Run in headless mode (no visible window) |
+
+### GUI Configuration
+
+GUI subagent uses the following configuration options:
+
+| Setting | Description |
+|---------|-------------|
+| `guiSubagentModel` | VLM model name for local mode |
+| `guiSubagentBaseUrl` | VLM API base URL for local mode |
+| `guiSubagentApiKey` | VLM API key for local mode |
+
+**Local Mode**: When using `openai_compatible` auth type, configure `guiSubagentBaseUrl` and `guiSubagentModel` for local VLM calls.
+
+**Remote Mode**: When using `oauth-xagent` auth type, the GUI subagent uses remote VLM service automatically.
+
+### GUI Actions
+
+Available GUI actions:
+- `click`: Click on an element
+- `double_click`: Double click
+- `right_click`: Right click
+- `drag`: Drag from one position to another
+- `type`: Type text
+- `hotkey`: Press keyboard shortcuts
+- `scroll`: Scroll up/down/left/right
+- `wait`: Wait for specified time
+- `finished`: Complete the task |
 
 ## Global Options
 
@@ -181,6 +206,30 @@ xagent gui [options]
 | `XAGENT_API_KEY` | API key for authentication |
 | `XAGENT_BASE_URL` | Base URL for API |
 | `XAGENT_CONFIG` | Config file path |
+| `DEBUG` | Enable debug mode (e.g., `DEBUG=smart-approval`) |
+
+## Configuration File
+
+xAgent uses a JSON configuration file (`~/.xagent/settings.json`):
+
+```json
+{
+  "theme": "default",
+  "selectedAuthType": "openai_compatible",
+  "apiKey": "your-api-key",
+  "baseUrl": "https://api.example.com/v1",
+  "modelName": "gpt-4o",
+  "guiSubagentModel": "gpt-4o",
+  "guiSubagentBaseUrl": "https://api.example.com/v1",
+  "executionMode": "default",
+  "approvalMode": "smart",
+  "contextFileName": ["XAGENT.md", "IFLOW.md"],
+  "language": "zh",
+  "autoUpdate": true,
+  "telemetryEnabled": false,
+  "showToolDetails": false
+}
+```
 
 ## Related Documentation
 

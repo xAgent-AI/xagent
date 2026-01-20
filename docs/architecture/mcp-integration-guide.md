@@ -24,8 +24,7 @@ Add MCP servers to your settings file (`~/.xagent/settings.json`):
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
-      "args": ["/path/to/directory"]
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/directory"]
     },
     "github": {
       "command": "npx",
@@ -59,6 +58,25 @@ interface MCPServerConfig {
 | postgres | PostgreSQL database |
 | redis | Redis key-value store |
 | puppeteer | Browser automation |
+
+### MCP Tool Synchronization
+
+MCP tools are automatically registered with the ToolRegistry and available to agents. MCP tool names use a suffix pattern to avoid conflicts:
+
+```
+{original_name}_mcp{server_number}
+```
+
+For example: `github__create_issue_mcp0`
+
+## Remote Mode MCP Sync
+
+When using Remote Mode (OAuth authentication), MCP tools are synchronized to the remote server:
+
+1. MCP server connects and discovers tools
+2. Tool definitions are sent to remote server
+3. Remote LLM can call MCP tools through the remote client
+4. Tool execution results are synced back
 
 ## Workflow System
 
@@ -103,7 +121,7 @@ xagent workflow --remove <workflow-id>
 
 ### What are SKILLs?
 
-SKILLs are reusable task modules that can be composed to create complex automation flows.
+SKILLs are reusable task modules that can be composed to create complex automation flows. SKILLs are invoked through the `InvokeSkill` tool.
 
 ### SKILL Structure
 
@@ -117,15 +135,60 @@ interface SkillConfig {
 }
 ```
 
+### Available Skills
+
+xAgent includes several built-in skills:
+
+| Skill | Category | Description |
+|-------|----------|-------------|
+| docx | Document Processing | Create and edit Word documents |
+| pptx | Document Processing | Create PowerPoint presentations |
+| xlsx | Document Processing | Create and edit Excel spreadsheets |
+| pdf | Document Processing | PDF processing and manipulation |
+| mcp-builder | Development | Build custom MCP servers |
+| skill-creator | Development | Create new skills |
+| webapp-testing | Testing | Web application testing |
+| frontend-design | Design | Frontend design and implementation |
+| theme-factory | Design | Color theme generation |
+| algorithmic-art | Creative | Generate algorithmic art |
+
+### Invoking Skills
+
+Skills are invoked using the `InvokeSkill` tool:
+
+```
+InvokeSkill(skillId="docx", taskDescription="Create a document with title 'Report' and content 'Hello World'")
+```
+
+## Skill System Files
+
+Skills are defined in the `skills/` directory with the following structure:
+
+```
+skills/
+├── skills/
+│   ├── {skill-name}/
+│   │   ├── SKILL.md          # Skill definition
+│   │   ├── LICENSE.txt
+│   │   └── scripts/          # Implementation scripts
+│   └── ...
+├── spec/
+│   └── agent-skills-spec.md  # Skill specification
+└── template/
+    └── SKILL.md              # Skill template
+```
+
 ## Best Practices
 
 1. **Security**: Review MCP server permissions before installing
 2. **Versioning**: Use specific versions for reproducibility
-3. **Testing**: Test workflows in a safe environment first
+3. **Testing**: Test workflows and skills in a safe environment first
 4. **Documentation**: Document custom SKILLs and workflows
+5. **Skill Selection**: Use InvokeSkill tool for specialized tasks
 
 ## Related Documentation
 
 - [Architecture Overview](./overview.md)
 - [Tool System Design](./tool-system-design.md)
 - [CLI Commands](../cli/commands.md)
+- [Smart Mode Documentation](../smart-mode.md)

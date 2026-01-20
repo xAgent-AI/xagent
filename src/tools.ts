@@ -1026,42 +1026,61 @@ export class TaskTool implements Tool {
   /**
    * Create unified VLM caller
    * Uses remote VLM if remoteAIClient is provided, otherwise uses local VLM
+   * Both modes receive full messages array for consistent behavior
    */
-  private createVLMCaller(
+  private createRemoteVlmCaller(
     remoteAIClient: any,
-    localConfig: { baseUrl: string; apiKey: string; modelName: string }
-  ): (image: string, prompt: string, systemPrompt: string) => Promise<string> {
-    // Remote mode takes priority
+    localConfig: { baseUrl: string; apiKey: string; modelName: string },
+    signal?: AbortSignal
+  ): (messages: any[], systemPrompt: string) => Promise<string> {
+    // Remote mode: use RemoteAIClient
     if (remoteAIClient) {
-      return async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
-        try {
-          return await remoteAIClient.invokeVLM(image, userPrompt, systemPrompt);
-        } catch (error: any) {
-          throw new Error(`Remote VLM call failed: ${error.message}`);
-        }
-      };
+      return this.createRemoteVLMCaller(remoteAIClient, signal);
     }
 
-    // Local mode
-    const { baseUrl, apiKey, modelName } = localConfig;
-    return async (image: string, userPrompt: string, systemPrompt: string): Promise<string> => {
-      const messages = [
-        ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: userPrompt },
-            { type: 'image_url', image_url: { url: `data:image/png;base64,${image}` } }
-          ]
-        }
-      ];
+    // Local mode: use local API
+    return this.createLocalVLMCaller(localConfig, signal);
+  }
 
+  /**
+   * Create remote VLM caller using RemoteAIClient
+   * Now receives full messages array for consistent behavior with local mode
+   */
+  private createRemoteVLMCaller(remoteAIClient: any, signal?: AbortSignal) {
+    return async (messages: any[], systemPrompt: string): Promise<string> => {
+      try {
+        return await remoteAIClient.invokeVLM(messages, systemPrompt, { signal });
+      } catch (error: any) {
+        throw new Error(`Remote VLM call failed: ${error.message}`);
+      }
+    };
+  }
+
+  /**
+   * Create local VLM caller using direct API calls
+   * Receives full messages array for consistent behavior with remote mode
+   */
+  private createLocalVLMCaller(
+    localConfig: { baseUrl: string; apiKey: string; modelName: string },
+    signal?: AbortSignal
+  ) {
+    const { baseUrl, apiKey, modelName } = localConfig;
+
+    return async (messages: any[], _systemPrompt: string): Promise<string> => {
       const requestBody = {
         model: modelName,
         messages,
         max_tokens: 1024,
         temperature: 0.1,
       };
+
+      const controller = signal ? new AbortController() : undefined;
+      const abortSignal = signal || controller?.signal;
+
+      // If external signal is provided, listen to it
+      if (signal) {
+        signal.addEventListener?.('abort', () => controller?.abort());
+      }
 
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
@@ -1070,6 +1089,7 @@ export class TaskTool implements Tool {
           'Authorization': `Bearer ${apiKey}`,
         },
         body: JSON.stringify(requestBody),
+        signal: abortSignal,
       });
 
       if (!response.ok) {
@@ -1085,8 +1105,6 @@ export class TaskTool implements Tool {
   /**
    * Execute GUI subagent by directly calling GUIAgent.run()
    * This bypasses the normal subagent message loop for better GUI control
-   *
-   * @param remoteAIClient - Optional RemoteAIClient instance for remote mode
    */
   private async executeGUIAgent(
     prompt: string,
@@ -1103,13 +1121,15 @@ export class TaskTool implements Tool {
     console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
     console.log('');
 
-    // Get local VLM configuration
+    // Get VLM configuration (used for local mode fallback)
     const baseUrl = config.get('guiSubagentBaseUrl') || config.get('baseUrl') || '';
     const apiKey = config.get('guiSubagentApiKey') || config.get('apiKey') || '';
     const modelName = config.get('guiSubagentModel') || config.get('modelName') || '';
 
-    // Transparency: use remote mode if remoteAIClient exists, otherwise use local mode
+    // Determine mode: remote if remoteAIClient exists, otherwise local
     const isRemoteMode = !!remoteAIClient;
+
+    // Log mode information
     if (isRemoteMode) {
       console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
     } else {
@@ -1121,10 +1141,13 @@ export class TaskTool implements Tool {
           message: `GUI task "${description}" failed: No valid API URL configured`
         };
       }
+      console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
+      console.log(`${indent}${colors.textMuted(`  Base URL: ${baseUrl}`)}`);
     }
+    console.log('');
 
-    // Transparency: create unified vlmCaller, caller doesn't care about internal implementation
-    const vlmCaller = this.createVLMCaller(remoteAIClient, { baseUrl, apiKey, modelName });
+    // Create remoteVlmCaller using the unified method (handles both local and remote modes)
+    const remoteVlmCaller = this.createRemoteVlmCaller(remoteAIClient, { baseUrl, apiKey, modelName });
 
     // Set up stdin polling for ESC cancellation
     let rawModeEnabled = false;
@@ -1184,7 +1207,11 @@ export class TaskTool implements Tool {
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
 
       const guiAgent = await createGUISubAgent({
-        vlmCaller,
+        model: !isRemoteMode ? modelName : undefined,
+        modelBaseUrl: !isRemoteMode ? baseUrl : undefined,
+        modelApiKey: !isRemoteMode ? apiKey : undefined,
+        remoteVlmCaller,
+        isLocalMode: !isRemoteMode,
         maxLoopCount: 30,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
@@ -1297,22 +1324,16 @@ export class TaskTool implements Tool {
 
     // Special handling for gui-subagent: directly call GUIAgent.run() instead of subagent message loop
     if (subagent_type === 'gui-subagent') {
-      // Get RemoteAIClient instance (if available)
+      // Get RemoteAIClient instance from session (if available)
       let remoteAIClient: any;
       try {
-        const { RemoteAIClient } = await import('./remote-ai-client.js');
-        const { getConfigManager } = await import('./config.js');
-        const cfg = getConfigManager();
-        const authConfig = cfg.getAuthConfig();
-        const selectedAuthType = cfg.get('selectedAuthType');
-
-        if (selectedAuthType === AuthType.OAUTH_XAGENT && authConfig.apiKey) {
-          const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-          const showAIDebugInfo = cfg.get('showAIDebugInfo') || false;
-          remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl, showAIDebugInfo);
+        const { getSingletonSession } = await import('./session.js');
+        const session = getSingletonSession();
+        if (session) {
+          remoteAIClient = session.getRemoteAIClient();
         }
       } catch (e) {
-        // RemoteAIClient not available, keep undefined
+        // Session not available, keep undefined
         remoteAIClient = undefined;
       }
 
@@ -3316,9 +3337,23 @@ Make your decision based on the user's request and the above criteria.`
         );
       }
 
-      const { getSmartApprovalEngine } = await import('./smart-approval.js');
+      // Remote mode (OAuth XAGENT): remote LLM has already approved the tool
+      // Auto-approve InvokeSkill tools without local AI review
       const { getConfigManager } = await import('./config.js');
       const configManager = getConfigManager();
+      const authConfig = configManager.getAuthConfig();
+      const isRemoteMode = authConfig.type === AuthType.OAUTH_XAGENT;
+      if (isRemoteMode && toolName === 'InvokeSkill') {
+        console.log('');
+        console.log(`${indent}${colors.success(`✅ [Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`)}`);
+        console.log('');
+        return await cancellationManager.withCancellation(
+          tool.execute(params, executionMode),
+          `tool-${toolName}`
+        );
+      }
+
+      const { getSmartApprovalEngine } = await import('./smart-approval.js');
 
       const approvalEngine = getSmartApprovalEngine(debugMode);
 
@@ -3401,28 +3436,38 @@ Make your decision based on the user's request and the above criteria.`
     if (executionMode === ExecutionMode.SMART) {
       const debugMode = process.env.DEBUG === 'smart-approval';
       const { getSmartApprovalEngine } = await import('./smart-approval.js');
-      const approvalEngine = getSmartApprovalEngine(debugMode);
+      const { getConfigManager } = await import('./config.js');
+      const configManager = getConfigManager();
+      const authConfig = configManager.getAuthConfig();
+      const isRemoteMode = authConfig.type === AuthType.OAUTH_XAGENT;
 
-      // Evaluate MCP tool call
-      const result = await approvalEngine.evaluate({
-        toolName: `MCP[${serverName}]::${actualToolName}`,
-        params,
-        timestamp: Date.now()
-      });
-
-      if (result.decision === 'approved') {
-        console.log(`${indent}${colors.success(`✅ [Smart Mode] MCP tool '${serverName}::${actualToolName}' passed approval`)}`);
-        console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
-      } else if (result.decision === 'requires_confirmation') {
-        const confirmed = await approvalEngine.requestConfirmation(result);
-        if (!confirmed) {
-          console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled MCP tool execution`)}`);
-          throw new Error(`Tool execution cancelled by user: ${toolName}`);
-        }
+      // Remote mode: remote LLM has already approved the tool, auto-approve
+      if (isRemoteMode) {
+        console.log(`${indent}${colors.success(`✅ [Smart Mode] Remote mode: MCP tool '${serverName}::${actualToolName}' auto-approved`)}`);
       } else {
-        console.log(`${indent}${colors.error(`❌ [Smart Mode] MCP tool execution rejected`)}`);
-        console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
-        throw new Error(`Tool execution rejected: ${toolName}`);
+        const approvalEngine = getSmartApprovalEngine(debugMode);
+
+        // Evaluate MCP tool call
+        const result = await approvalEngine.evaluate({
+          toolName: `MCP[${serverName}]::${actualToolName}`,
+          params,
+          timestamp: Date.now()
+        });
+
+        if (result.decision === 'approved') {
+          console.log(`${indent}${colors.success(`✅ [Smart Mode] MCP tool '${serverName}::${actualToolName}' passed approval`)}`);
+          console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
+        } else if (result.decision === 'requires_confirmation') {
+          const confirmed = await approvalEngine.requestConfirmation(result);
+          if (!confirmed) {
+            console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled MCP tool execution`)}`);
+            throw new Error(`Tool execution cancelled by user: ${toolName}`);
+          }
+        } else {
+          console.log(`${indent}${colors.error(`❌ [Smart Mode] MCP tool execution rejected`)}`);
+          console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
+          throw new Error(`Tool execution rejected: ${toolName}`);
+        }
       }
     }
 

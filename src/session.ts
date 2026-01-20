@@ -4,7 +4,7 @@ import ora from 'ora';
 import inquirer from 'inquirer';
 import { ExecutionMode, ChatMessage, ToolCall, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
-import { RemoteAIClient } from './remote-ai-client.js';
+import { RemoteAIClient, TokenInvalidError } from './remote-ai-client.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { getToolRegistry } from './tools.js';
@@ -19,7 +19,9 @@ import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
-import { Logger, LogLevel } from './logger.js';
+import { Logger, LogLevel, getLogger } from './logger.js';
+
+const logger = getLogger();
 
 export class InteractiveSession {
   private conversationManager: ConversationManager;
@@ -145,6 +147,9 @@ export class InteractiveSession {
   }
 
   async start(): Promise<void> {
+    // Set this session as the singleton for access from other modules
+    setSingletonSession(this);
+
     const separator = icons.separator.repeat(60);
     console.log('');
     console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
@@ -181,6 +186,8 @@ export class InteractiveSession {
   }
 
   private async initialize(): Promise<void> {
+    logger.debug('\n[SESSION] ========== initialize() 开始 ==========\n');
+
     try {
       const spinner = ora({
         text: colors.textMuted('Initializing XAGENT CLI...'),
@@ -188,10 +195,18 @@ export class InteractiveSession {
         color: 'cyan'
       }).start();
 
+      logger.debug('[SESSION] 调用 configManager.load()...');
       await this.configManager.load();
 
+      logger.debug('[SESSION] 调用 configManager.getAuthConfig()...');
       let authConfig = this.configManager.getAuthConfig();
       const selectedAuthType = this.configManager.get('selectedAuthType');
+
+      logger.debug('[SESSION] getAuthConfig() 返回:');
+      logger.debug('  - apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
+      logger.debug('  - selectedAuthType:', String(selectedAuthType));
+      logger.debug('  - authConfig.type:', String(authConfig.type));
+      logger.debug('  - authConfig.baseUrl:', String(authConfig.baseUrl));
 
       // Only validate OAuth tokens, skip validation for third-party API keys
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
@@ -203,10 +218,11 @@ export class InteractiveSession {
         if (!isValid && authConfig.refreshToken) {
           spinner.text = colors.textMuted('Refreshing authentication...');
           const newToken = await this.refreshToken(baseUrl, authConfig.refreshToken);
-          
+
           if (newToken) {
-            // Save new token
+            // Save new token and persist
             await this.configManager.set('apiKey', newToken);
+            await this.configManager.save('global');
             authConfig.apiKey = newToken;
             isValid = true;
           }
@@ -219,10 +235,14 @@ export class InteractiveSession {
           console.log(colors.info('Please log in again to continue.'));
           console.log('');
 
-          // Clear invalid credentials
+          // Clear invalid credentials and persist
           await this.configManager.set('apiKey', '');
           await this.configManager.set('refreshToken', '');
           await this.configManager.set('selectedAuthType', AuthType.OAUTH_XAGENT);
+          await this.configManager.save('global');
+
+          await this.configManager.load();
+          authConfig = this.configManager.getAuthConfig();
 
           await this.setupAuthentication();
           authConfig = this.configManager.getAuthConfig();
@@ -234,7 +254,7 @@ export class InteractiveSession {
             output: process.stdout
           });
           this.rl.on('close', () => {
-            console.error('DEBUG: readline interface closed');
+            // readline closed
           });
           spinner.start();
         }
@@ -251,7 +271,7 @@ export class InteractiveSession {
           output: process.stdout
         });
         this.rl.on('close', () => {
-          console.error('DEBUG: readline interface closed');
+          // readline closed
         });
         spinner.start();
       }
@@ -261,10 +281,13 @@ export class InteractiveSession {
       this.contextCompressor.setAIClient(this.aiClient);
 
       // Initialize remote AI client for OAuth XAGENT mode
-      if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
+      if (selectedAuthType === AuthType.OAUTH_XAGENT) {
         const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
-        console.log('[Session] Initialize remote AI client, webBaseUrl:', webBaseUrl);
-        this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl);
+        // In OAuth XAGENT mode, we still pass apiKey (can be empty or used for other purposes)
+        this.remoteAIClient = new RemoteAIClient(authConfig.apiKey || '', webBaseUrl, authConfig.showAIDebugInfo);
+        logger.debug('[DEBUG Initialize] RemoteAIClient created successfully');
+      } else {
+        logger.debug('[DEBUG Initialize] RemoteAIClient NOT created (not OAuth XAGENT mode)');
       }
 
       this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
@@ -305,9 +328,19 @@ export class InteractiveSession {
           const toolRegistry = getToolRegistry();
           const allMcpTools = this.mcpManager.getAllTools();
           toolRegistry.registerMCPTools(allMcpTools);
+
+          // Sync MCP tools to remote server (remote mode only)
+          if (this.remoteAIClient) {
+            await this.syncMCPToRemote(allMcpTools);
+          }
         } catch (error: any) {
           console.log(`${colors.warning(`⚠ MCP connection failed: ${error.message}`)}`);
         }
+      }
+
+      // Sync skills to remote server (remote mode only)
+      if (this.remoteAIClient) {
+        await this.syncSkillsToRemote();
       }
 
       const checkpointingConfig = this.configManager.getCheckpointingConfig();
@@ -348,8 +381,10 @@ export class InteractiveSession {
       });
 
       return response.ok;
-    } catch (error) {
-      // Network error - could be server down, consider token invalid
+    } catch (error: any) {
+      // Network error - log details but still consider token may be invalid
+      // For network errors, we still return false to trigger re-authentication
+      // This ensures security but the user can retry
       return false;
     }
   }
@@ -372,7 +407,7 @@ export class InteractiveSession {
       } else {
         return null;
       }
-    } catch (error) {
+    } catch (error: any) {
       return null;
     }
   }
@@ -620,9 +655,11 @@ export class InteractiveSession {
     await this.checkAndCompressContext(lastUserMessage);
 
     // Use remote AI client if available (OAuth XAGENT mode)
-    if (this.remoteAIClient) {
+          logger.debug('[DEBUG processUserMessage] this.remoteAIClient exists:', !!this.remoteAIClient ? 'true' : 'false');    if (this.remoteAIClient) {
+      logger.debug('[DEBUG processUserMessage] Using generateRemoteResponse');
       await this.generateRemoteResponse(thinkingTokens);
     } else {
+      logger.debug('[DEBUG processUserMessage] Using generateResponse (local mode)');
       await this.generateResponse(thinkingTokens);
     }
   }
@@ -798,25 +835,40 @@ export class InteractiveSession {
   /**
    * Create unified LLM Caller
    * Implement transparency: caller doesn't need to care about remote vs local mode
-   * Remote mode takes priority
    */
   private createLLMCaller() {
-    // Remote mode takes priority
+    // Remote mode: use RemoteAIClient
     if (this.remoteAIClient) {
-      return {
-        chatCompletion: (messages: ChatMessage[], options: any) => 
-          this.remoteAIClient!.chatCompletion(messages, options),
-        isRemote: true
-      };
+      return this.createRemoteCaller();
     }
 
-    // Local mode
+    // Local mode: use AIClient
     if (!this.aiClient) {
       throw new Error('AI client not initialized');
     }
+    return this.createLocalCaller();
+  }
+
+  /**
+   * Create remote mode LLM caller
+   */
+  private createRemoteCaller() {
+    const client = this.remoteAIClient!;
     return {
       chatCompletion: (messages: ChatMessage[], options: any) => 
-        this.aiClient!.chatCompletion(messages as any, options),
+        client.chatCompletion(messages, options),
+      isRemote: true
+    };
+  }
+
+  /**
+   * Create local mode LLM caller
+   */
+  private createLocalCaller() {
+    const client = this.aiClient!;
+    return {
+      chatCompletion: (messages: ChatMessage[], options: any) => 
+        client.chatCompletion(messages as any, options),
       isRemote: false
     };
   }
@@ -1045,15 +1097,6 @@ export class InteractiveSession {
         }
       }));
 
-      // Debug: Print tool list，特别是确认 gui-subagent 是否在列表中
-      const hasGuiSubagent = tools.some((t: any) => t.function.name === 'task');
-      const guiSubagentTool = tools.find((t: any) => t.function.name === 'task');
-      console.log(`[DEBUG] 工具总数: ${tools.length}, includes task 工具: ${hasGuiSubagent}`);
-      if (guiSubagentTool) {
-        const hasGuiSubagentInDesc = guiSubagentTool.function.description?.includes('gui-subagent');
-        console.log(`[DEBUG] task 工具描述中includes gui-subagent: ${hasGuiSubagentInDesc}`);
-      }
-
       // Generate system prompt (与本地模式一致)
       const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
@@ -1069,12 +1112,16 @@ export class InteractiveSession {
         }))
       ];
 
-      // Call unified LLM API
-      const response = await chatCompletion(messages, {
-        tools,
-        toolChoice: tools.length > 0 ? 'auto' : 'none',
-        thinkingTokens
-      });
+      // Call unified LLM API with cancellation support
+      const operationId = `remote-ai-response-${Date.now()}`;
+      const response = await this.cancellationManager.withCancellation(
+        chatCompletion(messages, {
+          tools,
+          toolChoice: tools.length > 0 ? 'auto' : 'none',
+          thinkingTokens
+        }),
+        operationId
+      );
 
       clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
@@ -1144,6 +1191,59 @@ export class InteractiveSession {
 
       if (error.message === 'Operation cancelled by user') {
         return;
+      }
+
+      // Handle token invalid error - trigger re-authentication
+      if (error instanceof TokenInvalidError) {
+        console.log('');
+        console.log(colors.warning('⚠️  Authentication expired or invalid'));
+        console.log(colors.info('Your browser session has been logged out. Please log in again.'));
+        console.log('');
+
+        // Clear invalid credentials and persist
+        await this.configManager.set('apiKey', '');
+        await this.configManager.set('refreshToken', '');
+        await this.configManager.set('selectedAuthType', AuthType.OAUTH_XAGENT);
+        await this.configManager.save('global');
+
+        logger.debug('[DEBUG generateRemoteResponse] Cleared invalid credentials, starting re-authentication...');
+
+        // Re-authenticate
+        await this.setupAuthentication();
+
+        // Reload config to ensure we have the latest authConfig
+        logger.debug('[DEBUG generateRemoteResponse] Re-authentication completed, reloading config...');
+        await this.configManager.load();
+        const authConfig = this.configManager.getAuthConfig();
+
+        logger.debug('[DEBUG generateRemoteResponse] After re-auth:');
+        logger.debug('  - authConfig.apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
+        logger.debug('  - authConfig.apiKey prefix:', authConfig.apiKey ? authConfig.apiKey.substring(0, 20) + '...' : 'empty');
+
+        // Recreate readline interface after inquirer
+        this.rl.close();
+        this.rl = readline.createInterface({
+          input: process.stdin,
+          output: process.stdout
+        });
+        this.rl.on('close', () => {
+          logger.debug('DEBUG: readline interface closed');
+        });
+
+        // Reinitialize RemoteAIClient with new token
+        if (authConfig.apiKey) {
+          const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+          logger.debug('[DEBUG generateRemoteResponse] Reinitializing RemoteAIClient with new token');
+          this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl, authConfig.showAIDebugInfo);
+        } else {
+          logger.debug('[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!');
+        }
+
+        // Retry the current operation
+        console.log('');
+        console.log(colors.info('Retrying with new authentication...'));
+        console.log('');
+        return this.generateRemoteResponse(thinkingTokens);
       }
 
       console.log(colors.error(`Error: ${error.message}`));
@@ -1599,6 +1699,116 @@ export class InteractiveSession {
     console.log(colors.border(separator));
     console.log('');
   }
+
+  /**
+   * Get the RemoteAIClient instance
+   * Used by tools.ts to access the remote AI client for GUI operations
+   */
+  getRemoteAIClient(): RemoteAIClient | null {
+    return this.remoteAIClient;
+  }
+
+  /**
+   * Get a VLM caller function that uses the RemoteAIClient
+   * Returns a function compatible with GUIAgent's vlmCaller configuration
+   * Now uses full messages array for consistent behavior with local mode
+   */
+  getVLMCaller(): ((messages: any[], systemPrompt: string) => Promise<string>) | undefined {
+    if (!this.remoteAIClient) {
+      return undefined;
+    }
+
+    return async (messages: any[], systemPrompt: string): Promise<string> => {
+      return this.remoteAIClient!.invokeVLM(messages, systemPrompt);
+    };
+  }
+
+  // ============================================================================
+  // Remote Mode Tool Sync Methods
+  // ============================================================================
+
+  /**
+   * Sync MCP tool definitions to remote server
+   * @param allMcpTools - Map containing complete MCP tool information
+   */
+  private async syncMCPToRemote(allMcpTools: Map<string, any>): Promise<void> {
+    if (!this.remoteAIClient) return;
+
+    try {
+      const tools: Array<{
+        name: string;
+        fullName: string;
+        serverName: string;
+        description: string;
+        inputSchema: any;
+      }> = [];
+
+      for (const [fullName, tool] of allMcpTools) {
+        const firstUnderscoreIndex = fullName.indexOf('__');
+        if (firstUnderscoreIndex === -1) continue;
+
+        const serverName = fullName.substring(0, firstUnderscoreIndex);
+        const originalName = fullName.substring(firstUnderscoreIndex + 2);
+
+        tools.push({
+          name: originalName,
+          fullName,
+          serverName,
+          description: tool.description || '',
+          inputSchema: tool.inputSchema || { type: 'object', properties: {} }
+        });
+      }
+
+      await this.remoteAIClient.syncMCPTools(tools);
+      console.log(`${colors.success(`✓ Synced ${tools.length} MCP tools to remote server`)}`);
+    } catch (error: any) {
+      console.log(`${colors.warning(`⚠ Failed to sync MCP tools to remote: ${error.message}`)}`);
+      // Non-blocking failure, continue initialization
+    }
+  }
+
+  /**
+   * Sync Skill definitions to remote server
+   */
+  private async syncSkillsToRemote(): Promise<void> {
+    if (!this.remoteAIClient) return;
+
+    try {
+      const { getSkillInvoker } = await import('./skill-invoker.js');
+      const skillInvoker = getSkillInvoker();
+      await skillInvoker.initialize();
+
+      const skills: Array<{
+        id: string;
+        name: string;
+        description: string;
+        category: string;
+        triggers: string[];
+      }> = [];
+
+      // Get all Skill info from SKILL_TRIGGERS
+      const { SKILL_TRIGGERS } = await import('./skill-invoker.js');
+      for (const [key, trigger] of Object.entries(SKILL_TRIGGERS)) {
+        const skillTrigger = trigger as { skillId: string; keywords: string[]; category: string };
+        const skill = await skillInvoker.getSkillDetails(skillTrigger.skillId);
+        if (skill) {
+          skills.push({
+            id: skill.id,
+            name: skill.name,
+            description: skill.description,
+            category: skillTrigger.category,
+            triggers: skillTrigger.keywords
+          });
+        }
+      }
+
+      await this.remoteAIClient.syncSkills(skills);
+      console.log(`${colors.success(`✓ Synced ${skills.length} skills to remote server`)}`);
+    } catch (error: any) {
+      console.log(`${colors.warning(`⚠ Failed to sync skills to remote: ${error.message}`)}`);
+      // Non-blocking failure, continue initialization
+    }
+  }
 }
 
 export async function startInteractiveSession(): Promise<void> {
@@ -1647,4 +1857,15 @@ export async function startInteractiveSession(): Promise<void> {
   });
 
   await session.start();
+}
+
+// Singleton session instance for access from other modules
+let singletonSession: InteractiveSession | null = null;
+
+export function setSingletonSession(session: InteractiveSession): void {
+  singletonSession = session;
+}
+
+export function getSingletonSession(): InteractiveSession | null {
+  return singletonSession;
 }

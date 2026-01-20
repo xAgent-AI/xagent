@@ -140,16 +140,22 @@ export class AuthService {
   }
 
   async authenticate(): Promise<boolean> {
+    let result: boolean;
     switch (this.authConfig.type) {
       case AuthType.OAUTH_XAGENT:
-        return await this.authenticateWithXAgent();
+        result = await this.authenticateWithXAgent();
+        break;
       case AuthType.API_KEY:
-        return await this.authenticateWithApiKey();
+        result = await this.authenticateWithApiKey();
+        break;
       case AuthType.OPENAI_COMPATIBLE:
-        return await this.authenticateWithOpenAICompatible();
+        result = await this.authenticateWithOpenAICompatible();
+        break;
       default:
         throw new Error(`Unknown auth type: ${this.authConfig.type}`);
     }
+
+    return result;
   }
 
   private async authenticateWithXAgent(): Promise<boolean> {
@@ -159,24 +165,21 @@ export class AuthService {
       // 1. Start HTTP server to receive callback
       const token = await this.retrieveXAgentToken();
 
-      // 2. Set authentication configuration
+      // 2. 调用后端验证用户
+      const xagentApiBaseUrl = this.authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+      const response = await axios.get(`${xagentApiBaseUrl}/api/auth/me`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      // 3. Set authentication configuration
       this.authConfig.baseUrl = 'http://xagent-colife.net:3000/v1';
-      this.authConfig.xagentApiBaseUrl = 'http://xagent-colife.net:3000';
+      this.authConfig.xagentApiBaseUrl = xagentApiBaseUrl;
       this.authConfig.apiKey = token;
 
       logger.success('Successfully authenticated with xAgent!');
-      logger.info(`LLM API: http://xagent-colife.net:3000/v1`);
-      logger.info(`VLM API: http://xagent-colife.net:3000/v3`);
       return true;
     } catch (error: any) {
-      const errorMsg = error?.message || 'Unknown error';
-      if (errorMsg.includes('timeout') || errorMsg.includes('Timeout')) {
-        logger.error('Authentication timed out', 'The browser authentication took too long. Please try again.');
-      } else if (errorMsg.includes('No token') || errorMsg.includes('no token')) {
-        logger.error('Authentication was cancelled or failed', 'No token was received from the browser. Please try again.');
-      } else {
-        logger.error('xAgent authentication failed', errorMsg || 'Check your network connection and try again');
-      }
+      logger.error('Authentication failed', 'Please try again.');
       return false;
     }
   }
@@ -402,55 +405,65 @@ export class AuthService {
   }
 
   private async retrieveXAgentToken(): Promise<string> {
-    // Use frontend login page (supports callback parameter)
-    const authUrl = 'http://xagent-colife.net:3000/login';
-    const callbackUrl = 'http://localhost:8080/callback';
+    // Use xagentApiBaseUrl from config, fallback to default
+    const webBaseUrl = this.authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
+    const authUrl = `${webBaseUrl}/login`;
+    // Callback URL must use the same domain as the web to ensure proper routing
+    const callbackUrl = 'http://xagent-colife.net:8080/callback';
 
-    logger.debug(`[OAuth] Opening browser for authentication`);
-    logger.debug(`[OAuth] Login URL: ${authUrl}?callback=${encodeURIComponent(callbackUrl)}`);
+    // 如果已有保存的token，通过URL参数传给Web页面
+    const existingToken = this.authConfig.apiKey;
+    const existingRefreshToken = this.authConfig.refreshToken;
+
+    // 构建登录URL - 如果已有token也传给Web
+    let loginUrl = `${authUrl}?callback=${encodeURIComponent(callbackUrl)}`;
+    if (existingToken) {
+      loginUrl += `&existingToken=${encodeURIComponent(existingToken)}`;
+      if (existingRefreshToken) {
+        loginUrl += `&existingRefreshToken=${encodeURIComponent(existingRefreshToken)}`;
+      }
+    }
 
     // Start HTTP server to receive callback, then open browser
     return new Promise((resolve, reject) => {
       let timeoutId: NodeJS.Timeout | null = null;
       let server: http.Server | null = null;
-      
+
       const cleanup = () => {
         if (timeoutId) {
           clearTimeout(timeoutId);
           timeoutId = null;
         }
       };
-      
-      const serverCallback = (req: any, res: any) => {
-        logger.debug(`[OAuth] Received request: ${req.url}`);
 
+      const serverCallback = (req: any, res: any) => {
         if (req.url.startsWith('/callback')) {
           const url = new URL(req.url, `http://${req.headers.host}`);
           const token = url.searchParams.get('token');
           const refreshToken = url.searchParams.get('refreshToken');
 
-          logger.debug(`[OAuth] Callback received, token: ${token ? 'present' : 'missing'}`);
-          logger.debug(`[OAuth] Refresh token: ${refreshToken ? 'present' : 'missing'}`);
-
           if (token) {
+            logger.info('Authentication successful! Received token');
             cleanup();
-            
+
             // Save refresh token if provided
             if (refreshToken) {
               this.authConfig.refreshToken = refreshToken;
-              logger.debug(`[OAuth] Refresh token saved`);
             }
 
             // Redirect directly to home page after successful authentication
-            res.writeHead(302, { 'Location': 'http://localhost:3000/' });
+            // Use the same webBaseUrl that was used to open the login page
+            const redirectUrl = `${webBaseUrl}/`;
+            res.writeHead(302, { 'Location': redirectUrl });
             res.end();
             if (server) {
               server.close();
             }
             resolve(token);
           } else {
+            logger.warn('No token in callback URL');
             cleanup();
-            
+
             res.writeHead(400, { 'Content-Type': 'text/html' });
             res.end('<h1>Authentication Failed: No token</h1>');
             if (server) {
@@ -458,25 +471,30 @@ export class AuthService {
             }
             reject(new Error('No token received'));
           }
+        } else if (req.url === '/' || req.url === '') {
+          // Root path - likely a redirect from the web app
+          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.end('<html><body><h1>XAGENT CLI Authentication Callback Server</h1><p>Waiting for authentication...</p></body></html>');
+        } else {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('Not Found');
         }
       };
-      
+
       server = http.createServer(serverCallback);
 
       // Set timeout timer (after server is created)
       timeoutId = setTimeout(() => {
-        logger.warn('[OAuth] Authentication timeout after 30 minutes');
+        logger.warn('Authentication timeout after 30 minutes');
         if (server) {
           server.close();
         }
         reject(new Error('Authentication timeout'));
       }, 1800000); // 30 minutes
 
-      server.listen(8080, async () => {
+      server.listen(8080, '0.0.0.0', async () => {
         logger.info('Waiting for authentication...', 'Opening browser for login...');
-        const fullUrl = `${authUrl}?callback=${encodeURIComponent(callbackUrl)}`;
-        logger.debug(`[OAuth] Full URL: ${fullUrl}`);
-        await open(fullUrl);
+        await open(loginUrl);
       });
     });
   }

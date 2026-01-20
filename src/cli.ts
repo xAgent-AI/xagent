@@ -349,10 +349,68 @@ program
     console.log('');
 
     try {
+      const configManager = getConfigManager();
+      const authConfig = configManager.getAuthConfig();
+
+      // Get GUI-specific VLM configuration
+      const baseUrl = configManager.get('guiSubagentBaseUrl') || configManager.get('baseUrl') || '';
+      const apiKey = configManager.get('guiSubagentApiKey') || configManager.get('apiKey') || '';
+      const modelName = configManager.get('guiSubagentModel') || configManager.get('modelName') || '';
+
+      // Determine mode: local (openai_compatible) or remote
+      const isLocalMode = authConfig.type === 'openai_compatible';
+
+      if (isLocalMode) {
+        // Local mode: require baseUrl configuration
+        if (!baseUrl) {
+          console.log(colors.error('No VLM API URL configured for GUI subagent.'));
+          console.log(colors.textMuted('Please run "xagent auth" and configure guiSubagentBaseUrl.'));
+          console.log('');
+          return;
+        }
+        console.log(colors.info(`${icons.brain} Using local VLM configuration`));
+        console.log(colors.textMuted(`  Model: ${modelName}`));
+        console.log(colors.textMuted(`  Base URL: ${baseUrl}`));
+        console.log('');
+      } else {
+        // Remote mode
+        console.log(colors.info(`${icons.brain} Using remote VLM service`));
+        console.log(colors.textMuted(`  Auth Type: ${authConfig.type}`));
+        console.log('');
+      }
+
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
+
+      // Create remoteVlmCaller for remote mode (uses full messages for consistent behavior)
+      let remoteVlmCaller: ((messages: any[], systemPrompt: string) => Promise<string>) | undefined;
+
+      if (!isLocalMode && authConfig.baseUrl) {
+        const remoteBaseUrl = `${authConfig.baseUrl}/api/agent/vlm`;
+        remoteVlmCaller = async (messages: any[], _systemPrompt: string): Promise<string> => {
+          const response = await fetch(remoteBaseUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${authConfig.apiKey || ''}`,
+            },
+            body: JSON.stringify({ messages }),
+          });
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Remote VLM error: ${response.status} - ${errorText}`);
+          }
+          const result = await response.json() as { response?: string; content?: string; message?: string };
+          return result.response || result.content || result.message || '';
+        };
+      }
 
       const guiAgent = await createGUISubAgent({
         headless: options.headless ?? false,
+        model: isLocalMode ? modelName : undefined,
+        modelBaseUrl: isLocalMode ? baseUrl : undefined,
+        modelApiKey: isLocalMode ? apiKey : undefined,
+        remoteVlmCaller,
+        isLocalMode,
       });
 
       console.log(colors.success('✅ GUI Subagent initialized successfully!'));

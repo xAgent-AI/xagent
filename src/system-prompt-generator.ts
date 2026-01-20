@@ -53,9 +53,9 @@ export class SystemPromptGenerator {
     // Only add tool-related content if tools are available
     if (allAvailableTools.length > 0) {
       const toolSchemas = this.getToolSchemas(allAvailableTools);
-      const toolUsageGuide = this.generateToolUsageGuide(toolSchemas);
       const hasInvokeSkillTool = localTools.some(tool => tool.name === 'InvokeSkill');
       const skillInstructions = hasInvokeSkillTool ? await this.generateSkillInstructions() : '';
+      const toolUsageGuide = this.generateToolUsageGuide(toolSchemas, skillInstructions);
       const decisionMakingGuide = this.generateDecisionMakingGuide(localTools);
       const executionStrategy = this.generateExecutionStrategy();
 
@@ -63,8 +63,6 @@ export class SystemPromptGenerator {
       enhancedPrompt += `
 
 ${toolUsageGuide}
-
-${skillInstructions}
 
 ${decisionMakingGuide}
 
@@ -555,40 +553,75 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
     };
   }
 
-  private generateToolUsageGuide(toolSchemas: ToolSchema[]): string {
+  private generateToolUsageGuide(toolSchemas: ToolSchema[], skillInstructions: string = ''): string {
     let guide = '## Available Tools\n\n';
     guide += 'You have access to the following tools. Use them to accomplish user requests:\n\n';
 
-    toolSchemas.forEach(schema => {
-      guide += `### ${schema.name}\n\n`;
-      guide += `**Description**: ${schema.description}\n\n`;
-      guide += `**Usage**: ${schema.usage}\n\n`;
-      guide += `**Parameters**:\n`;
-      
-      Object.entries(schema.parameters).forEach(([paramName, param]) => {
-        const required = param.required ? ' (required)' : ' (optional)';
-        const defaultValue = param.default !== undefined ? ` (default: ${param.default})` : '';
-        guide += `- \`${paramName}\`${required}${defaultValue}: ${param.description}\n`;
-      });
+    // Separate tools: regular tools first, then InvokeSkill (to be followed by Available Skills), then MCP tools
+    const invokeSkillSchema = toolSchemas.find(s => s.name === 'InvokeSkill');
+    // MCP tools are registered with _mcp{N} suffix to avoid name conflicts
+    const mcpSchemas = toolSchemas.filter(s => s.name !== 'InvokeSkill' && /_mcp\d*$/.test(s.name));
+    const regularSchemas = toolSchemas.filter(s => s.name !== 'InvokeSkill' && !mcpSchemas.includes(s));
 
-      if (schema.examples.length > 0) {
-        guide += `\n**Examples**:\n`;
-        schema.examples.forEach(example => {
-          guide += `- ${example}\n`;
-        });
+    // Generate guide for regular tools
+    regularSchemas.forEach((schema, index) => {
+      guide += this.formatToolSchema(schema);
+      if (index < regularSchemas.length - 1 || invokeSkillSchema || mcpSchemas.length > 0) {
+        guide += '\n---\n\n';
       }
+    });
 
-      if (schema.bestPractices.length > 0) {
-        guide += `\n**Best Practices**:\n`;
-        schema.bestPractices.forEach(practice => {
-          guide += `- ${practice}\n`;
-        });
+    // Generate guide for InvokeSkill (put it before Available Skills)
+    if (invokeSkillSchema) {
+      guide += this.formatToolSchema(invokeSkillSchema);
+      // Add Available Skills immediately after InvokeSkill (no separator)
+      if (skillInstructions) {
+        guide += `\n${skillInstructions}\n`;
       }
+      // Add separator after Available Skills if there are MCP tools
+      if (mcpSchemas.length > 0) {
+        guide += '\n---\n\n';
+      }
+    }
 
-      guide += '\n---\n\n';
+    // Generate guide for MCP tools
+    mcpSchemas.forEach((schema, index) => {
+      guide += this.formatToolSchema(schema);
+      if (index < mcpSchemas.length - 1) {
+        guide += '\n---\n\n';
+      }
     });
 
     return guide;
+  }
+
+  private formatToolSchema(schema: ToolSchema): string {
+    let output = `### ${schema.name}\n\n`;
+    output += `**Description**: ${schema.description}\n\n`;
+    output += `**Usage**: ${schema.usage}\n\n`;
+    output += `**Parameters**:\n`;
+
+    Object.entries(schema.parameters).forEach(([paramName, param]) => {
+      const required = param.required ? ' (required)' : ' (optional)';
+      const defaultValue = param.default !== undefined ? ` (default: ${param.default})` : '';
+      output += `- \`${paramName}\`${required}${defaultValue}: ${param.description}\n`;
+    });
+
+    if (schema.examples.length > 0) {
+      output += `\n**Examples**:\n`;
+      schema.examples.forEach(example => {
+        output += `- ${example}\n`;
+      });
+    }
+
+    if (schema.bestPractices.length > 0) {
+      output += `\n**Best Practices**:\n`;
+      schema.bestPractices.forEach(practice => {
+        output += `- ${practice}\n`;
+      });
+    }
+
+    return output;
   }
 
   private generateDecisionMakingGuide(availableTools: any[]): string {

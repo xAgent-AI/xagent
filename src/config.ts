@@ -66,18 +66,32 @@ export class ConfigManager {
   }
 
   async load(): Promise<Settings> {
+    logger.debug('[CONFIG] ========== load() 开始 ==========');
+    logger.debug('[CONFIG] globalConfigPath:', this.globalConfigPath);
+    logger.debug('[CONFIG] projectConfigPath:', this.projectConfigPath);
+    logger.debug('[CONFIG] 检查文件是否存在...');
+
     try {
       const globalConfig = this.readConfigFile(this.globalConfigPath);
+      logger.debug('[CONFIG] globalConfig 读取成功:', JSON.stringify(globalConfig, null, 2));
+
       this.settings = { ...DEFAULT_SETTINGS, ...globalConfig };
+      logger.debug('[CONFIG] 合并后的 settings:', JSON.stringify(this.settings, null, 2));
 
       if (this.projectConfigPath) {
         const projectConfig = this.readConfigFile(this.projectConfigPath);
+        logger.debug('[CONFIG] projectConfig 读取成功:', JSON.stringify(projectConfig, null, 2));
         this.settings = { ...this.settings, ...projectConfig };
       }
 
+      logger.debug('[CONFIG] 最终 settings.apiKey:', this.settings.apiKey ? this.settings.apiKey.substring(0, 30) + '...' : 'empty');
+      logger.debug('[CONFIG] 最终 settings.refreshToken:', this.settings.refreshToken ? 'exists' : 'empty');
+      logger.debug('[CONFIG] ========== load() 结束 ==========');
+
       return this.settings;
     } catch (error) {
-      logger.error('Failed to load config', 'Check if config files exist and are valid');
+      logger.debug('[CONFIG] load() 捕获到错误:', error instanceof Error ? error.message : String(error));
+      logger.debug('[CONFIG] ========== load() 结束 (使用默认值) ==========');
       return { ...DEFAULT_SETTINGS };
     }
   }
@@ -111,7 +125,7 @@ export class ConfigManager {
   }
 
   getAuthConfig() {
-    return {
+    const result = {
       type: this.settings.selectedAuthType,
       apiKey: this.settings.apiKey,
       refreshToken: this.settings.refreshToken,
@@ -121,10 +135,30 @@ export class ConfigManager {
       searchApiKey: this.settings.searchApiKey,
       showAIDebugInfo: this.settings.showAIDebugInfo
     };
+
+    logger.debug('[CONFIG] getAuthConfig() 返回:');
+    logger.debug('  - type:', result.type);
+    logger.debug('  - apiKey:', result.apiKey ? result.apiKey.substring(0, 30) + '...' : 'empty');
+    logger.debug('  - refreshToken:', result.refreshToken ? 'exists' : 'empty');
+    logger.debug('  - baseUrl:', result.baseUrl);
+    logger.debug('  - xagentApiBaseUrl:', result.xagentApiBaseUrl);
+
+    return result;
   }
 
-  async setAuthConfig(config: Partial<Settings>): Promise<void> {
-    Object.assign(this.settings, config);
+  async setAuthConfig(config: Partial<Settings> & { xagentApiBaseUrl?: string }): Promise<void> {
+    // Extract xagentApiBaseUrl separately since it's not in Settings
+    const { xagentApiBaseUrl, type, ...otherConfig } = config as any;
+    
+    // Map 'type' to 'selectedAuthType' (AuthConfig uses 'type', Settings uses 'selectedAuthType')
+    if (type !== undefined) {
+      this.settings.selectedAuthType = type;
+    }
+    
+    Object.assign(this.settings, otherConfig);
+    if (xagentApiBaseUrl !== undefined) {
+      this.settings.xagentApiBaseUrl = xagentApiBaseUrl;
+    }
     await this.save('global');
   }
 

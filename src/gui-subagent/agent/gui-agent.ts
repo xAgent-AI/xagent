@@ -48,11 +48,11 @@ export enum GUIAgentStatus {
 }
 
 /**
- * VLM Caller callback function type
- * Inject this function externally来处理 VLM 调用，GUI Agent doesn't need to know VLM 的实现细节
- * systemPrompt 由 GUI Agent 生成并传递给调用方
+ * Remote VLM Caller callback function type
+ * Inject this function externally to handle VLM calls, GUI Agent doesn't need to know VLM implementation details
+ * Receives full messages array (same as local mode) for consistent behavior
  */
-export type VLMCaller = (image: string, prompt: string, systemPrompt: string) => Promise<string>;
+export type RemoteVlmCaller = (messages: any[], systemPrompt: string) => Promise<string>;
 
 export interface GUIAgentConfig<T extends Operator> {
   operator: T;
@@ -61,11 +61,17 @@ export interface GUIAgentConfig<T extends Operator> {
   modelApiKey?: string;
   /**
    * Externally injected VLM caller function
-   * If this function is provided，GUI Agent will use it来调用 VLM，
-   * 而不是直接调用 modelBaseUrl/modelApiKey
-   * 这使得 GUI Agent 可以与远程服务配合使用，而不暴露任何配置信息
+   * If this function is provided, GUI Agent will use it to call VLM
+   * instead of directly calling modelBaseUrl/modelApiKey
+   * This allows GUI Agent to work with remote services without exposing any configuration
    */
-  vlmCaller?: VLMCaller;
+  remoteVlmCaller?: RemoteVlmCaller;
+  /**
+   * Whether to use local mode
+   * If true, use model/modelBaseUrl/modelApiKey for VLM calls
+   * If false, use remoteVlmCaller for remote VLM calls
+   */
+  isLocalMode: boolean;
   systemPrompt?: string;
   loopIntervalInMs?: number;
   maxLoopCount?: number;
@@ -127,7 +133,8 @@ export class GUIAgent<T extends Operator> {
   private readonly model: string;
   private readonly modelBaseUrl: string;
   private readonly modelApiKey: string;
-  private readonly vlmCaller?: VLMCaller;
+  private readonly remoteVlmCaller?: RemoteVlmCaller;
+  private readonly isLocalMode: boolean;
   private readonly systemPrompt: string;
   private readonly loopIntervalInMs: number;
   private readonly maxLoopCount: number;
@@ -148,7 +155,8 @@ export class GUIAgent<T extends Operator> {
     this.model = config.model || '';
     this.modelBaseUrl = config.modelBaseUrl || '';
     this.modelApiKey = config.modelApiKey || '';
-    this.vlmCaller = config.vlmCaller;
+    this.remoteVlmCaller = config.remoteVlmCaller;
+    this.isLocalMode = config.isLocalMode;
     this.loopIntervalInMs = config.loopIntervalInMs || 0;
     this.maxLoopCount = config.maxLoopCount || MAX_LOOP_COUNT;
     this.logger = config.logger || guiLogger;
@@ -465,7 +473,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           const modelResult: { prediction: string; parsedPredictions: PredictionParsed[] } = await asyncRetry(
             async (bail) => {
               try {
-                const result = await this.callModelAPI(messages, screenContext);
+                const result = await this.callModelAPI(messages, screenContext, this.remoteVlmCaller!);
                 return result;
               } catch (error: unknown) {
                 if (
@@ -785,55 +793,146 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
   }
 
   /**
-   * Call the model API with debug logging
-   * If vlmCaller is provided, use it instead of direct API calls
+   * Extract image and prompt from messages for remote VLM calls
    */
-  private async callModelAPI(
+  private extractImageAndPrompt(messages: any[]): { image: string; prompt: string } {
+    const lastUserMessage = messages[messages.length - 1];
+    let image = '';
+    let prompt = '';
+
+    if (lastUserMessage && Array.isArray(lastUserMessage.content)) {
+      const imageBlock = lastUserMessage.content.find((c: any) => c.type === 'image_url');
+      const textBlock = lastUserMessage.content.find((c: any) => c.type === 'text');
+
+      if (imageBlock) {
+        const imageUrl = imageBlock.image_url?.url || '';
+        if (imageUrl.startsWith('data:image')) {
+          image = imageUrl.split(',')[1] || '';
+        } else {
+          image = imageUrl;
+        }
+      }
+      prompt = textBlock?.text || '';
+    }
+
+    return { image, prompt };
+  }
+
+  /**
+   * Debug output for model request
+   */
+  private debugRequest(messages: any[], remoteVlmCaller?: RemoteVlmCaller): void {
+    console.log('\n╔══════════════════════════════════════════════════════════╗');
+    console.log('║               GUI MODEL REQUEST DEBUG                   ║');
+    console.log('╚══════════════════════════════════════════════════════════╝');
+    console.log(`📦 Model: ${remoteVlmCaller ? ((remoteVlmCaller as any).info?.model || 'remote') : this.model}`);
+    console.log(`🌐 Base URL: ${remoteVlmCaller ? ((remoteVlmCaller as any).info?.baseUrl || 'remote') : (this.modelBaseUrl || process.env.MODEL_BASE_URL || 'https://api.openai.com/v1')}`);
+    console.log(`💬 Messages: ${messages.length}`);
+
+    // Show system prompt if present
+    const systemMsg = messages.find((m: any) => m.role === 'system');
+    if (systemMsg) {
+      console.log('\n┌─────────────────────────────────────────────────────────────┐');
+      console.log('│ 🟫 SYSTEM                                                     │');
+      console.log('├─────────────────────────────────────────────────────────────┤');
+      const systemContent = typeof systemMsg.content === 'string'
+        ? systemMsg.content
+        : JSON.stringify(systemMsg.content);
+      const lines = systemContent.split('\n').slice(0, 15);
+      for (const line of lines) {
+        console.log('│ ' + line.slice(0, 62));
+      }
+      if (systemContent.split('\n').length > 15) {
+        console.log('│ ... (truncated)');
+      }
+      console.log('└─────────────────────────────────────────────────────────────┘');
+    }
+
+    // Show conversation messages
+    const roleColors: Record<string, string> = {
+      user: '👤 USER',
+      assistant: '🤖 ASSISTANT',
+    };
+
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      if (msg.role === 'system') continue;
+
+      const roleLabel = roleColors[msg.role] || `● ${msg.role.toUpperCase()}`;
+      console.log(`\n┌─────────────────────────────────────────────────────────────┐`);
+      console.log(`│ ${roleLabel} (${i + 1})                                           │`);
+      console.log('├─────────────────────────────────────────────────────────────┤');
+
+      if (typeof msg.content === 'string') {
+        const lines = msg.content.split('\n').slice(0, 20);
+        for (const line of lines) {
+          console.log('│ ' + line.slice(0, 62));
+        }
+        if (msg.content.split('\n').length > 20) {
+          console.log('│ ... (truncated)');
+        }
+      } else if (Array.isArray(msg.content)) {
+        const hasImage = msg.content.some((c: any) => c.type === 'image_url');
+        console.log('│ 📎 Content blocks: ' + msg.content.length);
+        if (hasImage) {
+          const imageBlock = msg.content.find((c: any) => c.type === 'image_url');
+          const imageSize = imageBlock?.image_url?.url?.length || 0;
+          console.log('│ 🖼️  Image size: ' + (imageSize / 1024).toFixed(2) + ' KB');
+        }
+        const textBlock = msg.content.find((c: any) => c.type === 'text');
+        if (textBlock?.text) {
+          const lines = textBlock.text.split('\n').slice(0, 10);
+          for (const line of lines) {
+            console.log('│ ' + line.slice(0, 62));
+          }
+        }
+      }
+      console.log('└─────────────────────────────────────────────────────────────┘');
+    }
+
+    console.log('\n📤 Sending request to model API...\n');
+  }
+
+  /**
+   * Debug output for model response
+   */
+  private debugResponse(content: string, usage?: any): void {
+    console.log('\n╔══════════════════════════════════════════════════════════╗');
+    console.log('║               GUI MODEL RESPONSE DEBUG                  ║');
+    console.log('╚══════════════════════════════════════════════════════════╝');
+
+    if (usage) {
+      console.log(`📊 Tokens: ${usage.prompt_tokens} (prompt) + ${usage.completion_tokens} (completion) = ${usage.total_tokens} (total)`);
+    }
+
+    console.log('\n┌─────────────────────────────────────────────────────────────┐');
+    console.log('│ 🤖 ASSISTANT                                                 │');
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log('│ 💬 CONTENT:');
+    console.log('│ ───────────────────────────────────────────────────────────');
+
+    const lines = content.split('\n').slice(0, 30);
+    for (const line of lines) {
+      console.log('│ ' + line.slice(0, 62));
+    }
+    if (content.split('\n').length > 30) {
+      console.log(`│ ... (${content.split('\n').length - 30} more lines)`);
+    }
+    console.log('│ ───────────────────────────────────────────────────────────');
+    console.log('└─────────────────────────────────────────────────────────────┘');
+
+    console.log('\n╔══════════════════════════════════════════════════════════╗');
+    console.log('║                    RESPONSE ENDED                        ║');
+    console.log('╚══════════════════════════════════════════════════════════╝\n');
+  }
+
+  /**
+   * Call local VLM API
+   */
+  private async callLocalVLM(
     messages: any[],
     screenContext: ScreenContext
   ): Promise<{ prediction: string; parsedPredictions: PredictionParsed[] }> {
-    // If vlmCaller is provided，Use externally injected caller function
-    if (this.vlmCaller) {
-      const lastUserMessage = messages[messages.length - 1];
-      let image = '';
-      let prompt = '';
-
-      if (lastUserMessage && Array.isArray(lastUserMessage.content)) {
-        const imageBlock = lastUserMessage.content.find((c: any) => c.type === 'image_url');
-        const textBlock = lastUserMessage.content.find((c: any) => c.type === 'text');
-
-        if (imageBlock) {
-          // Extract base64 from data URL or use direct URL
-          const imageUrl = imageBlock.image_url?.url || '';
-          if (imageUrl.startsWith('data:image')) {
-            image = imageUrl.split(',')[1] || '';
-          } else {
-            image = imageUrl;
-          }
-        }
-        prompt = textBlock?.text || '';
-      }
-
-      // 使用Externally injected VLM caller function（传递 systemPrompt）
-      const prediction = await this.vlmCaller(image, prompt, this.systemPrompt);
-
-      // 解析预测结果
-      const { parsed: parsedPredictions } = actionParser({
-        prediction,
-        factor: [1000, 1000],
-        screenContext: {
-          width: screenContext.width,
-          height: screenContext.height,
-        },
-      });
-
-      return {
-        prediction,
-        parsedPredictions,
-      };
-    }
-
-    // Original logic：Call model API directly
     const baseUrl = this.modelBaseUrl || process.env.MODEL_BASE_URL || 'https://api.openai.com/v1';
     const apiKey = this.modelApiKey || process.env.MODEL_API_KEY || '';
 
@@ -846,81 +945,10 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
     // Debug output for model input
     if (this.showAIDebugInfo) {
-      console.log('\n╔══════════════════════════════════════════════════════════╗');
-      console.log('║               GUI MODEL REQUEST DEBUG                   ║');
-      console.log('╚══════════════════════════════════════════════════════════╝');
-      console.log(`📦 Model: ${this.model}`);
-      console.log(`🌐 Base URL: ${baseUrl}`);
-      console.log(`💬 Messages: ${messages.length}`);
+      this.debugRequest(messages);
+    }
 
-      // Show system prompt if present
-      const systemMsg = messages.find((m: any) => m.role === 'system');
-      if (systemMsg) {
-        console.log('\n┌─────────────────────────────────────────────────────────────┐');
-        console.log('│ 🟫 SYSTEM                                                     │');
-        console.log('├─────────────────────────────────────────────────────────────┤');
-        const systemContent = typeof systemMsg.content === 'string'
-          ? systemMsg.content
-          : JSON.stringify(systemMsg.content);
-        const lines = systemContent.split('\n').slice(0, 15);
-        for (const line of lines) {
-          console.log('│ ' + line.slice(0, 62));
-        }
-        if (systemContent.split('\n').length > 15) {
-          console.log('│ ... (truncated)');
-        }
-        console.log('└─────────────────────────────────────────────────────────────┘');
-      }
-
-      // Show conversation messages
-      const roleColors: Record<string, string> = {
-        user: '👤 USER',
-        assistant: '🤖 ASSISTANT',
-      };
-
-      for (let i = 0; i < messages.length; i++) {
-        const msg = messages[i];
-        if (msg.role === 'system') continue;
-
-        const roleLabel = roleColors[msg.role] || `● ${msg.role.toUpperCase()}`;
-        console.log(`\n┌─────────────────────────────────────────────────────────────┐`);
-        console.log(`│ ${roleLabel} (${i + 1})                                           │`);
-        console.log('├─────────────────────────────────────────────────────────────┤');
-
-        if (typeof msg.content === 'string') {
-          const lines = msg.content.split('\n').slice(0, 20);
-          for (const line of lines) {
-            console.log('│ ' + line.slice(0, 62));
-          }
-          if (msg.content.split('\n').length > 20) {
-            console.log('│ ... (truncated)');
-          }
-        } else if (Array.isArray(msg.content)) {
-          const hasImage = msg.content.some((c: any) => c.type === 'image_url');
-          console.log('│ 📎 Content blocks: ' + msg.content.length);
-          if (hasImage) {
-            const imageBlock = msg.content.find((c: any) => c.type === 'image_url');
-            const imageSize = imageBlock?.image_url?.url?.length || 0;
-            console.log('│ 🖼️  Image size: ' + (imageSize / 1024).toFixed(2) + ' KB');
-          }
-          const textBlock = msg.content.find((c: any) => c.type === 'text');
-          if (textBlock?.text) {
-            const lines = textBlock.text.split('\n').slice(0, 10);
-            for (const line of lines) {
-              console.log('│ ' + line.slice(0, 62));
-            }
-          }
-        }
-        console.log('└─────────────────────────────────────────────────────────────┘');
-      }
-
-            console.log('\n📤 Sending request to model API...\n');
-
-          }
-
-      
-
-          let response;
+    let response;
     try {
       response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
@@ -946,33 +974,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
     // Debug output for model response
     if (this.showAIDebugInfo) {
-      console.log('\n╔══════════════════════════════════════════════════════════╗');
-      console.log('║               GUI MODEL RESPONSE DEBUG                  ║');
-      console.log('╚══════════════════════════════════════════════════════════╝');
-
-      if (result.usage) {
-        console.log(`📊 Tokens: ${result.usage.prompt_tokens} (prompt) + ${result.usage.completion_tokens} (completion) = ${result.usage.total_tokens} (total)`);
-      }
-
-      console.log('\n┌─────────────────────────────────────────────────────────────┐');
-      console.log('│ 🤖 ASSISTANT                                                 │');
-      console.log('├─────────────────────────────────────────────────────────────┤');
-      console.log('│ 💬 CONTENT:');
-      console.log('│ ───────────────────────────────────────────────────────────');
-
-      const lines = content.split('\n').slice(0, 30);
-      for (const line of lines) {
-        console.log('│ ' + line.slice(0, 62));
-      }
-      if (content.split('\n').length > 30) {
-        console.log(`│ ... (${content.split('\n').length - 30} more lines)`);
-      }
-      console.log('│ ───────────────────────────────────────────────────────────');
-      console.log('└─────────────────────────────────────────────────────────────┘');
-
-      console.log('\n╔══════════════════════════════════════════════════════════╗');
-      console.log('║                    RESPONSE ENDED                        ║');
-      console.log('╚══════════════════════════════════════════════════════════╝\n');
+      this.debugResponse(content, result.usage);
     }
 
     const { parsed: parsedPredictions } = actionParser({
@@ -988,6 +990,52 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       prediction: content,
       parsedPredictions,
     };
+  }
+
+  /**
+   * Call the model API with debug logging
+   * Local mode: use model/modelBaseUrl/modelApiKey directly
+   * Remote mode: use remoteVlmCaller for VLM calls (now with full messages for consistent behavior)
+   */
+  private async callModelAPI(
+    messages: any[],
+    screenContext: ScreenContext,
+    remoteVlmCaller: RemoteVlmCaller
+  ): Promise<{ prediction: string; parsedPredictions: PredictionParsed[] }> {
+    // === LOCAL 模式 ===
+    if (this.isLocalMode) {
+      return this.callLocalVLM(messages, screenContext);
+    }
+
+    // === REMOTE 模式 ===
+    else {
+      // Debug output for model input
+      if (this.showAIDebugInfo) {
+        this.debugRequest(messages, remoteVlmCaller);
+      }
+
+      // Use externally injected VLM caller function with full messages (same as local mode)
+      const prediction = await remoteVlmCaller(messages, this.systemPrompt);
+
+      // Debug output for model response
+      if (this.showAIDebugInfo) {
+        this.debugResponse(prediction);
+      }
+
+      const { parsed: parsedPredictions } = actionParser({
+        prediction,
+        factor: [1000, 1000],
+        screenContext: {
+          width: screenContext.width,
+          height: screenContext.height,
+        },
+      });
+
+      return {
+        prediction,
+        parsedPredictions,
+      };
+    }
   }
 
   /**

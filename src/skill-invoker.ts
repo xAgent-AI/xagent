@@ -333,7 +333,13 @@ export async function readSkillContent(skillPath: string, keywords: string[], ma
 // SKILL Trigger Keywords Mapping
 // ============================================================
 
-const SKILL_TRIGGERS: Record<string, { skillId: string; keywords: string[]; category: string }> = {
+interface SkillTrigger {
+  skillId: string;
+  keywords: string[];
+  category: string;
+}
+
+export const SKILL_TRIGGERS: Record<string, SkillTrigger> = {
   docx: {
     skillId: 'docx',
     keywords: [
@@ -675,6 +681,103 @@ export class SkillInvoker {
     }
 
     return instructions;
+  }
+
+  // ============================================================================
+  // Remote Mode Tool Support Methods
+  // ============================================================================
+
+  /**
+   * Check if it's a Skill tool
+   * Used for remote mode tool execution
+   */
+  isSkillTool(toolName: string): boolean {
+    // Check if it's a skill ID
+    if (this.skillCache.has(toolName)) {
+      return true;
+    }
+    // Check if in SKILL_TRIGGERS
+    return Object.values(SKILL_TRIGGERS).some(t => t.skillId === toolName);
+  }
+
+  /**
+   * Get all Skill definitions (for syncing to remote server)
+   */
+  getAllSkillDefinitions(): Array<{
+    id: string;
+    name: string;
+    description: string;
+    category: string;
+    triggers: string[];
+  }> {
+    const definitions: Array<{
+      id: string;
+      name: string;
+      description: string;
+      category: string;
+      triggers: string[];
+    }> = [];
+
+    for (const [key, trigger] of Object.entries(SKILL_TRIGGERS)) {
+      const skill = this.skillCache.get(trigger.skillId);
+      if (skill) {
+        definitions.push({
+          id: skill.id,
+          name: skill.name,
+          description: skill.description,
+          category: trigger.category,
+          triggers: trigger.keywords
+        });
+      }
+    }
+
+    return definitions;
+  }
+
+  /**
+   * Execute Skill tool (for remote mode tool execution)
+   * @param toolName - Tool name (skillId)
+   * @param params - Tool parameters
+   * @returns Execution result
+   */
+  async executeSkillTool(
+    toolName: string,
+    params: Record<string, any>
+  ): Promise<{ success: boolean; result?: any; error?: string }> {
+    // Find corresponding Skill
+    const skillTrigger = Object.entries(SKILL_TRIGGERS).find(
+      ([_, t]) => t.skillId === toolName
+    );
+
+    if (!skillTrigger) {
+      // Try direct skillId match
+      if (!this.skillCache.has(toolName)) {
+        return { success: false, error: `Skill not found: ${toolName}` };
+      }
+    }
+
+    const triggerSkillId = skillTrigger ? skillTrigger[1].skillId : toolName;
+
+    try {
+      const result = await this.executeSkill({
+        skillId: triggerSkillId,
+        taskDescription: params.taskDescription || params.description || '',
+        inputFile: params.inputFile,
+        outputFile: params.outputFile,
+        options: params.options || {}
+      });
+
+      return { success: result.success, result };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Get all available Skill ID list
+   */
+  getAvailableSkillIds(): string[] {
+    return Object.values(SKILL_TRIGGERS).map(t => t.skillId);
   }
 }
 

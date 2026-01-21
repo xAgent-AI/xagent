@@ -63,6 +63,7 @@
     "wrap-ansi": "^9.0.0"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.12",
     "@types/archiver": "^7.0.0",
     "@types/inquirer": "^9.0.0",
     "@types/lodash.isnumber": "^3.0.9",

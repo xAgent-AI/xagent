@@ -60,7 +60,7 @@ interface SdkControlRequest {
   type: 'control_request';
   request_id: string;
   request: {
-    subtype: 'initialize' | 'can_use_tool' | 'set_permission_mode' | 'set_model' | 'hook_callback' | 'interrupt';
+    subtype: 'initialize' | 'can_use_tool' | 'set_permission_mode' | 'set_model' | 'interrupt';
     [key: string]: unknown;
   };
 }
@@ -82,7 +82,6 @@ interface SdkSessionState {
   conversation: ChatMessage[];
   currentAgent: any;
   canUseTool: ((toolName: string, input: Record<string, unknown>, context: any) => Promise<{ behavior: string; message?: string }>) | null;
-  hooks: Map<string, any[]>;
 }
 
 export class SdkSession {
@@ -109,7 +108,6 @@ export class SdkSession {
       conversation: [],
       currentAgent: null,
       canUseTool: null,
-      hooks: new Map(),
     };
   }
 
@@ -163,14 +161,14 @@ export class SdkSession {
       await this.sessionManager.createSession(
         conversation.id,
         'general-purpose',
-        ExecutionMode.YOLO
+        ExecutionMode.SMART
       );
       
       // Set default agent
       this.state.currentAgent = this.agentManager.getAgent('general-purpose');
       
       // Add system prompt
-      const systemPrompt = this.state.currentAgent?.systemPrompt || 'You are xAgent, an AI-powered CLI tool.';
+      const systemPrompt = this.state.currentAgent?.systemPrompt;
       this.state.conversation.push({
         role: 'system',
         content: systemPrompt,
@@ -248,9 +246,6 @@ export class SdkSession {
     
     switch (req.subtype) {
       case 'initialize':
-        if (req.hooks) {
-          this.state.hooks = new Map(Object.entries(req.hooks));
-        }
         this.sendControlSuccess(requestId, { ok: true });
         break;
         
@@ -264,10 +259,6 @@ export class SdkSession {
         
       case 'set_model':
         this.sendControlSuccess(requestId, { ok: true });
-        break;
-        
-      case 'hook_callback':
-        await this.handleHookCallback(requestId, req as unknown as { callback_id: string; input: Record<string, unknown>; tool_use_id?: string });
         break;
         
       case 'interrupt':
@@ -310,48 +301,6 @@ export class SdkSession {
       // Default: allow all tools in SDK mode
       this.sendControlSuccess(requestId, { behavior: 'allow' });
     }
-  }
-
-  /**
-   * Handle hook callback.
-   */
-  private async handleHookCallback(requestId: string, request: { callback_id: string; input: Record<string, unknown>; tool_use_id?: string }): Promise<void> {
-    const input = request.input;
-    let output: { continue?: boolean; error?: string } = { continue: true };
-    
-    const hookEvent = input.hook_event_name as string;
-    const matchers = this.state.hooks.get(hookEvent);
-    
-    if (matchers && matchers.length > 0) {
-      for (const matcher of matchers) {
-        if (this.matchesHook(matcher, input)) {
-          for (const hook of matcher.hooks || []) {
-            try {
-              output = await hook(input, request.tool_use_id, { signal: undefined }) as { continue?: boolean; error?: string };
-            } catch (error: any) {
-              output = { continue: true, error: String(error) };
-            }
-          }
-        }
-      }
-    }
-    
-    this.sendControlSuccess(requestId, output);
-  }
-
-  /**
-   * Check if hook matcher matches the input.
-   */
-  private matchesHook(matcher: any, input: any): boolean {
-    if (!matcher.matcher) return true;
-    
-    const toolName = input.tool_name;
-    if (toolName) {
-      const patterns = matcher.matcher.split('|');
-      return patterns.some((pattern: string) => pattern.trim() === toolName);
-    }
-    
-    return false;
   }
 
   /**

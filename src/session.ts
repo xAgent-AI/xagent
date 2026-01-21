@@ -47,8 +47,8 @@ export class InteractiveSession {
   private remoteConversationId: string | null = null;
   private sdkOutputAdapter: SdkOutputAdapter | null = null;
   private isSdkMode: boolean = false;
-  private sdkInputBuffer: string = '';
-  private resolveInput: ((value: string) => void) | null = null;
+  private sdkInputBuffer: string[] = [];
+  private resolveInput: ((value: string | null) => void) | null = null;
 
     constructor(indentLevel: number = 0) {
 
@@ -201,9 +201,6 @@ export class InteractiveSession {
     this.isSdkMode = true;
     this.sdkOutputAdapter = adapter;
     adapter.setIndentLevel(this.indentLevel);
-    
-    // Also enable SDK mode for slash command handler
-    this.slashCommandHandler.setSdkMode(adapter);
   }
 
   /**
@@ -703,54 +700,61 @@ export class InteractiveSession {
     this.sdkPromptLoop();
   }
 
+  private sdkRl: readline.Interface | null = null;
+
   /**
    * Read a line of input from stdin (SDK mode)
-   * Uses readline asyncIterator for reliable stdin reading
+   * Uses readline 'line' event for reliable stdin reading
    */
   private readSdkInput(): Promise<string | null> {
     return new Promise((resolve) => {
-      if (this.resolveInput) {
-        // Previous input is pending, resolve it first
-        this.resolveInput('');
-        this.resolveInput = null;
-      }
+      // Create readline interface if not exists
+      if (!this.sdkRl) {
+        this.sdkRl = readline.createInterface({
+          input: process.stdin,
+          crlfDelay: Infinity
+        });
 
-      this.resolveInput = resolve;
+        // Handle line events
+        this.sdkRl.on('line', (line) => {
+          const cleanLine = line.replace(/^\uFEFF/, '').replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+          this.sdkInputBuffer.push(cleanLine);
+          this.sdkInputBuffer = []; // Clear buffer after processing
 
-      // Use readline asyncIterator for stdin reading
-      // This is more reliable than 'data' events
-      (async () => {
-        try {
-          const readline = await import('readline');
-
-          // Create readline interface
-          const rli = readline.createInterface({
-            input: process.stdin,
-            crlfDelay: Infinity
-          });
-
-          // Use async iterator to read lines
-          const lineIterator = rli[Symbol.asyncIterator]();
-          const { value: firstLine, done } = await lineIterator.next();
-
-          rli.close();
-
-          if (done || !firstLine) {
-            // No more input
-            return;
-          }
-
-          // Clean and return the line
-          const cleanLine = firstLine.replace(/^\uFEFF/, '').replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
-
-          if (cleanLine.trim() && this.resolveInput) {
+          if (this.resolveInput) {
             this.resolveInput(cleanLine);
             this.resolveInput = null;
           }
-        } catch (err: any) {
-          // Error reading input
-        }
-      })();
+        });
+
+        // Handle close events
+        this.sdkRl.on('close', () => {
+          if (this.resolveInput) {
+            this.resolveInput(null);
+            this.resolveInput = null;
+          }
+        });
+
+        // Handle errors
+        this.sdkRl.on('error', () => {
+          if (this.resolveInput) {
+            this.resolveInput(null);
+            this.resolveInput = null;
+          }
+        });
+      }
+
+      // Check if there's already input in buffer
+      if (this.sdkInputBuffer.length > 0) {
+        const line = this.sdkInputBuffer.shift()!;
+        resolve(line);
+        return;
+      }
+
+      // Set up the resolve callback
+      this.resolveInput = (value: string | null) => {
+        resolve(value);
+      };
     });
   }
 

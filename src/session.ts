@@ -328,19 +328,9 @@ export class InteractiveSession {
           const toolRegistry = getToolRegistry();
           const allMcpTools = this.mcpManager.getAllTools();
           toolRegistry.registerMCPTools(allMcpTools);
-
-          // Sync MCP tools to remote server (remote mode only)
-          if (this.remoteAIClient) {
-            await this.syncMCPToRemote(allMcpTools);
-          }
         } catch (error: any) {
           console.log(`${colors.warning(`⚠ MCP connection failed: ${error.message}`)}`);
         }
-      }
-
-      // Sync skills to remote server (remote mode only)
-      if (this.remoteAIClient) {
-        await this.syncSkillsToRemote();
       }
 
       const checkpointingConfig = this.configManager.getCheckpointingConfig();
@@ -1706,108 +1696,6 @@ export class InteractiveSession {
    */
   getRemoteAIClient(): RemoteAIClient | null {
     return this.remoteAIClient;
-  }
-
-  /**
-   * Get a VLM caller function that uses the RemoteAIClient
-   * Returns a function compatible with GUIAgent's vlmCaller configuration
-   * Now uses full messages array for consistent behavior with local mode
-   */
-  getVLMCaller(): ((messages: any[], systemPrompt: string) => Promise<string>) | undefined {
-    if (!this.remoteAIClient) {
-      return undefined;
-    }
-
-    return async (messages: any[], systemPrompt: string): Promise<string> => {
-      return this.remoteAIClient!.invokeVLM(messages, systemPrompt);
-    };
-  }
-
-  // ============================================================================
-  // Remote Mode Tool Sync Methods
-  // ============================================================================
-
-  /**
-   * Sync MCP tool definitions to remote server
-   * @param allMcpTools - Map containing complete MCP tool information
-   */
-  private async syncMCPToRemote(allMcpTools: Map<string, any>): Promise<void> {
-    if (!this.remoteAIClient) return;
-
-    try {
-      const tools: Array<{
-        name: string;
-        fullName: string;
-        serverName: string;
-        description: string;
-        inputSchema: any;
-      }> = [];
-
-      for (const [fullName, tool] of allMcpTools) {
-        const firstUnderscoreIndex = fullName.indexOf('__');
-        if (firstUnderscoreIndex === -1) continue;
-
-        const serverName = fullName.substring(0, firstUnderscoreIndex);
-        const originalName = fullName.substring(firstUnderscoreIndex + 2);
-
-        tools.push({
-          name: originalName,
-          fullName,
-          serverName,
-          description: tool.description || '',
-          inputSchema: tool.inputSchema || { type: 'object', properties: {} }
-        });
-      }
-
-      await this.remoteAIClient.syncMCPTools(tools);
-      console.log(`${colors.success(`✓ Synced ${tools.length} MCP tools to remote server`)}`);
-    } catch (error: any) {
-      console.log(`${colors.warning(`⚠ Failed to sync MCP tools to remote: ${error.message}`)}`);
-      // Non-blocking failure, continue initialization
-    }
-  }
-
-  /**
-   * Sync Skill definitions to remote server
-   */
-  private async syncSkillsToRemote(): Promise<void> {
-    if (!this.remoteAIClient) return;
-
-    try {
-      const { getSkillInvoker } = await import('./skill-invoker.js');
-      const skillInvoker = getSkillInvoker();
-      await skillInvoker.initialize();
-
-      const skills: Array<{
-        id: string;
-        name: string;
-        description: string;
-        category: string;
-        triggers: string[];
-      }> = [];
-
-      // Get all Skill info from SKILL_TRIGGERS
-      const { SKILL_TRIGGERS } = await import('./skill-invoker.js');
-      for (const [key, trigger] of Object.entries(SKILL_TRIGGERS)) {
-        const skillTrigger = trigger as { skillId: string; keywords: string[]; category: string };
-        const skill = await skillInvoker.getSkillDetails(skillTrigger.skillId);
-        if (skill) {
-          skills.push({
-            id: skill.id,
-            name: skill.name,
-            description: skill.description,
-            category: skillTrigger.category,
-            triggers: skillTrigger.keywords
-          });
-        }
-      }
-
-      await this.remoteAIClient.syncSkills(skills);
-      console.log(`${colors.success(`✓ Synced ${skills.length} skills to remote server`)}`);
-    } catch (error: any) {
-      console.log(`${colors.warning(`⚠ Failed to sync skills to remote: ${error.message}`)}`);
-      // Non-blocking failure, continue initialization
-    }
   }
 }
 

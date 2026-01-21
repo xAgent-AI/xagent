@@ -980,6 +980,31 @@ export class TaskTool implements Tool {
 - For parallel execution, ensure tasks are truly independent`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
+  private isSdkMode: boolean = false;
+  private sdkOutputAdapter: any = null;
+
+  /**
+   * Set SDK mode for output
+   */
+  setSdkMode(adapter: any): void {
+    this.isSdkMode = true;
+    this.sdkOutputAdapter = adapter;
+  }
+
+  /**
+   * Output helper for SDK mode
+   */
+  private output(type: string, subtype: string, data: any): void {
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.output({
+        type,
+        subtype,
+        timestamp: Date.now(),
+        data
+      });
+    }
+  }
+
   async execute(params: {
     description: string;
     prompt?: string;
@@ -1035,7 +1060,9 @@ export class TaskTool implements Tool {
         agentManager,
         toolRegistry,
         aiClient,
-        config
+        config,
+        this.isSdkMode,
+        this.sdkOutputAdapter
       );
       
       return result;
@@ -1335,6 +1362,8 @@ export class TaskTool implements Tool {
     toolRegistry: any,
     aiClient: any,
     config: any,
+    isSdkMode: boolean = false,
+    sdkOutputAdapter: any = null,
     indentLevel: number = 1
   ): Promise<{ success: boolean; message: string; result?: any }> {
     const agent = agentManager.getAgent(subagent_type);
@@ -1567,10 +1596,14 @@ export class TaskTool implements Tool {
 
       // Display assistant response (if there's any text content) with proper indentation
       if (contentStr) {
-        console.log(`\n${indent}${colors.primaryBright(agentName)}: ${description}`);
-        const truncatedContent = contentStr.length > 500 ? contentStr.substring(0, 500) + '...' : contentStr;
-        const indentedContent = indentMultiline(truncatedContent, indent);
-        console.log(`${indentedContent}\n`);
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputAssistant(contentStr);
+        } else {
+          console.log(`\n${indent}${colors.primaryBright(agentName)}: ${description}`);
+          const truncatedContent = contentStr.length > 500 ? contentStr.substring(0, 500) + '...' : contentStr;
+          const indentedContent = indentMultiline(truncatedContent, indent);
+          console.log(`${indentedContent}\n`);
+        }
       }
 
       // Process tool calls with proper indentation
@@ -1585,7 +1618,11 @@ export class TaskTool implements Tool {
             parsedParams = params;
           }
 
-          console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${name}`)}`);
+          if (isSdkMode && sdkOutputAdapter) {
+            sdkOutputAdapter.outputToolStart(name, parsedParams);
+          } else {
+            console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${name}`)}`);
+          }
 
           try {
             // Check cancellation before tool execution
@@ -1597,10 +1634,14 @@ export class TaskTool implements Tool {
             );
 
             // Display tool result with proper indentation for multi-line content
-            const resultPreview = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
-            const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
-            const indentedPreview = indentMultiline(truncatedPreview, indent);
-            console.log(`${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`);
+            if (isSdkMode && sdkOutputAdapter) {
+              sdkOutputAdapter.outputToolResult(name, toolResult);
+            } else {
+              const resultPreview = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
+              const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
+              const indentedPreview = indentMultiline(truncatedPreview, indent);
+              console.log(`${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`);
+            }
 
             messages.push({
               role: 'tool',
@@ -1609,7 +1650,11 @@ export class TaskTool implements Tool {
             });
           } catch (error: any) {
             if (error.message === 'Operation cancelled by user') {
-              console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
+              if (isSdkMode && sdkOutputAdapter) {
+                sdkOutputAdapter.outputWarning('Operation cancelled');
+              } else {
+                console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
+              }
               cancellationManager.off('cancelled', cancelHandler);
               cleanupStdinPolling();
               return {
@@ -1618,7 +1663,11 @@ export class TaskTool implements Tool {
                 result: contentStr
               };
             }
-            console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error.message}\n`);
+            if (isSdkMode && sdkOutputAdapter) {
+              sdkOutputAdapter.outputToolError(name, error.message);
+            } else {
+              console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error.message}\n`);
+            }
 
             messages.push({
               role: 'tool',
@@ -1627,7 +1676,9 @@ export class TaskTool implements Tool {
             });
           }
         }
-        console.log('');
+        if (!isSdkMode) {
+          console.log('');
+        }
         continue; // Continue to next iteration to get final response
       }
 

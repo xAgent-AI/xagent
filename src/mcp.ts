@@ -41,7 +41,9 @@ export class MCPServer {
       }
 
       this.isConnected = true;
-      console.log(`✅ MCP Server connected`);
+      if (process.env.XAGENT_SDK !== 'true') {
+        console.log(`✅ MCP Server connected`);
+      }
     } catch (error) {
       console.error(`❌ Failed to connect MCP Server:`, error);
       throw error;
@@ -70,7 +72,9 @@ export class MCPServer {
       });
 
       this.process.on('exit', (code, signal) => {
-        console.log(`MCP Server exited with code ${code}, signal ${signal}`);
+        if (process.env.XAGENT_SDK !== 'true') {
+          console.log(`MCP Server exited with code ${code}, signal ${signal}`);
+        }
         this.isConnected = false;
       });
 
@@ -127,7 +131,9 @@ export class MCPServer {
     }
 
     const transportType = this.getTransportType();
-    console.log(`Connecting to MCP Server at ${this.config.url} (${transportType})`);
+    if (process.env.XAGENT_SDK !== 'true') {
+      console.log(`Connecting to MCP Server at ${this.config.url} (${transportType})`);
+    }
 
     // Build headers with auth token
     const headers: Record<string, string> = {
@@ -289,7 +295,9 @@ export class MCPServer {
     if (message.method === 'tools/list') {
       this.handleToolsList(message.params);
     } else if (message.method === 'notifications/initialized') {
-      console.log('MCP Server initialized');
+      if (process.env.XAGENT_SDK !== 'true') {
+        console.log('MCP Server initialized');
+      }
     }
   }
 
@@ -305,7 +313,9 @@ export class MCPServer {
         if (!tool.name || typeof tool.name !== 'string' || tool.name.trim() === '') continue;
         this.tools.set(tool.name, tool);
       }
-      console.log(`Loaded ${result.tools.length} tools from MCP Server`);
+      if (process.env.XAGENT_SDK !== 'true') {
+        console.log(`Loaded ${result.tools.length} tools from MCP Server`);
+      }
     }
   }
 

@@ -16,3 +16,4 @@ export * from './conversation.js';
 export * from './update.js';
 export * from './cancellation.js';
 export * from './context-compressor.js';
+export * from './sdk-output-adapter.js';

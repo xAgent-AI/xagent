@@ -20,6 +20,7 @@ import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
 import { Logger, LogLevel, getLogger } from './logger.js';
+import { SdkOutputAdapter } from './sdk-output-adapter.js';
 
 const logger = getLogger();
 
@@ -44,6 +45,10 @@ export class InteractiveSession {
   private indentLevel: number;
   private indentString: string;
   private remoteConversationId: string | null = null;
+  private sdkOutputAdapter: SdkOutputAdapter | null = null;
+  private isSdkMode: boolean = false;
+  private sdkInputBuffer: string = '';
+  private resolveInput: ((value: string) => void) | null = null;
 
     constructor(indentLevel: number = 0) {
 
@@ -107,8 +112,76 @@ export class InteractiveSession {
 
     }
 
+  /**
+   * Get current indent string.
+   */
   private getIndent(): string {
     return this.indentString;
+  }
+
+  /**
+   * Unified output method - routes to console.log or SDK adapter
+   */
+  private output(type: 'output' | 'input' | 'system' | 'tool' | 'error' | 'thinking' | 'result', subtype: string, data: Record<string, unknown>): void {
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.output({
+        type,
+        subtype,
+        timestamp: Date.now(),
+        data
+      });
+    } else {
+      console.log(...this.formatOutput(type, subtype, data));
+    }
+  }
+
+  /**
+   * Format output for console.log
+   */
+  private formatOutput(type: string, subtype: string, data: Record<string, unknown>): any[] {
+    const indent = this.getIndent();
+    
+    switch (type) {
+      case 'error':
+        return [colors.error(String(data.message || ''))];
+      case 'warning':
+        return [colors.warning(String(data.message || ''))];
+      case 'success':
+        return [colors.success(String(data.message || ''))];
+      case 'info':
+        return [colors.info(String(data.message || ''))];
+      case 'tool':
+        if (subtype === 'start') {
+          return [`${indent}${colors.textMuted(`${icons.tool} Using tool: ${data.tool}`)}`];
+        } else if (subtype === 'result') {
+          return [`${indent}${colors.success(`${icons.check} ${data.tool} completed`)}`];
+        } else if (subtype === 'error') {
+          return [`${indent}${colors.error(`${icons.cross} ${data.tool} failed: ${data.error}`)}`];
+        }
+        return [];
+      case 'thinking':
+        return [`${indent}${colors.textDim(`${icons.brain} Thinking process`)}`];
+      default:
+        return [];
+    }
+  }
+
+  /**
+   * SDK-style output for assistant response
+   */
+  private outputAssistant(content: string, reasoningContent?: string): void {
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputAssistant(content, reasoningContent);
+    } else {
+      const indent = this.getIndent();
+      console.log('');
+      console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
+      console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
+      console.log('');
+      const renderedContent = renderMarkdown(content, (process.stdout.columns || 80) - indent.length * 2);
+      console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
+      console.log('');
+    }
   }
 
   setAIClient(aiClient: AIClient): void {
@@ -117,6 +190,27 @@ export class InteractiveSession {
 
   setExecutionMode(mode: ExecutionMode): void {
     this.executionMode = mode;
+  }
+
+  /**
+   * Enable SDK mode with custom output adapter
+   * When SDK mode is enabled, all output goes through the adapter
+   * instead of console.log
+   */
+  setSdkMode(adapter: SdkOutputAdapter): void {
+    this.isSdkMode = true;
+    this.sdkOutputAdapter = adapter;
+    adapter.setIndentLevel(this.indentLevel);
+    
+    // Also enable SDK mode for slash command handler
+    this.slashCommandHandler.setSdkMode(adapter);
+  }
+
+  /**
+   * Check if running in SDK mode
+   */
+  getIsSdkMode(): boolean {
+    return this.isSdkMode;
   }
 
   /**
@@ -151,15 +245,23 @@ export class InteractiveSession {
     setSingletonSession(this);
 
     const separator = icons.separator.repeat(60);
-    console.log('');
-    console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
-    console.log(colors.gradient('║') + ' '.repeat(56) + colors.gradient('║'));
-    console.log(' '.repeat(12) + colors.gradient('🤖 XAGENT CLI') + ' '.repeat(37) + colors.gradient('║'));
-    console.log(' '.repeat(14) + colors.textMuted('v1.0.0') + ' '.repeat(40) + colors.gradient('║'));
-    console.log(colors.gradient('║') + ' '.repeat(56) + colors.gradient('║'));
-    console.log(colors.gradient('╚════════════════════════════════════════════════════════════╝'));
-    console.log(colors.textMuted('  AI-powered command-line assistant'));
-    console.log('');
+
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      // SDK mode: output welcome through adapter
+      const language = this.configManager.getLanguage();
+      this.sdkOutputAdapter.outputWelcome(language, this.executionMode);
+    } else {
+      // Normal mode: console output
+      console.log('');
+      console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
+      console.log(colors.gradient('║') + ' '.repeat(56) + colors.gradient('║'));
+      console.log(' '.repeat(12) + colors.gradient('🤖 XAGENT CLI') + ' '.repeat(37) + colors.gradient('║'));
+      console.log(' '.repeat(14) + colors.textMuted('v1.0.0') + ' '.repeat(40) + colors.gradient('║'));
+      console.log(colors.gradient('║') + ' '.repeat(56) + colors.gradient('║'));
+      console.log(colors.gradient('╚════════════════════════════════════════════════════════════╝'));
+      console.log(colors.textMuted('  AI-powered command-line assistant'));
+      console.log('');
+    }
 
     await this.initialize();
     this.showWelcomeMessage();
@@ -247,15 +349,17 @@ export class InteractiveSession {
           await this.setupAuthentication();
           authConfig = this.configManager.getAuthConfig();
 
-          // Recreate readline interface after inquirer
-          this.rl.close();
-          this.rl = readline.createInterface({
-            input: process.stdin,
-            output: process.stdout
-          });
-          this.rl.on('close', () => {
-            // readline closed
-          });
+          // Recreate readline interface after inquirer (only for non-SDK mode)
+          if (!this.isSdkMode) {
+            this.rl.close();
+            this.rl = readline.createInterface({
+              input: process.stdin,
+              output: process.stdout
+            });
+            this.rl.on('close', () => {
+              // readline closed
+            });
+          }
           spinner.start();
         }
       } else if (!authConfig.apiKey) {
@@ -264,15 +368,17 @@ export class InteractiveSession {
         await this.setupAuthentication();
         authConfig = this.configManager.getAuthConfig();
 
-        // Recreate readline interface after inquirer
-        this.rl.close();
-        this.rl = readline.createInterface({
-          input: process.stdin,
-          output: process.stdout
-        });
-        this.rl.on('close', () => {
-          // readline closed
-        });
+        // Recreate readline interface after inquirer (only for non-SDK mode)
+        if (!this.isSdkMode) {
+          this.rl.close();
+          this.rl = readline.createInterface({
+            input: process.stdin,
+            output: process.stdout
+          });
+          this.rl.on('close', () => {
+            // readline closed
+          });
+        }
         spinner.start();
       }
       // For OPENAI_COMPATIBLE with API key, skip validation and proceed directly
@@ -309,20 +415,28 @@ export class InteractiveSession {
       this.slashCommandHandler.setConversationHistory(this.conversation);
 
       const mcpServers = this.configManager.getMcpServers();
-      console.log(`📋 Loading ${Object.keys(mcpServers).length} MCP servers from config`);
+      if (!this.isSdkMode) {
+        console.log(`📋 Loading ${Object.keys(mcpServers).length} MCP servers from config`);
+      }
       Object.entries(mcpServers).forEach(([name, config]) => {
-        console.log(`📝 Registering MCP server: ${name} (${config.transport})`);
+        if (!this.isSdkMode) {
+          console.log(`📝 Registering MCP server: ${name} (${config.transport})`);
+        }
         this.mcpManager.registerServer(name, config);
       });
 
       // Eagerly connect to MCP servers to get tool definitions
       if (mcpServers && Object.keys(mcpServers).length > 0) {
         try {
-          console.log(`${colors.info(`${icons.brain} Connecting to ${Object.keys(mcpServers).length} MCP server(s)...`)}`);
+          if (!this.isSdkMode) {
+            console.log(`${colors.info(`${icons.brain} Connecting to ${Object.keys(mcpServers).length} MCP server(s)...`)}`);
+          }
           await this.mcpManager.connectAllServers();
           const connectedCount = Array.from(this.mcpManager.getAllServers()).filter((s: any) => s.isServerConnected()).length;
           const mcpTools = this.mcpManager.getToolDefinitions();
-          console.log(`${colors.success(`✓ ${connectedCount}/${Object.keys(mcpServers).length} MCP server(s) connected (${mcpTools.length} tools available)`)}`);
+          if (!this.isSdkMode) {
+            console.log(`${colors.success(`✓ ${connectedCount}/${Object.keys(mcpServers).length} MCP server(s) connected (${mcpTools.length} tools available)`)}`);
+          }
 
           // Register MCP tools with the tool registry (hide MCP origin from LLM)
           const toolRegistry = getToolRegistry();
@@ -334,7 +448,9 @@ export class InteractiveSession {
             await this.syncMCPToRemote(allMcpTools);
           }
         } catch (error: any) {
-          console.log(`${colors.warning(`⚠ MCP connection failed: ${error.message}`)}`);
+          if (!this.isSdkMode) {
+            console.log(`${colors.warning(`⚠ MCP connection failed: ${error.message}`)}`);
+          }
         }
       }
 
@@ -432,19 +548,23 @@ export class InteractiveSession {
     const success = await authService.authenticate();
 
     if (!success) {
-      console.log('');
-      console.log(colors.error('Authentication failed. Exiting...'));
-      console.log('');
+      if (!this.isSdkMode) {
+        console.log('');
+        console.log(colors.error('Authentication failed. Exiting...'));
+        console.log('');
+      }
       process.exit(1);
     }
 
     const authConfig = authService.getAuthConfig();
 
     // VLM configuration is optional - skip for now, can be configured later with /vlm command
-    console.log('');
-    console.log(colors.info(`${icons.info} VLM configuration is optional.`));
-    console.log(colors.info(`You can configure it later using the /vlm command if needed.`));
-    console.log('');
+    if (!this.isSdkMode) {
+      console.log('');
+      console.log(colors.info(`${icons.info} VLM configuration is optional.`));
+      console.log(colors.info(`You can configure it later using the /vlm command if needed.`));
+      console.log('');
+    }
 
     // Save LLM config only, skip VLM for now
     await this.configManager.setAuthConfig(authConfig);
@@ -454,18 +574,20 @@ export class InteractiveSession {
     const language = this.configManager.getLanguage();
     const separator = icons.separator.repeat(40);
 
-    console.log('');
-    console.log(colors.border(separator));
+    if (!this.isSdkMode) {
+      console.log('');
+      console.log(colors.border(separator));
 
-    if (language === 'zh') {
-      console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
-              console.log(colors.textMuted('Type /help to see available commands'));    } else {
-      console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
-      console.log(colors.textMuted('Type /help to see available commands'));
+      if (language === 'zh') {
+        console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
+        console.log(colors.textMuted('Type /help to see available commands'));      } else {
+        console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
+        console.log(colors.textMuted('Type /help to see available commands'));
+      }
+
+      console.log(colors.border(separator));
+      console.log('');
     }
-
-    console.log(colors.border(separator));
-    console.log('');
 
     this.showExecutionMode();
   }
@@ -502,10 +624,12 @@ export class InteractiveSession {
     const config = modeConfig[this.executionMode];
     const modeName = this.executionMode;
 
-    console.log(colors.textMuted(`${icons.info} Current Mode:`));
-    console.log(`  ${config.color(config.icon)} ${styleHelpers.text.bold(config.color(modeName))}`);
-    console.log(`  ${colors.textDim(`  ${config.description}`)}`);
-    console.log('');
+    if (!this.isSdkMode) {
+      console.log(colors.textMuted(`${icons.info} Current Mode:`));
+      console.log(`  ${config.color(config.icon)} ${styleHelpers.text.bold(config.color(modeName))}`);
+      console.log(`  ${colors.textDim(`  ${config.description}`)}`);
+      console.log('');
+    }
   }
 
   private async promptLoop(): Promise<void> {
@@ -514,6 +638,13 @@ export class InteractiveSession {
       return;
     }
 
+    if (this.isSdkMode) {
+      // SDK mode: read from stdin
+      await this.sdkPromptLoop();
+      return;
+    }
+
+    // Normal mode: use readline for interactive input
     // Recreate readline interface for input
     if (this.rl) {
       this.rl.close();
@@ -544,6 +675,82 @@ export class InteractiveSession {
       }
 
       this.promptLoop();
+    });
+  }
+
+  /**
+   * SDK mode prompt loop - reads from stdin
+   */
+  private async sdkPromptLoop(): Promise<void> {
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputPrompt();
+    }
+
+    // Read input from stdin
+    const input = await this.readSdkInput();
+
+    if ((this as any)._isShuttingDown || input === null) {
+      return;
+    }
+
+    try {
+      await this.handleInput(input);
+    } catch (err: any) {
+      this.output('error', 'general', { message: err.message });
+    }
+
+    // Continue the loop
+    this.sdkPromptLoop();
+  }
+
+  /**
+   * Read a line of input from stdin (SDK mode)
+   * Uses readline asyncIterator for reliable stdin reading
+   */
+  private readSdkInput(): Promise<string | null> {
+    return new Promise((resolve) => {
+      if (this.resolveInput) {
+        // Previous input is pending, resolve it first
+        this.resolveInput('');
+        this.resolveInput = null;
+      }
+
+      this.resolveInput = resolve;
+
+      // Use readline asyncIterator for stdin reading
+      // This is more reliable than 'data' events
+      (async () => {
+        try {
+          const readline = await import('readline');
+
+          // Create readline interface
+          const rli = readline.createInterface({
+            input: process.stdin,
+            crlfDelay: Infinity
+          });
+
+          // Use async iterator to read lines
+          const lineIterator = rli[Symbol.asyncIterator]();
+          const { value: firstLine, done } = await lineIterator.next();
+
+          rli.close();
+
+          if (done || !firstLine) {
+            // No more input
+            return;
+          }
+
+          // Clean and return the line
+          const cleanLine = firstLine.replace(/^\uFEFF/, '').replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+
+          if (cleanLine.trim() && this.resolveInput) {
+            this.resolveInput(cleanLine);
+            this.resolveInput = null;
+          }
+        } catch (err: any) {
+          // Error reading input
+        }
+      })();
     });
   }
 
@@ -668,6 +875,11 @@ export class InteractiveSession {
     const indent = this.getIndent();
     const thinkingConfig = this.configManager.getThinkingConfig();
     const displayMode = thinkingConfig.displayMode || 'compact';
+
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputThinking(reasoningContent, displayMode);
+      return;
+    }
 
     const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length);
 
@@ -873,171 +1085,259 @@ export class InteractiveSession {
     };
   }
 
-  private async generateResponse(thinkingTokens: number = 0): Promise<void> {
-    // Use unified LLM Caller
-    const { chatCompletion, isRemote } = this.createLLMCaller();
+    private async generateResponse(thinkingTokens: number = 0): Promise<void> {
 
-    if (!isRemote && !this.aiClient) {
-      console.log(colors.error('AI client not initialized'));
-      return;
-    }
+      // Use unified LLM Caller
 
-    // Mark that an operation is in progress
-    (this as any)._isOperationInProgress = true;
+      const { chatCompletion, isRemote } = this.createLLMCaller();
 
-    const indent = this.getIndent();
-    const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
-    const icon = colors.primary(icons.brain);
-    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    let frameIndex = 0;
+  
 
-    // Custom spinner: only icon rotates, text stays static
-    const spinnerInterval = setInterval(() => {
-      process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
-      frameIndex = (frameIndex + 1) % frames.length;
-    }, 120);
+      if (!isRemote && !this.aiClient) {
 
-    try {
-      const memory = await this.memoryManager.loadMemory();
-      const toolRegistry = getToolRegistry();
-      const allowedToolNames = this.currentAgent
-        ? this.agentManager.getAvailableToolsForAgent(this.currentAgent, this.executionMode)
-        : [];
+        this.output('error', 'general', { message: 'AI client not initialized' });
 
-      // MCP servers are already connected during initialization (eager mode)
-      // MCP tools are already registered as local tools via registerMCPTools
-      const toolDefinitions = toolRegistry.getToolDefinitions();
-
-      // Available tools for this session
-      const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
-        ? toolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
-        : toolDefinitions;
-
-      const baseSystemPrompt = this.currentAgent?.systemPrompt;
-      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
-      const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
-
-      const messages: ChatMessage[] = [
-        { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}`, timestamp: Date.now() },
-        ...this.conversation.map(msg => ({
-          role: msg.role,
-          content: msg.content,
-          timestamp: msg.timestamp
-        }))
-      ];
-
-      // Debug: Print full prompt info
-      // const logger = new Logger({ minLevel: LogLevel.DEBUG });
-      // logger.debug('[DEBUG] Full Prompt to be sent to AI:');
-      // console.log('\n' + '='.repeat(60));
-      // console.log('【SYSTEM PROMPT】');
-      // console.log('-'.repeat(60));
-      // console.log(messages[0]?.content || '(none)');
-      // console.log('='.repeat(60));
-      // console.log('【CONVERSATION】');
-      // console.log('-'.repeat(60));
-      // messages.slice(1).forEach((msg, idx) => {
-      //   const contentStr = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-      //   console.log(`[${idx + 1}] [${msg.role}]: ${contentStr.substring(0, 200)}${contentStr.length > 200 ? '...' : ''}`);
-      // });
-      // console.log('='.repeat(60));
-      // console.log(`【AVAILABLE TOOLS】: ${availableTools.length} items`);
-      // availableTools.forEach((tool: any) => {
-      //   console.log(`  - ${tool.function.name}`);
-            // });      // console.log('='.repeat(60) + '\n');
-      
-            // Debug: Print AI input info (moved to ai-client.ts)
-            // if (this.configManager.get('showAIDebugInfo')) {
-            //   this.displayAIDebugInfo('INPUT', messages, availableTools);
-            // }
-      
-            // Generate AI response with cancellation support
-      const operationId = `ai-response-${Date.now()}`;
-      const response = await this.cancellationManager.withCancellation(
-        chatCompletion(messages, {
-          tools: availableTools,
-          toolChoice: availableTools.length > 0 ? 'auto' : 'none',
-          thinkingTokens
-        }),
-        operationId
-      );
-
-      clearInterval(spinnerInterval);
-      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r'); // Clear spinner line
-
-      const assistantMessage = response.choices[0].message;
-
-      // Debug: Print AI output info (moved to ai-client.ts)
-      // if (this.configManager.get('showAIDebugInfo')) {
-      //   this.displayAIDebugInfo('OUTPUT', response, assistantMessage);
-      // }
-
-      const content = typeof assistantMessage.content === 'string'
-        ? assistantMessage.content
-        : '';
-      const reasoningContent = assistantMessage.reasoning_content || '';
-
-      // console.error('[SESSION DEBUG] assistantMessage:', JSON.stringify(assistantMessage).substring(0, 200));
-      // console.error('[SESSION DEBUG] content:', content);
-
-      // Display reasoning content if available and thinking mode is enabled
-      if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
-        this.displayThinkingContent(reasoningContent);
-      }
-
-      console.log('');
-      console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
-      console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
-      console.log('');
-      const renderedContent = renderMarkdown(content, (process.stdout.columns || 80) - indent.length * 2);
-      console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
-      console.log('');
-
-      this.conversation.push({
-        role: 'assistant',
-        content,
-        timestamp: Date.now(),
-        reasoningContent,
-        toolCalls: assistantMessage.tool_calls
-      });
-
-      // Record output to session manager
-      await this.sessionManager.addOutput({
-        role: 'assistant',
-        content,
-        timestamp: Date.now(),
-        reasoningContent,
-        toolCalls: assistantMessage.tool_calls
-      });
-
-      if (assistantMessage.tool_calls) {
-        await this.handleToolCalls(assistantMessage.tool_calls);
-      }
-
-      if (this.checkpointManager.isEnabled()) {
-        await this.checkpointManager.createCheckpoint(
-          `Response generated at ${new Date().toLocaleString()}`,
-          [...this.conversation],
-          [...this.toolCalls]
-        );
-      }
-
-      // Operation completed successfully, clear the flag
-      (this as any)._isOperationInProgress = false;
-    } catch (error: any) {
-      clearInterval(spinnerInterval);
-      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
-
-      // Clear the operation flag
-      (this as any)._isOperationInProgress = false;
-
-      if (error.message === 'Operation cancelled by user') {
         return;
+
       }
 
-      console.log(colors.error(`Error: ${error.message}`));
+  
+
+      // Mark that an operation is in progress
+
+      (this as any)._isOperationInProgress = true;
+
+  
+
+      const indent = this.getIndent();
+
+      const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
+
+      const icon = colors.primary(icons.brain);
+
+      const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+      let frameIndex = 0;
+
+  
+
+      // Custom spinner: only icon rotates, text stays static
+
+      const spinnerInterval = setInterval(() => {
+
+        process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
+
+        frameIndex = (frameIndex + 1) % frames.length;
+
+      }, 120);
+
+  
+
+      try {
+
+        const memory = await this.memoryManager.loadMemory();
+
+        const toolRegistry = getToolRegistry();
+
+        const allowedToolNames = this.currentAgent
+
+          ? this.agentManager.getAvailableToolsForAgent(this.currentAgent, this.executionMode)
+
+          : [];
+
+  
+
+        // MCP servers are already connected during initialization (eager mode)
+
+        // MCP tools are already registered as local tools via registerMCPTools
+
+        const toolDefinitions = toolRegistry.getToolDefinitions();
+
+  
+
+        // Available tools for this session
+
+        const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
+
+          ? toolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
+
+          : toolDefinitions;
+
+  
+
+        const baseSystemPrompt = this.currentAgent?.systemPrompt;
+
+        const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
+
+        const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
+
+  
+
+        const messages: ChatMessage[] = [
+
+          { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}`, timestamp: Date.now() },
+
+          ...this.conversation.map(msg => ({
+
+            role: msg.role,
+
+            content: msg.content,
+
+            timestamp: msg.timestamp
+
+          }))
+
+        ];
+
+  
+
+        // Generate AI response with cancellation support
+
+        const operationId = `ai-response-${Date.now()}`;
+
+        const response = await this.cancellationManager.withCancellation(
+
+          chatCompletion(messages, {
+
+            tools: availableTools,
+
+            toolChoice: availableTools.length > 0 ? 'auto' : 'none',
+
+            thinkingTokens
+
+          }),
+
+          operationId
+
+        );
+
+  
+
+        clearInterval(spinnerInterval);
+
+        process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r'); // Clear spinner line
+
+  
+
+        const assistantMessage = response.choices[0].message;
+
+  
+
+        const content = typeof assistantMessage.content === 'string'
+
+          ? assistantMessage.content
+
+          : '';
+
+        const reasoningContent = assistantMessage.reasoning_content || '';
+
+  
+
+        // Display reasoning content if available and thinking mode is enabled
+
+        if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
+
+          this.displayThinkingContent(reasoningContent);
+
+        }
+
+  
+
+        // Output assistant response
+
+        this.outputAssistant(content, reasoningContent);
+
+  
+
+        this.conversation.push({
+
+          role: 'assistant',
+
+          content,
+
+          timestamp: Date.now(),
+
+          reasoningContent,
+
+          toolCalls: assistantMessage.tool_calls
+
+        });
+
+  
+
+        // Record output to session manager
+
+        await this.sessionManager.addOutput({
+
+          role: 'assistant',
+
+          content,
+
+          timestamp: Date.now(),
+
+          reasoningContent,
+
+          toolCalls: assistantMessage.tool_calls
+
+        });
+
+  
+
+        if (assistantMessage.tool_calls) {
+
+          await this.handleToolCalls(assistantMessage.tool_calls);
+
+        }
+
+  
+
+        if (this.checkpointManager.isEnabled()) {
+
+          await this.checkpointManager.createCheckpoint(
+
+            `Response generated at ${new Date().toLocaleString()}`,
+
+            [...this.conversation],
+
+            [...this.toolCalls]
+
+          );
+
+        }
+
+  
+
+        // Operation completed successfully, clear the flag
+
+        (this as any)._isOperationInProgress = false;
+
+      } catch (error: any) {
+
+        clearInterval(spinnerInterval);
+
+        process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
+
+  
+
+        // Clear the operation flag
+
+        (this as any)._isOperationInProgress = false;
+
+  
+
+        if (error.message === 'Operation cancelled by user') {
+
+          return;
+
+        }
+
+  
+
+        this.output('error', 'general', { message: error.message });
+
+      }
+
     }
-  }
 
   /**
    * Generate response using remote AI service（OAuth XAGENT 模式）
@@ -1125,7 +1425,9 @@ export class InteractiveSession {
 
       clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
-      console.log('');
+      if (!this.isSdkMode) {
+        console.log('');
+      }
 
       // 使用统一的响应格式（与本地模式一致）
       const assistantMessage = response.choices[0].message;
@@ -1140,12 +1442,8 @@ export class InteractiveSession {
         this.displayThinkingContent(reasoningContent);
       }
 
-      console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
-      console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
-      console.log('');
-      const renderedContent = renderMarkdown(content, (process.stdout.columns || 80) - indent.length * 2);
-      console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
-      console.log('');
+      // Output assistant response (SDK 模式使用适配器)
+      this.outputAssistant(content, reasoningContent);
 
       // Add assistant message to conversation (consistent with local mode, including reasoningContent)
       this.conversation.push({
@@ -1195,10 +1493,12 @@ export class InteractiveSession {
 
       // Handle token invalid error - trigger re-authentication
       if (error instanceof TokenInvalidError) {
-        console.log('');
-        console.log(colors.warning('⚠️  Authentication expired or invalid'));
-        console.log(colors.info('Your browser session has been logged out. Please log in again.'));
-        console.log('');
+        if (!this.isSdkMode) {
+          console.log('');
+          console.log(colors.warning('⚠️  Authentication expired or invalid'));
+          console.log(colors.info('Your browser session has been logged out. Please log in again.'));
+          console.log('');
+        }
 
         // Clear invalid credentials and persist
         await this.configManager.set('apiKey', '');
@@ -1240,14 +1540,17 @@ export class InteractiveSession {
         }
 
         // Retry the current operation
-        console.log('');
-        console.log(colors.info('Retrying with new authentication...'));
-        console.log('');
+        if (!this.isSdkMode) {
+          console.log('');
+          console.log(colors.info('Retrying with new authentication...'));
+          console.log('');
+        }
         return this.generateRemoteResponse(thinkingTokens);
       }
 
-      console.log(colors.error(`Error: ${error.message}`));
-      return;
+      if (!this.isSdkMode) {
+        console.log(colors.error(`Error: ${error.message}`));
+      }
     }
   }
 
@@ -1258,6 +1561,14 @@ export class InteractiveSession {
     const toolRegistry = getToolRegistry();
     const showToolDetails = this.configManager.get('showToolDetails') || false;
     const indent = this.getIndent();
+
+    // Set SDK mode for TaskTool if in SDK mode
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      const taskTool = toolRegistry.get('task');
+      if (taskTool && (taskTool as any).setSdkMode) {
+        (taskTool as any).setSdkMode(this.sdkOutputAdapter);
+      }
+    }
 
     // Prepare all tool calls
     const preparedToolCalls = toolCalls.map((toolCall, index) => {
@@ -1275,7 +1586,9 @@ export class InteractiveSession {
 
     // Display all tool calls info
     for (const { name, params } of preparedToolCalls) {
-      if (showToolDetails) {
+      if (this.isSdkMode && this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputToolStart(name, params);
+      } else if (showToolDetails) {
         console.log('');
         console.log(`${indent}${colors.warning(`${icons.tool} Tool Call: ${name}`)}`);
         console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
@@ -1307,8 +1620,12 @@ export class InteractiveSession {
           return;
         }
 
-        console.log('');
-        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputToolError(tool, error);
+        } else {
+          console.log('');
+          console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
+        }
 
         this.conversation.push({
           role: 'tool',
@@ -1316,31 +1633,35 @@ export class InteractiveSession {
           timestamp: Date.now()
         });
       } else {
-        // Use correct indent for gui-subagent tasks
-        const isGuiSubagent = tool === 'task' && params?.subagent_type === 'gui-subagent';
-        const displayIndent = isGuiSubagent ? indent + '  ' : indent;
-
-        // Always show details for todo tools so users can see their task lists
-        const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
-        if (isTodoTool) {
-          console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
-          console.log(this.renderTodoList(result?.todos || [], displayIndent));
-          // Show summary if available
-          if (result?.message) {
-            console.log(`${displayIndent}${colors.textDim(result.message)}`);
-          }
-        } else if (showToolDetails) {
-          console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
-          console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
-        } else if (result && result.success === false) {
-          // GUI task or other tool failed
-          console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
-        } else if (result) {
-          console.log(`${displayIndent}${colors.success(`${icons.check} Completed`)}`);
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputToolResult(tool, result);
         } else {
-          console.log(`${displayIndent}${colors.textDim('(no result)')}`);
+          // Use correct indent for gui-subagent tasks
+          const isGuiSubagent = tool === 'task' && params?.subagent_type === 'gui-subagent';
+          const displayIndent = isGuiSubagent ? indent + '  ' : indent;
+
+          // Always show details for todo tools so users can see their task lists
+          const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
+          if (isTodoTool) {
+            console.log('');
+            console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
+            console.log(this.renderTodoList(result?.todos || [], displayIndent));
+            // Show summary if available
+            if (result?.message) {
+              console.log(`${displayIndent}${colors.textDim(result.message)}`);
+            }
+          } else if (showToolDetails) {
+            console.log('');
+            console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
+            console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
+          } else if (result && result.success === false) {
+            // GUI task or other tool failed
+            console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
+          } else if (result) {
+            console.log(`${displayIndent}${colors.success(`${icons.check} Completed`)}`);
+          } else {
+            console.log(`${displayIndent}${colors.textDim('(no result)')}`);
+          }
         }
 
         const toolCallRecord: ToolCall = {
@@ -1378,8 +1699,12 @@ export class InteractiveSession {
     // If GUI agent was cancelled by user, don't continue generating response
     // This avoids wasting API calls and tokens on cancelled tasks
     if (guiSubagentCancelled) {
-      console.log('');
-      console.log(`${indent}${colors.textMuted('GUI task cancelled by user')}`);
+      if (this.isSdkMode && this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputInfo('GUI task cancelled by user');
+      } else {
+        console.log('');
+        console.log(`${indent}${colors.textMuted('GUI task cancelled by user')}`);
+      }
       (this as any)._isOperationInProgress = false;
       return;
     }
@@ -1436,6 +1761,14 @@ export class InteractiveSession {
     const showToolDetails = this.configManager.get('showToolDetails') || false;
     const indent = this.getIndent();
 
+    // Set SDK mode for TaskTool if in SDK mode
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      const taskTool = toolRegistry.get('task');
+      if (taskTool && (taskTool as any).setSdkMode) {
+        (taskTool as any).setSdkMode(this.sdkOutputAdapter);
+      }
+    }
+
     // Prepare all tool calls
     const preparedToolCalls = toolCalls.map((toolCall, index) => {
       const { name, arguments: params } = toolCall.function;
@@ -1452,7 +1785,9 @@ export class InteractiveSession {
 
     // Display all tool calls info
     for (const { name, params } of preparedToolCalls) {
-      if (showToolDetails) {
+      if (this.isSdkMode && this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputToolStart(name, params);
+      } else if (showToolDetails) {
         console.log('');
         console.log(`${indent}${colors.warning(`${icons.tool} Tool Call: ${name}`)}`);
         console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
@@ -1484,8 +1819,10 @@ export class InteractiveSession {
           return;
         }
 
-        console.log('');
-        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
+        if (!this.isSdkMode) {
+          console.log('');
+          console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
+        }
 
         this.conversation.push({
           role: 'tool',
@@ -1499,7 +1836,9 @@ export class InteractiveSession {
 
         // Always show details for todo tools so users can see their task lists
         const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
-        if (isTodoTool) {
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputToolResult(tool, params, result);
+        } else if (isTodoTool) {
           console.log('');
           console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
           console.log(this.renderTodoList(result.todos || result.todos, displayIndent));

@@ -128,6 +128,9 @@ export class SdkSession {
         throw new Error('Authentication required. Please run "xagent auth" first.');
       }
       
+      // Disable AI debug output in SDK mode to avoid polluting JSON stream
+      authConfig.showAIDebugInfo = false;
+      
       this.aiClient = new AIClient(authConfig);
       
       // Load agents
@@ -652,8 +655,17 @@ export class SdkSession {
       is_error: data.is_error,
       num_turns: data.num_turns
     };
-    
+
     this.writeMessage(message);
+
+    // Close stdin to signal that the interaction is complete
+    // This allows the client to know when to stop reading
+    process.stdin.end();
+
+    // Exit the process after a short delay to ensure the result message is flushed
+    setTimeout(() => {
+      process.exit(0);
+    }, 100);
   }
 
   /**

@@ -1,6 +1,7 @@
 import axios from 'axios';
 import open from 'open';
 import inquirer from 'inquirer';
+import https from 'https';
 import { AuthConfig, AuthType } from './types.js';
 import { getLogger } from './logger.js';
 
@@ -166,8 +167,10 @@ export class AuthService {
 
       // 2. 调用后端验证用户
       const xagentApiBaseUrl = this.authConfig.xagentApiBaseUrl || 'https://154.8.140.52:443';
+      const httpsAgent = new https.Agent({ rejectUnauthorized: false });
       const response = await axios.get(`${xagentApiBaseUrl}/api/auth/me`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${token}` },
+        httpsAgent
       });
 
       // 3. Set authentication configuration
@@ -178,7 +181,8 @@ export class AuthService {
       logger.success('Successfully authenticated with xAgent!');
       return true;
     } catch (error: any) {
-      logger.error('Authentication failed', 'Please try again.');
+      logger.error('Authentication failed', error.message || 'Unknown error');
+      logger.debug('Full error:', JSON.stringify(error.response?.data || error.message));
       return false;
     }
   }
@@ -441,8 +445,12 @@ export class AuthService {
         }
 
         try {
+          // Create HTTPS agent that ignores certificate errors (for IP-based access)
+          const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+          
           const response = await axios.get(`${webBaseUrl}/api/cli/get-token`, {
-            timeout: 10000
+            timeout: 10000,
+            httpsAgent
           });
 
           if (response.data.token) {

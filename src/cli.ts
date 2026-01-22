@@ -10,6 +10,17 @@ import { getMCPManager } from './mcp.js';
 import { getLogger, setConfigProvider } from './logger.js';
 import { theme, icons, colors } from './theme.js';
 import { getCancellationManager } from './cancellation.js';
+import { readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+// Get current directory
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Read package.json
+const packageJsonPath = join(__dirname, '../package.json');
+const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
 
 const logger = getLogger();
 
@@ -29,7 +40,7 @@ const program = new Command();
 program
   .name('xagent')
   .description('AI-powered command-line assistant')
-  .version('1.0.0')
+  .version(packageJson.version)
   .option('-h, --help', 'Show help');
 
 program
@@ -326,7 +337,7 @@ program
     console.log('');
     console.log(colors.border(separator));
     console.log('');
-    console.log(`  ${icons.info}  ${colors.textMuted('Version:')} ${colors.primaryBright('1.0.0')}`);
+    console.log(`  ${icons.info}  ${colors.textMuted('Version:')} ${colors.primaryBright(packageJson.version)}`);
     console.log(`  ${icons.code} ${colors.textMuted('Node.js:')} ${colors.textMuted(process.version)}`);
     console.log(`  ${icons.bolt} ${colors.textMuted('Platform:')} ${colors.textMuted(process.platform + ' ' + process.arch)}`);
     console.log('');

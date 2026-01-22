@@ -113,8 +113,8 @@ export class RemoteAIClient extends EventEmitter {
 
     const httpsAgent = new https.Agent({ rejectUnauthorized: false });
     
-    console.log('[DEBUG] RemoteAIClient sending to:', url);
-    console.log('[DEBUG] Token prefix:', this.authToken.substring(0, 20) + '...');
+    logger.debug('[RemoteAIClient] sending to:', url);
+    logger.debug('[RemoteAIClient] Token prefix:', this.authToken.substring(0, 20) + '...');
 
     try {
       const response = await axios.post(url, requestBody, {
@@ -131,8 +131,8 @@ export class RemoteAIClient extends EventEmitter {
         throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
       }
 
-      const data = response.data as RemoteChatResponse;
-      console.log('[DEBUG] RemoteAIClient response received, status:', response.status);
+      const data = response.data;
+      logger.debug('[RemoteAIClient] response received, status:', String(response.status));
       if (this.showAIDebugInfo) {
         console.log('[RemoteAIClient] Received response, content length:', data.content?.length || 0);
         console.log('[RemoteAIClient] toolCalls count:', data.toolCalls?.length || 0);

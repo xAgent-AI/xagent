@@ -200,14 +200,14 @@ export class InteractiveSession {
       logger.debug('[SESSION] 调用 configManager.load()...');
       await this.configManager.load();
 
-      console.log('[DEBUG] Config loaded');
+      logger.debug('[SESSION] Config loaded');
       let authConfig = this.configManager.getAuthConfig();
       const selectedAuthType = this.configManager.get('selectedAuthType');
 
-      console.log('[DEBUG] authConfig.apiKey exists:', !!authConfig.apiKey);
-      console.log('[DEBUG] selectedAuthType:', selectedAuthType);
-      console.log('[DEBUG] AuthType.OAUTH_XAGENT:', AuthType.OAUTH_XAGENT);
-      console.log('[DEBUG] Will validate:', !!(authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT));
+      logger.debug('[SESSION] authConfig.apiKey exists:', String(!!authConfig.apiKey));
+      logger.debug('[SESSION] selectedAuthType:', String(selectedAuthType));
+      logger.debug('[SESSION] AuthType.OAUTH_XAGENT:', String(AuthType.OAUTH_XAGENT));
+      logger.debug('[SESSION] Will validate:', String(!!(authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT)));
 
       // Only validate OAuth tokens, skip validation for third-party API keys
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
@@ -359,15 +359,15 @@ export class InteractiveSession {
    * Returns true if token is valid, false otherwise
    */
   private async validateToken(baseUrl: string, apiKey: string): Promise<boolean> {
-    console.log('[DEBUG] validateToken called with baseUrl:', baseUrl);
-    console.log('[DEBUG] apiKey exists:', apiKey ? 'yes' : 'no');
+    logger.debug('[SESSION] validateToken called with baseUrl:', baseUrl);
+    logger.debug('[SESSION] apiKey exists:', apiKey ? 'yes' : 'no');
     
     try {
       // For OAuth XAGENT auth, use /api/auth/me endpoint
       const url = `${baseUrl}/api/auth/me`;
       const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
-      console.log('[DEBUG] Sending validation request to:', url);
+      logger.debug('[SESSION] Sending validation request to:', url);
 
       const response = await axios.get(url, {
         headers: {
@@ -378,13 +378,13 @@ export class InteractiveSession {
         timeout: 10000
       });
 
-      console.log('[DEBUG] Validation response status:', response.status);
+      logger.debug('[SESSION] Validation response status:', String(response.status));
       return response.status === 200;
     } catch (error: any) {
       // Network error - log details but still consider token may be invalid
-      console.log('[DEBUG] Error:', error.message);
+      logger.debug('[SESSION] Error:', error.message);
       if (error.response) {
-        console.log('[DEBUG] Response status:', error.response.status);
+        logger.debug('[SESSION] Response status:', error.response.status);
       }
       // For network errors, we still return false to trigger re-authentication
       // This ensures security but the user can retry

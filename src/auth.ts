@@ -455,7 +455,7 @@ export class AuthService {
 
           if (response.data.token) {
             logger.success('Authentication successful! Received token');
-            console.log('[DEBUG] Token:', response.data.token);
+            logger.debug('[CLI-Auth] Token stored, key:', response.data.token.substring(0, 20) + '...');
             // Save refresh token if provided
             if (response.data.refreshToken) {
               this.authConfig.refreshToken = response.data.refreshToken;

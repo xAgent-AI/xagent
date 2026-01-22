@@ -422,34 +422,26 @@ export class InteractiveSession {
       this.slashCommandHandler.setConversationHistory(this.conversation);
 
       const mcpServers = this.configManager.getMcpServers();
-      if (!this.isSdkMode) {
-        console.log(`📋 Loading ${Object.keys(mcpServers).length} MCP servers from config`);
-      }
+      this.sdkOutputAdapter?.outputMCPLoading(Object.keys(mcpServers).length);
       Object.entries(mcpServers).forEach(([name, config]) => {
-        if (!this.isSdkMode) {
-          console.log(`📝 Registering MCP server: ${name} (${config.transport})`);
-        }
+        this.sdkOutputAdapter?.outputMCPRegistering(name, config.transport || 'stdio');
         this.mcpManager.registerServer(name, config);
       });
 
       // Eagerly connect to MCP servers to get tool definitions
       if (mcpServers && Object.keys(mcpServers).length > 0) {
         try {
-          if (!this.isSdkMode) {
-            console.log(
-              `${colors.info(`${icons.brain} Connecting to ${Object.keys(mcpServers).length} MCP server(s)...`)}`
-            );
-          }
+          this.sdkOutputAdapter?.outputMCPConnecting(Object.keys(mcpServers).length);
           await this.mcpManager.connectAllServers();
           const connectedCount = Array.from(this.mcpManager.getAllServers()).filter((s: any) =>
             s.isServerConnected()
           ).length;
           const mcpTools = this.mcpManager.getToolDefinitions();
-          if (!this.isSdkMode) {
-            console.log(
-              `${colors.success(`✓ ${connectedCount}/${Object.keys(mcpServers).length} MCP server(s) connected (${mcpTools.length} tools available)`)}`
-            );
-          }
+          this.sdkOutputAdapter?.outputMCPConnected(
+            Object.keys(mcpServers).length,
+            connectedCount,
+            mcpTools.length
+          );
 
           // Register MCP tools with the tool registry (hide MCP origin from LLM)
           const toolRegistry = getToolRegistry();
@@ -461,9 +453,7 @@ export class InteractiveSession {
             await this.syncMCPToRemote(allMcpTools);
           }
         } catch (error: any) {
-          if (!this.isSdkMode) {
-            console.log(`${colors.warning(`⚠ MCP connection failed: ${error.message}`)}`);
-          }
+          this.sdkOutputAdapter?.outputMCPConnectionFailed(error.message);
         }
       }
 
@@ -698,11 +688,7 @@ export class InteractiveSession {
    * SDK mode prompt loop - reads from stdin
    */
   private async sdkPromptLoop(): Promise<void> {
-    if (this.isSdkMode && this.sdkOutputAdapter) {
-      this.sdkOutputAdapter.outputPrompt();
-    }
-
-    // Read input from stdin
+    // Read input from stdin directly without outputting prompt
     const input = await this.readSdkInput();
 
     if ((this as any)._isShuttingDown || input === null) {
@@ -984,6 +970,7 @@ export class InteractiveSession {
     if (needsCompression) {
       const indent = this.getIndent();
       console.log('');
+      this.sdkOutputAdapter?.outputContextCompressionTriggered(reason);
       console.log(
         `${indent}${colors.warning(`${icons.brain} Context compression triggered: ${reason}`)}`
       );
@@ -1002,9 +989,16 @@ export class InteractiveSession {
 
       if (result.wasCompressed) {
         this.conversation = result.compressedMessages;
-        // console.log(`${indent}${colors.success(`✓ Compressed ${result.originalMessageCount} messages to ${result.compressedMessageCount} messages`)}`);
+        const reductionPercent = Math.round((1 - result.compressedSize / result.originalSize) * 100);
+        this.sdkOutputAdapter?.outputContextCompressionResult(
+          result.originalSize,
+          result.compressedSize,
+          reductionPercent,
+          result.originalMessageCount,
+          result.compressedMessageCount
+        );
         console.log(
-          `${indent}${colors.textMuted(`✓ Size: ${result.originalSize} → ${result.compressedSize} chars (${Math.round((1 - result.compressedSize / result.originalSize) * 100)}% reduction)`)}`
+          `${indent}${colors.textMuted(`✓ Size: ${result.originalSize} → ${result.compressedSize} chars (${reductionPercent}% reduction)`)}`
         );
 
         // Display compressed summary content
@@ -1017,6 +1011,13 @@ export class InteractiveSession {
           if (isTruncated) {
             summaryContent = summaryContent.substring(0, maxPreviewLength) + '\n...';
           }
+
+          this.sdkOutputAdapter?.outputContextCompressionSummary(
+            summaryMessage.content,
+            summaryContent,
+            isTruncated,
+            summaryMessage.content.length
+          );
 
           console.log('');
           console.log(

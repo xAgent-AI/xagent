@@ -806,9 +806,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       // Output error immediately if task failed
       if (finalStatus === GUIAgentStatus.ERROR && finalError) {
         this.output('error', { error: finalError });
-        if (!this.sdkOutputHandler) {
-          console.log(`\n${colors.error('✖')} ${finalError}\n`);
-        }
       }
 
       // Call onData callback if set

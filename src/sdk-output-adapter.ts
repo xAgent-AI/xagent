@@ -217,6 +217,66 @@ export class SdkOutputAdapter {
   }
 
   /**
+   * Format and output MCP loading status.
+   */
+  outputMCPLoading(count: number): void {
+    this.output({
+      type: 'system',
+      subtype: 'mcp_loading',
+      timestamp: Date.now(),
+      data: { count }
+    });
+  }
+
+  /**
+   * Format and output MCP server registering status.
+   */
+  outputMCPRegistering(name: string, transport: string): void {
+    this.output({
+      type: 'system',
+      subtype: 'mcp_registering',
+      timestamp: Date.now(),
+      data: { name, transport }
+    });
+  }
+
+  /**
+   * Format and output MCP connecting status.
+   */
+  outputMCPConnecting(count: number): void {
+    this.output({
+      type: 'system',
+      subtype: 'mcp_connecting',
+      timestamp: Date.now(),
+      data: { count }
+    });
+  }
+
+  /**
+   * Format and output MCP connected result.
+   */
+  outputMCPConnected(total: number, connected: number, toolsAvailable: number): void {
+    this.output({
+      type: 'system',
+      subtype: 'mcp_connected',
+      timestamp: Date.now(),
+      data: { total, connected, toolsAvailable }
+    });
+  }
+
+  /**
+   * Format and output MCP connection failed warning.
+   */
+  outputMCPConnectionFailed(message: string): void {
+    this.output({
+      type: 'system',
+      subtype: 'mcp_connection_failed',
+      timestamp: Date.now(),
+      data: { message }
+    });
+  }
+
+  /**
    * Format and output error message.
    */
   outputError(message: string, context?: Record<string, unknown>): void {
@@ -280,6 +340,64 @@ export class SdkOutputAdapter {
         originalSize,
         compressedSize,
         reductionPercent
+      }
+    });
+  }
+
+  /**
+   * Format and output context compression triggered.
+   */
+  outputContextCompressionTriggered(reason: string): void {
+    this.output({
+      type: 'system',
+      subtype: 'context_compression_triggered',
+      timestamp: Date.now(),
+      data: { reason }
+    });
+  }
+
+  /**
+   * Format and output context compression result.
+   */
+  outputContextCompressionResult(
+    originalSize: number,
+    compressedSize: number,
+    reductionPercent: number,
+    originalMessageCount: number,
+    compressedMessageCount: number
+  ): void {
+    this.output({
+      type: 'system',
+      subtype: 'context_compression_result',
+      timestamp: Date.now(),
+      data: {
+        originalSize,
+        compressedSize,
+        reductionPercent,
+        originalMessageCount,
+        compressedMessageCount
+      }
+    });
+  }
+
+  /**
+   * Format and output context compression summary.
+   */
+  outputContextCompressionSummary(
+    summary: string,
+    preview: string,
+    isTruncated: boolean,
+    totalLength: number
+  ): void {
+    this.output({
+      type: 'system',
+      subtype: 'context_compression_summary',
+      timestamp: Date.now(),
+      data: {
+        summary,
+        preview,
+        isTruncated,
+        totalLength
       }
     });
   }

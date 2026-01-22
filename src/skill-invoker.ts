@@ -333,144 +333,139 @@ export async function readSkillContent(skillPath: string, keywords: string[], ma
 // SKILL Trigger Keywords Mapping
 // ============================================================
 
-interface SkillTrigger {
-  skillId: string;
-  keywords: string[];
-  category: string;
-}
+// NOTE: SKILL_TRIGGERS is disabled for experiment purposes.
+// Let the LLM decide which skill to use based on system prompt information.
 
-export const SKILL_TRIGGERS: Record<string, SkillTrigger> = {
-  docx: {
-    skillId: 'docx',
-    keywords: [
-      'word document', 'docx', 'microsoft word', 'create word', 'edit word',
-      'create .docx', '.docx file', 'word file', 'document creation',
-      'word editing', 'tracked changes', 'comments'
-    ],
-    category: 'Document Processing'
-  },
-  pdf: {
-    skillId: 'pdf',
-    keywords: [
-      'pdf', 'create pdf', 'edit pdf', 'pdf document', 'pdf file',
-      'extract pdf', 'merge pdf', 'split pdf', 'pdf form', 'manipulate pdf'
-    ],
-    category: 'Document Processing'
-  },
-  pptx: {
-    skillId: 'pptx',
-    keywords: [
-      'powerpoint', 'ppt', 'pptx', 'presentation', 'slide',
-      'create presentation', 'edit powerpoint', 'create slides',
-      'powerpoint file', 'presentation file'
-    ],
-    category: 'Document Processing'
-  },
-  xlsx: {
-    skillId: 'xlsx',
-    keywords: [
-      'excel', 'spreadsheet', 'xlsx', 'create excel', 'edit spreadsheet',
-      'excel file', 'spreadsheet file', 'formulas', 'data analysis'
-    ],
-    category: 'Spreadsheet & Data'
-  },
-  frontend_design: {
-    skillId: 'frontend-design',
-    keywords: [
-      'web page', 'website', 'web app', 'frontend', 'ui', 'user interface',
-      'create website', 'build website', 'web component', 'html css',
-      'landing page', 'dashboard', 'react', 'vue', 'web interface'
-    ],
-    category: 'Frontend & Web Development'
-  },
-  web_artifacts_builder: {
-    skillId: 'web-artifacts-builder',
-    keywords: [
-      'complex react', 'react artifact', 'stateful artifact', 'routing',
-      'web artifact', 'interactive artifact', 'web-based tool'
-    ],
-    category: 'Frontend & Web Development'
-  },
-  webapp_testing: {
-    skillId: 'webapp-testing',
-    keywords: [
-      'test web', 'web testing', 'browser test', 'playwright', 'e2e test',
-      'frontend test', 'capture screenshot', 'verify web'
-    ],
-    category: 'Frontend & Web Development'
-  },
-  canvas_design: {
-    skillId: 'canvas-design',
-    keywords: [
-      'poster', 'artwork', 'visual art', 'canvas', 'design art',
-      'create poster', 'create artwork', 'visual design', 'graphic art'
-    ],
-    category: 'Visual & Creative Design'
-  },
-  algorithmic_art: {
-    skillId: 'algorithmic-art',
-    keywords: [
-      'generative art', 'algorithmic art', 'p5.js', 'particle system',
-      'flow field', 'creative coding', 'code art'
-    ],
-    category: 'Visual & Creative Design'
-  },
-  theme_factory: {
-    skillId: 'theme-factory',
-    keywords: [
-      'theme', 'color scheme', 'font theme', 'styling theme',
-      'consistent theme', 'apply theme', 'theme colors'
-    ],
-    category: 'Visual & Creative Design'
-  },
-  brand_guidelines: {
-    skillId: 'brand-guidelines',
-    keywords: [
-      'brand colors', 'brand guidelines', 'anthropic brand',
-      'official brand', 'brand styling'
-    ],
-    category: 'Visual & Creative Design'
-  },
-  slack_gif_creator: {
-    skillId: 'slack-gif-creator',
-    keywords: [
-      'slack gif', 'animated gif', 'gif for slack', 'slack animation'
-    ],
-    category: 'Visual & Creative Design'
-  },
-  mcp_builder: {
-    skillId: 'mcp-builder',
-    keywords: [
-      'mcp server', 'model context protocol', 'create mcp',
-      'mcp integration', 'external api integration'
-    ],
-    category: 'Development & Integration'
-  },
-  skill_creator: {
-    skillId: 'skill-creator',
-    keywords: [
-      'create skill', 'new skill', 'skill development',
-      'extend capabilities', 'custom skill'
-    ],
-    category: 'Development & Integration'
-  },
-  doc_coauthoring: {
-    skillId: 'doc-coauthoring',
-    keywords: [
-      'documentation', 'technical docs', 'write documentation',
-      'coauthor', 'doc writing', 'technical writing'
-    ],
-    category: 'Communication & Documentation'
-  },
-  internal_comms: {
-    skillId: 'internal-comms',
-    keywords: [
-      'internal communication', 'status report', 'newsletter',
-      'internal update', 'team communication', 'announcement'
-    ],
-    category: 'Communication & Documentation'
-  }
-};
+// interface SkillTrigger {
+//   skillId: string;
+//   keywords: string[];
+//   category: string;
+// }
+
+// export const SKILL_TRIGGERS: Record<string, SkillTrigger> = {
+//   docx: {
+//     skillId: 'docx',
+//     keywords: [
+//       'word document', 'docx', 'microsoft word', 'create word', 'edit word',
+//       'create .docx', '.docx file', 'word file', 'document creation',
+//       'word editing', 'tracked changes', 'comments'
+//     ],
+//     category: 'Document Processing'
+//   },
+//   pdf: {
+//     skillId: 'pdf',
+//     keywords: [
+//       'pdf', 'create pdf', 'edit pdf', 'pdf document', 'pdf file',
+//       'extract pdf', 'merge pdf', 'split pdf', 'pdf form', 'manipulate pdf'
+//     ],
+//     category: 'Document Processing'
+//   },
+//   pptx: {
+//     skillId: 'pptx',
+//     keywords: [
+//       'powerpoint', 'ppt', 'pptx', 'presentation', 'slide',
+//       'create presentation', 'edit powerpoint', 'create slides',
+//       'powerpoint file', 'presentation file'
+//     ],
+//     category: 'Document Processing'
+//   },
+//   xlsx: {
+//     skillId: 'xlsx',
+//     keywords: [
+//       'excel', 'spreadsheet', 'xlsx', 'create excel', 'edit spreadsheet',
+//       'excel file', 'spreadsheet file', 'formulas', 'data analysis'
+//     ],
+//     category: 'Spreadsheet & Data'
+//   },
+//   frontend_design: {
+//     skillId: 'frontend-design',
+//     keywords: [
+//       'web page', 'website', 'web app', 'frontend', 'ui', 'user interface',
+//       'create website', 'build website', 'web component', 'html css',
+//       'landing page', 'dashboard', 'react', 'vue', 'web interface'
+//     ],
+//     category: 'Frontend & Web Development'
+//   },
+//   web_artifacts_builder: {
+//     skillId: 'web-artifacts-builder',
+//     keywords: [
+//       'complex react', 'react artifact', 'stateful artifact', 'routing',
+//       'web artifact', 'interactive artifact', 'web-based tool'
+//     ],
+//     category: 'Frontend & Web Development'
+//   },
+//   webapp_testing: {
+//     skillId: 'webapp-testing',
+//     keywords: [
+//       'test web', 'web testing', 'browser test', 'playwright', 'e2e test',
+//       'frontend test', 'capture screenshot', 'verify web'
+//     ],
+//     category: 'Frontend & Web Development'
+//   },
+//   canvas_design: {
+//     skillId: 'canvas-design',
+//     keywords: [
+//       'poster', 'artwork', 'visual art', 'canvas', 'design art',
+//       'create poster', 'create artwork', 'visual design', 'graphic art'
+//     ],
+//     category: 'Visual & Creative Design'
+//   },
+//   algorithmic_art: {
+//     skillId: 'algorithmic-art',
+//     keywords: [
+//       'generative art', 'algorithmic art', 'p5.js', 'particle system',
+//       'flow field', 'creative coding', 'code art'
+//     ],
+//     category: 'Visual & Creative Design'
+//   },
+//   theme_factory: {
+//     skillId: 'theme-factory',
+//     keywords: [
+//       'theme', 'color scheme', 'font theme', 'styling theme',
+//       'consistent theme', 'apply theme', 'theme colors'
+//     ],
+//     category: 'Visual & Creative Design'
+//   },
+//   brand_guidelines: {
+//     skillId: 'brand-guidelines',
+//     keywords: [
+//       'brand colors', 'brand guidelines', 'anthropic brand',
+//       'official brand', 'brand styling'
+//     ],
+//     category: 'Visual & Creative Design'
+//   },
+//   slack_gif_creator: {
+//     skillId: 'slack-gif-creator',
+//     keywords: [
+//       'slack gif', 'animated gif', 'gif for slack', 'slack animation'
+//     ],
+//     category: 'Visual & Creative Design'
+//   },
+//   mcp_builder: {
+//     skillId: 'mcp-builder',
+//     keywords: [
+//       'mcp server', 'model context protocol', 'create mcp',
+//       'mcp integration', 'external api integration'
+//     ],
+//     category: 'Development & Integration'
+//   },
+//   skill_creator: {
+//     skillId: 'skill-creator',
+//     keywords: [
+//       'create skill', 'new skill', 'skill development',
+//       'extend capabilities', 'custom skill'
+//     ],
+//     category: 'Development & Integration'
+//   },
+//   doc_coauthoring: {
+//     skillId: 'doc-coauthoring',
+//     keywords: [
+//       'documentation', 'technical docs', 'write documentation',
+//       'coauthor', 'doc writing', 'technical writing'
+//     ],
+//     category: 'Communication & Documentation'
+//   }
+// };
 
 // ============================================================
 // SkillInvoker Main Class
@@ -566,37 +561,13 @@ export class SkillInvoker {
 
   /**
    * Match the most relevant skill based on user input
+   * NOTE: SKILL_TRIGGERS disabled. Let LLM decide based on system prompt.
+   * Returns null to indicate no explicit match - LLM should use its own judgment.
    */
   async matchSkill(userInput: string): Promise<SkillMatcherResult | null> {
-    await this.initialize();
-
-    const lowerInput = userInput.toLowerCase();
-    let bestMatch: SkillMatcherResult | null = null;
-
-    // First check predefined trigger keywords
-    for (const trigger of Object.values(SKILL_TRIGGERS)) {
-      const matchedKeywords = trigger.keywords.filter(kw => lowerInput.includes(kw.toLowerCase()));
-
-      if (matchedKeywords.length > 0) {
-        const confidence = matchedKeywords.length / trigger.keywords.length;
-        const skill = this.skillCache.get(trigger.skillId);
-
-        if (skill) {
-          const result: SkillMatcherResult = {
-            skill,
-            confidence,
-            matchedKeywords,
-            category: trigger.category
-          };
-
-          if (!bestMatch || confidence > bestMatch.confidence) {
-            bestMatch = result;
-          }
-        }
-      }
-    }
-
-    return bestMatch;
+    // SKILL_TRIGGERS is disabled for experiment purposes.
+    // The LLM should decide which skill to use based on system prompt information.
+    return null;
   }
 
   /**
@@ -707,16 +678,13 @@ export class SkillInvoker {
    * Used for remote mode tool execution
    */
   isSkillTool(toolName: string): boolean {
-    // Check if it's a skill ID
-    if (this.skillCache.has(toolName)) {
-      return true;
-    }
-    // Check if in SKILL_TRIGGERS
-    return Object.values(SKILL_TRIGGERS).some(t => t.skillId === toolName);
+    // Check if it's a skill ID in cache
+    return this.skillCache.has(toolName);
   }
 
   /**
    * Get all Skill definitions (for syncing to remote server)
+   * NOTE: triggers field is empty since SKILL_TRIGGERS is disabled
    */
   getAllSkillDefinitions(): Array<{
     id: string;
@@ -733,17 +701,14 @@ export class SkillInvoker {
       triggers: string[];
     }> = [];
 
-    for (const [key, trigger] of Object.entries(SKILL_TRIGGERS)) {
-      const skill = this.skillCache.get(trigger.skillId);
-      if (skill) {
-        definitions.push({
-          id: skill.id,
-          name: skill.name,
-          description: skill.description,
-          category: trigger.category,
-          triggers: trigger.keywords
-        });
-      }
+    for (const skill of this.skillCache.values()) {
+      definitions.push({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        category: skill.category,
+        triggers: [] // SKILL_TRIGGERS disabled - LLM decides based on description
+      });
     }
 
     return definitions;
@@ -759,23 +724,14 @@ export class SkillInvoker {
     toolName: string,
     params: Record<string, any>
   ): Promise<{ success: boolean; result?: any; error?: string }> {
-    // Find corresponding Skill
-    const skillTrigger = Object.entries(SKILL_TRIGGERS).find(
-      ([_, t]) => t.skillId === toolName
-    );
-
-    if (!skillTrigger) {
-      // Try direct skillId match
-      if (!this.skillCache.has(toolName)) {
-        return { success: false, error: `Skill not found: ${toolName}` };
-      }
+    // Check if skill exists in cache
+    if (!this.skillCache.has(toolName)) {
+      return { success: false, error: `Skill not found: ${toolName}` };
     }
-
-    const triggerSkillId = skillTrigger ? skillTrigger[1].skillId : toolName;
 
     try {
       const result = await this.executeSkill({
-        skillId: triggerSkillId,
+        skillId: toolName,
         taskDescription: params.taskDescription || params.description || '',
         inputFile: params.inputFile,
         outputFile: params.outputFile,
@@ -790,9 +746,10 @@ export class SkillInvoker {
 
   /**
    * Get all available Skill ID list
+   * NOTE: SKILL_TRIGGERS disabled - return all skill IDs from cache
    */
   getAvailableSkillIds(): string[] {
-    return Object.values(SKILL_TRIGGERS).map(t => t.skillId);
+    return Array.from(this.skillCache.keys());
   }
 }
 

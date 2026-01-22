@@ -1786,20 +1786,16 @@ export class InteractiveSession {
         triggers: string[];
       }> = [];
 
-      // Get all Skill info from SKILL_TRIGGERS
-      const { SKILL_TRIGGERS } = await import('./skill-invoker.js');
-      for (const [key, trigger] of Object.entries(SKILL_TRIGGERS)) {
-        const skillTrigger = trigger as { skillId: string; keywords: string[]; category: string };
-        const skill = await skillInvoker.getSkillDetails(skillTrigger.skillId);
-        if (skill) {
-          skills.push({
-            id: skill.id,
-            name: skill.name,
-            description: skill.description,
-            category: skillTrigger.category,
-            triggers: skillTrigger.keywords
-          });
-        }
+      // Get all Skill info from skill cache
+      const allSkills = await skillInvoker.listAvailableSkills();
+      for (const skill of allSkills) {
+        skills.push({
+          id: skill.id,
+          name: skill.name,
+          description: skill.description,
+          category: skill.category,
+          triggers: [] // SKILL_TRIGGERS disabled - LLM decides based on description
+        });
       }
 
       await this.remoteAIClient.syncSkills(skills);

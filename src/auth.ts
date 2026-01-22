@@ -1,7 +1,6 @@
 import axios from 'axios';
 import open from 'open';
 import inquirer from 'inquirer';
-import http from 'http';
 import { AuthConfig, AuthType } from './types.js';
 import { getLogger } from './logger.js';
 
@@ -408,8 +407,8 @@ export class AuthService {
     // Use xagentApiBaseUrl from config, fallback to default
     const webBaseUrl = this.authConfig.xagentApiBaseUrl || 'https://154.8.140.52';
     const authUrl = `${webBaseUrl}/login`;
-    // Callback URL must use the same domain as the web to ensure proper routing
-    const callbackUrl = 'https://154.8.140.52:8080/callback';
+    // Callback URL tells frontend where to store token
+    const callbackUrl = 'https://154.8.140.52:443/callback';
 
     // 如果已有保存的token，通过URL参数传给Web页面
     const existingToken = this.authConfig.apiKey;
@@ -424,78 +423,51 @@ export class AuthService {
       }
     }
 
-    // Start HTTP server to receive callback, then open browser
+    // Open browser for login, then poll server for token
+    await open(loginUrl);
+    logger.info('Waiting for authentication...', 'Please complete login in your browser');
+
+    // Poll server to get token
     return new Promise((resolve, reject) => {
-      let timeoutId: NodeJS.Timeout | null = null;
-      let server: http.Server | null = null;
+      const pollInterval = 2000; // Poll every 2 seconds
+      const maxWaitTime = 30 * 60 * 1000; // 30 minutes timeout
+      const startTime = Date.now();
 
-      const cleanup = () => {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          timeoutId = null;
+      const poll = async () => {
+        if (Date.now() - startTime > maxWaitTime) {
+          logger.warn('Authentication timeout after 30 minutes');
+          reject(new Error('Authentication timeout'));
+          return;
         }
-      };
 
-      const serverCallback = (req: any, res: any) => {
-        if (req.url.startsWith('/callback')) {
-          const url = new URL(req.url, `http://${req.headers.host}`);
-          const token = url.searchParams.get('token');
-          const refreshToken = url.searchParams.get('refreshToken');
+        try {
+          const response = await axios.get(`${webBaseUrl}/api/cli/get-token`, {
+            timeout: 10000
+          });
 
-          if (token) {
-            logger.info('Authentication successful! Received token');
-            cleanup();
-
+          if (response.data.token) {
+            logger.success('Authentication successful! Received token');
             // Save refresh token if provided
-            if (refreshToken) {
-              this.authConfig.refreshToken = refreshToken;
+            if (response.data.refreshToken) {
+              this.authConfig.refreshToken = response.data.refreshToken;
             }
-
-            // Redirect directly to home page after successful authentication
-            // Use the same webBaseUrl that was used to open the login page
-            const redirectUrl = `${webBaseUrl}/`;
-            res.writeHead(302, { 'Location': redirectUrl });
-            res.end();
-            if (server) {
-              server.close();
-            }
-            resolve(token);
-          } else {
-            logger.warn('No token in callback URL');
-            cleanup();
-
-            res.writeHead(400, { 'Content-Type': 'text/html' });
-            res.end('<h1>Authentication Failed: No token</h1>');
-            if (server) {
-              server.close();
-            }
-            reject(new Error('No token received'));
+            resolve(response.data.token);
+            return;
           }
-        } else if (req.url === '/' || req.url === '') {
-          // Root path - likely a redirect from the web app
-          res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end('<html><body><h1>XAGENT CLI Authentication Callback Server</h1><p>Waiting for authentication...</p></body></html>');
-        } else {
-          res.writeHead(404, { 'Content-Type': 'text/plain' });
-          res.end('Not Found');
+        } catch (error: any) {
+          if (error.response?.status === 404) {
+            // Token not ready yet, continue polling
+          } else {
+            console.error('[CLI-Auth] Polling error:', error.message);
+          }
         }
+
+        // Continue polling
+        setTimeout(poll, pollInterval);
       };
 
-      server = http.createServer(serverCallback);
-
-      // Set timeout timer (after server is created)
-      timeoutId = setTimeout(() => {
-        logger.warn('Authentication timeout after 30 minutes');
-        if (server) {
-          server.close();
-        }
-        reject(new Error('Authentication timeout'));
-      }, 1800000); // 30 minutes
-
-      server.listen(8080, '0.0.0.0', async () => {
-        logger.info('Waiting for authentication...', 'Opening browser for login...');
-        await open(loginUrl);
-      });
+      // Start polling
+      setTimeout(poll, pollInterval);
     });
   }
 

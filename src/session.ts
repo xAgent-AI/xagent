@@ -1744,7 +1744,17 @@ export async function startInteractiveSession(): Promise<void> {
     process.exit(0);
   });
 
-  await session.start();
+  try {
+    await session.start();
+  } catch (error: any) {
+    const separator = icons.separator.repeat(40);
+    console.error('\n' + colors.border(separator));
+    console.error(colors.error('❌ Failed to start session'));
+    console.error(colors.textDim(`   ${error.message}`));
+    console.error(colors.border(separator));
+    console.error('');
+    process.exit(1);
+  }
 }
 
 // Singleton session instance for access from other modules

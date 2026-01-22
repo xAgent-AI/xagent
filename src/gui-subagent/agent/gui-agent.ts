@@ -262,15 +262,7 @@ export class GUIAgent<T extends Operator> {
         timing
       });
 
-      if (!this.sdkOutputHandler) {
-        console.log(`${indent}${colors.primaryBright(`[${iteration}]`)} ${colors.textMuted(actionType)}${timing ? colors.textDim(` (${timing.cost}ms)`) : ''}`);
-
-        // Optionally show action details on next line if verbose
-        if (this.showAIDebugInfo && actionSummary) {
-          const truncatedSummary = actionSummary.length > 60 ? actionSummary.substring(0, 60) + '...' : actionSummary;
-          console.log(`${innerIndent}${colors.textMuted(truncatedSummary)}`);
-        }
-      }
+      // 注意：output() 方法中已包含 console.log 输出，不需要重复输出
     } else if (conversation.from === 'human' && conversation.screenshotBase64) {
       // Show minimal indicator for screenshot
       if (this.showAIDebugInfo) {
@@ -283,9 +275,7 @@ export class GUIAgent<T extends Operator> {
           timing
         });
 
-        if (!this.sdkOutputHandler) {
-          console.log(`${indent}${colors.textMuted(`${icons.loading} screenshot${timing ? ` (${timing.cost}ms)` : ''}`)}`);
-        }
+        // 注意：output() 方法中已包含 console.log 输出，不需要重复输出
       }
     }
   }

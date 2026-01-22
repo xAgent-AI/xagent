@@ -211,7 +211,7 @@ export class InteractiveSession {
       // Only validate OAuth tokens, skip validation for third-party API keys
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
         spinner.text = colors.textMuted('Validating authentication...');
-        const baseUrl = authConfig.xagentApiBaseUrl || 'https://xagent-colife.net:3000';
+        const baseUrl = authConfig.xagentApiBaseUrl || 'https://154.8.140.52:443';
         let isValid = await this.validateToken(baseUrl, authConfig.apiKey);
 
         // Try refresh token if validation failed
@@ -282,7 +282,7 @@ export class InteractiveSession {
 
       // Initialize remote AI client for OAuth XAGENT mode
       if (selectedAuthType === AuthType.OAUTH_XAGENT) {
-        const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://xagent-colife.net:3000';
+        const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://154.8.140.52:443';
         // In OAuth XAGENT mode, we still pass apiKey (can be empty or used for other purposes)
         this.remoteAIClient = new RemoteAIClient(authConfig.apiKey || '', webBaseUrl, authConfig.showAIDebugInfo);
         logger.debug('[DEBUG Initialize] RemoteAIClient created successfully');
@@ -1222,9 +1222,10 @@ export class InteractiveSession {
 
         // Reinitialize RemoteAIClient with new token
         if (authConfig.apiKey) {
-          const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://xagent-colife.net:3000';
+          const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://154.8.140.52:443';
           logger.debug('[DEBUG generateRemoteResponse] Reinitializing RemoteAIClient with new token');
-          this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl, authConfig.showAIDebugInfo);
+          const newWebBaseUrl = authConfig.xagentApiBaseUrl || 'https://154.8.140.52:443';
+          this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, newWebBaseUrl, authConfig.showAIDebugInfo);
         } else {
           logger.debug('[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!');
         }

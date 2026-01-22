@@ -11,13 +11,13 @@ const DEFAULT_SETTINGS: Settings = {
   selectedAuthType: AuthType.OAUTH_XAGENT,
   apiKey: '',
   // LLM API - for main conversation and task processing (OpenAI compatible format)
-  baseUrl: 'https://xagent-colife.net:3000/v1',
+  baseUrl: 'https://154.8.140.52:443/v1',
   modelName: 'Qwen3-Coder',
   // xAgent API - for token validation and other backend calls (without /v1)
-  xagentApiBaseUrl: 'https://xagent-colife.net:3000',
+  xagentApiBaseUrl: 'https://154.8.140.52:443',
   // VLM API - for GUI automation (browser/desktop operations)
   guiSubagentModel: 'Qwen3-Coder',
-  guiSubagentBaseUrl: 'https://xagent-colife.net:3000/v3',
+  guiSubagentBaseUrl: 'https://154.8.140.52:443/v3',
   guiSubagentApiKey: '',
   searchApiKey: '',
   skillsPath: '',  // Will be auto-detected if not set

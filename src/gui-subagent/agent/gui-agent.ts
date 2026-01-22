@@ -80,6 +80,11 @@ export interface GUIAgentConfig<T extends Operator> {
   onData?: (data: GUIAgentData) => void;
   onError?: (error: Error) => void;
   showAIDebugInfo?: boolean;
+  /**
+   * SDK mode output handler
+   * If provided, GUI Agent will output in SDK format instead of console.log
+   */
+  sdkOutputHandler?: (output: GUIAgentOutput) => void;
   retry?: {
     screenshot?: {
       maxRetries?: number;
@@ -94,6 +99,15 @@ export interface GUIAgentConfig<T extends Operator> {
       onRetry?: (e: Error) => void;
     };
   };
+}
+
+/**
+ * SDK output format for GUI Agent
+ */
+export interface GUIAgentOutput {
+  type: 'status' | 'conversation' | 'action' | 'screenshot' | 'error' | 'complete';
+  timestamp: number;
+  data: Record<string, unknown>;
 }
 
 export interface GUIAgentData {
@@ -144,6 +158,7 @@ export class GUIAgent<T extends Operator> {
   private readonly onError?: (error: Error) => void;
   private readonly showAIDebugInfo: boolean;
   private readonly retry?: GUIAgentConfig<T>['retry'];
+  private readonly sdkOutputHandler?: (output: GUIAgentOutput) => void;
 
   private isPaused = false;
   private resumePromise: Promise<void> | null = null;
@@ -165,8 +180,61 @@ export class GUIAgent<T extends Operator> {
     this.onError = config.onError;
     this.showAIDebugInfo = config.showAIDebugInfo ?? false;
     this.retry = config.retry;
+    this.sdkOutputHandler = config.sdkOutputHandler;
 
     this.systemPrompt = config.systemPrompt || this.buildSystemPrompt();
+  }
+
+  /**
+   * Output in SDK mode or console.log in normal mode
+   */
+  private output(type: GUIAgentOutput['type'], data: Record<string, unknown>): void {
+    if (this.sdkOutputHandler) {
+      this.sdkOutputHandler({
+        type,
+        timestamp: Date.now(),
+        data
+      });
+    } else {
+      // Normal mode - use console.log with colors (colors already imported at top)
+      switch (type) {
+        case 'status':
+          if (data.status === 'running') {
+            console.log(`${colors.info(`${icons.loading} Step ${data.iteration}: Running...`)}`);
+          } else if (data.status === 'error' && data.error) {
+            console.log(`${colors.error(`${icons.cross} ${data.error}`)}`);
+          } else if (data.status === 'call_user') {
+            console.log(`${colors.warning(`${icons.warning} Needs user input`)}`);
+          } else if (data.status === 'user_stopped') {
+            console.log(`${colors.warning(`${icons.warning} Stopped`)}`);
+          }
+          break;
+        case 'conversation':
+          const indent = '  '.repeat((data.indentLevel as number) || 1);
+          const iteration = data.iteration as number;
+          const from = data.from as 'human' | 'assistant';
+          if (from === 'assistant') {
+            const actionType = (data.actionType as string) || 'action';
+            const timing = data.timing as { cost: number } | undefined;
+            console.log(`${indent}${colors.primaryBright(`[${iteration}]`)} ${colors.textMuted(actionType)}${timing ? colors.textDim(` (${timing.cost}ms)`) : ''}`);
+          } else if (from === 'human' && this.showAIDebugInfo) {
+            const timing = data.timing as { cost: number } | undefined;
+            console.log(`${indent}${colors.textMuted(`${icons.loading} screenshot${timing ? ` (${timing.cost}ms)` : ''}`)}`);
+          }
+          break;
+        case 'action':
+          console.log(`${colors.primaryBright(`${icons.rocket} GUI Agent started`)}`);
+          break;
+        case 'complete':
+          console.log(`${colors.success(`${icons.check} GUI task completed in ${data.iterations} iterations`)}`);
+          break;
+        case 'error':
+          if (data.error) {
+            console.log(`\n${colors.error('✖')} ${data.error}\n`);
+          }
+          break;
+      }
+    }
   }
 
   /**
@@ -175,7 +243,6 @@ export class GUIAgent<T extends Operator> {
   private displayConversationResult(conversation: Conversation, iteration: number, indentLevel: number = 1): void {
     const indent = '  '.repeat(indentLevel);
     const innerIndent = '  '.repeat(indentLevel + 1);
-    const maxWidth = process.stdout.columns || 80;
 
     if (conversation.from === 'assistant') {
       // Display assistant response (action)
@@ -186,18 +253,39 @@ export class GUIAgent<T extends Operator> {
       const actionSummary = content.replace(/Thought:[\s\S]*?Action:\s*/i, '').trim();
       const actionType = conversation.predictionParsed?.[0]?.action_type || 'action';
 
-      console.log(`${indent}${colors.primaryBright(`[${iteration}]`)} ${colors.textMuted(actionType)}${timing ? colors.textDim(` (${timing.cost}ms)`) : ''}`);
+      // SDK 模式或普通模式
+      this.output('conversation', {
+        from: 'assistant',
+        iteration,
+        indentLevel,
+        actionType,
+        timing
+      });
 
-      // Optionally show action details on next line if verbose
-      if (this.showAIDebugInfo && actionSummary) {
-        const truncatedSummary = actionSummary.length > 60 ? actionSummary.substring(0, 60) + '...' : actionSummary;
-        console.log(`${innerIndent}${colors.textMuted(truncatedSummary)}`);
+      if (!this.sdkOutputHandler) {
+        console.log(`${indent}${colors.primaryBright(`[${iteration}]`)} ${colors.textMuted(actionType)}${timing ? colors.textDim(` (${timing.cost}ms)`) : ''}`);
+
+        // Optionally show action details on next line if verbose
+        if (this.showAIDebugInfo && actionSummary) {
+          const truncatedSummary = actionSummary.length > 60 ? actionSummary.substring(0, 60) + '...' : actionSummary;
+          console.log(`${innerIndent}${colors.textMuted(truncatedSummary)}`);
+        }
       }
     } else if (conversation.from === 'human' && conversation.screenshotBase64) {
       // Show minimal indicator for screenshot
       if (this.showAIDebugInfo) {
         const timing = conversation.timing;
-        console.log(`${indent}${colors.textMuted(`${icons.loading} screenshot${timing ? ` (${timing.cost}ms)` : ''}`)}`);
+
+        this.output('conversation', {
+          from: 'human',
+          iteration,
+          indentLevel,
+          timing
+        });
+
+        if (!this.sdkOutputHandler) {
+          console.log(`${indent}${colors.textMuted(`${icons.loading} screenshot${timing ? ` (${timing.cost}ms)` : ''}`)}`);
+        }
       }
     }
   }
@@ -209,6 +297,19 @@ export class GUIAgent<T extends Operator> {
     const indent = '  '.repeat(indentLevel);
     const status = data.status;
 
+    // SDK 模式输出
+    this.output('status', {
+      status: status as string,
+      iteration,
+      indentLevel,
+      error: data.error
+    });
+
+    if (this.sdkOutputHandler) {
+      return;
+    }
+
+    // 普通模式输出
     switch (status) {
       case GUIAgentStatus.RUNNING:
         console.log(`${indent}${colors.info(`${icons.loading} Step ${iteration}: Running...`)}`);
@@ -326,8 +427,10 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     // Start running agent
     data.status = GUIAgentStatus.RUNNING;
     data.systemPrompt = this.systemPrompt;
-    console.log(`${colors.primaryBright(`${icons.rocket} GUI Agent started`)}`);
-    console.log('');
+    this.output('action', {});
+    if (!this.sdkOutputHandler) {
+      console.log('');
+    }
     await this.onData?.({ ...data, conversations: [] });
 
     try {
@@ -712,7 +815,10 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
       // Output error immediately if task failed
       if (finalStatus === GUIAgentStatus.ERROR && finalError) {
-        console.log(`\n${colors.error('✖')} ${finalError}\n`);
+        this.output('error', { error: finalError });
+        if (!this.sdkOutputHandler) {
+          console.log(`\n${colors.error('✖')} ${finalError}\n`);
+        }
       }
 
       // Call onData callback if set

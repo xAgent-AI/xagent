@@ -17,7 +17,7 @@ export * from './agent/index.js';
 export type { RemoteVlmCaller } from './agent/gui-agent.js';
 
 import { ComputerOperator, type ComputerOperatorOptions } from './operator/computer-operator.js';
-import { GUIAgent, type GUIAgentConfig, type GUIAgentData, type Conversation, GUIAgentStatus } from './agent/gui-agent.js';
+import { GUIAgent, type GUIAgentConfig, type GUIAgentData, type Conversation, GUIAgentStatus, type GUIAgentOutput } from './agent/gui-agent.js';
 import type { Operator } from './operator/base-operator.js';
 import type { RemoteVlmCaller } from './agent/gui-agent.js';
 import { getCancellationManager } from '../cancellation.js';
@@ -46,6 +46,11 @@ export interface GUISubAgentConfig {
   loopIntervalInMs?: number;
   maxLoopCount?: number;
   showAIDebugInfo?: boolean;
+  /**
+   * SDK mode output handler
+   * If provided, GUI Agent will output in SDK format instead of console.log
+   */
+  sdkOutputHandler?: (output: GUIAgentOutput) => void;
 }
 
 /**

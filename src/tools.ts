@@ -1042,7 +1042,9 @@ export class TaskTool implements Tool {
           mode,
           agentManager,
           toolRegistry,
-          aiClient
+          aiClient,
+          config,
+          1
         );
       }
       
@@ -1062,7 +1064,8 @@ export class TaskTool implements Tool {
         aiClient,
         config,
         this.isSdkMode,
-        this.sdkOutputAdapter
+        this.sdkOutputAdapter,
+        1
       );
       
       return result;
@@ -1161,7 +1164,9 @@ export class TaskTool implements Tool {
     mode: ExecutionMode,
     config: any,
     indentLevel: number = 1,
-    remoteAIClient?: any
+    remoteAIClient?: any,
+    isSdkMode: boolean = false,
+    sdkOutputAdapter: any = null
   ): Promise<{ success: boolean; cancelled?: boolean; message: string; result?: any }> {
     const indent = '  '.repeat(indentLevel);
 
@@ -1394,7 +1399,9 @@ export class TaskTool implements Tool {
         mode,
         config,
         indentLevel,
-        remoteAIClient
+        remoteAIClient,
+        isSdkMode,
+        sdkOutputAdapter
       );
     }
 
@@ -1713,6 +1720,7 @@ export class TaskTool implements Tool {
     agentManager: any,
     toolRegistry: any,
     aiClient: any,
+    config: any,
     indentLevel: number = 1
   ): Promise<{ success: boolean; message: string; results: any[]; errors: any[] }> {
     const indent = '  '.repeat(indentLevel);
@@ -1771,7 +1779,17 @@ export class TaskTool implements Tool {
     };
     cancellationManager.on('cancelled', cancelHandler);
 
-    console.log(`\n${indent}${colors.accent('◆')} ${colors.primaryBright('Parallel Agents')}: ${agents.length} running...`);
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputSystem('parallel_start', {
+        agents: agents.map(a => ({
+          type: a.subagent_type,
+          description: a.description
+        })),
+        count: agents.length
+      });
+    } else {
+      console.log(`\n${indent}${colors.accent('◆')} ${colors.primaryBright('Parallel Agents')}: ${agents.length} running...`);
+    }
 
     const startTime = Date.now();
 
@@ -1797,6 +1815,9 @@ export class TaskTool implements Tool {
           agentManager,
           toolRegistry,
           aiClient,
+          config,
+          this.isSdkMode,
+          this.sdkOutputAdapter,
           indentLevel + 1
         );
         
@@ -1823,15 +1844,28 @@ export class TaskTool implements Tool {
     const successfulAgents = results.filter(r => r.success);
     const failedAgents = results.filter(r => !r.success);
     
-    console.log(`${indent}${colors.success('✔')} Parallel task completed in ${colors.textMuted(duration + 'ms')}`);
-    console.log(`${indent}${colors.info('ℹ')} Success: ${successfulAgents.length}/${agents.length} agents\n`);
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputSystem('parallel_complete', {
+        successfulCount: successfulAgents.length,
+        failedCount: failedAgents.length,
+        totalCount: agents.length,
+        duration,
+        failedAgents: failedAgents.map(f => ({
+          agent: f.agent,
+          error: f.error
+        }))
+      });
+    } else {
+      console.log(`${indent}${colors.success('✔')} Parallel task completed in ${colors.textMuted(duration + 'ms')}`);
+      console.log(`${indent}${colors.info('ℹ')} Success: ${successfulAgents.length}/${agents.length} agents\n`);
 
-    if (failedAgents.length > 0) {
-      console.log(`${indent}${colors.error('✖')} Failed agents:`);
-      for (const failed of failedAgents) {
-        console.log(`${indentNext}  ${colors.error('•')} ${failed.agent}: ${failed.error}`);
+      if (failedAgents.length > 0) {
+        console.log(`${indent}${colors.error('✖')} Failed agents:`);
+        for (const failed of failedAgents) {
+          console.log(`${indentNext}  ${colors.error('•')} ${failed.agent}: ${failed.error}`);
+        }
+        console.log('');
       }
-      console.log('');
     }
 
     // Cleanup
@@ -2613,10 +2647,25 @@ export class ToolRegistry {
   private tools: Map<string, Tool> = new Map();
   private todoWriteTool: TodoWriteTool;
   private backgroundTasks: Map<string, { process: any; startTime: number; output: string[] }> = new Map();
+  private _isSdkMode: boolean = false;
+  private _sdkOutputAdapter: any = null;
 
   constructor() {
     this.todoWriteTool = new TodoWriteTool();
     this.registerDefaultTools();
+  }
+
+  public setSdkMode(enabled: boolean, adapter: any = null): void {
+    this._isSdkMode = enabled;
+    this._sdkOutputAdapter = adapter;
+  }
+
+  public get isSdkMode(): boolean {
+    return this._isSdkMode && this._sdkOutputAdapter !== null;
+  }
+
+  public get sdkOutputAdapter(): any {
+    return this._sdkOutputAdapter;
   }
 
   private registerDefaultTools(): void {
@@ -3287,7 +3336,7 @@ export class ToolRegistry {
 
     // Check if this is an MCP tool (format: serverName__toolName)
     if (toolName.includes('__') && allMcpTools.has(toolName)) {
-      return await this.executeMCPTool(toolName, params, executionMode, indent);
+      return await this.executeMCPTool(toolName, params, executionMode, indent, this.isSdkMode, this.sdkOutputAdapter);
     }
 
     // Try to find MCP tool with just the tool name (try each server)
@@ -3300,7 +3349,7 @@ export class ToolRegistry {
         fullName.substring(firstUnderscoreIndex + 2)
       ];
       if (actualToolName === toolName) {
-        return await this.executeMCPTool(fullName, params, executionMode, indent);
+        return await this.executeMCPTool(fullName, params, executionMode, indent, this.isSdkMode, this.sdkOutputAdapter);
       }
     }
 
@@ -3349,9 +3398,17 @@ export class ToolRegistry {
       const authConfig = configManager.getAuthConfig();
       const isRemoteMode = authConfig.type === AuthType.OAUTH_XAGENT;
       if (isRemoteMode && toolName === 'InvokeSkill') {
-        console.log('');
-        console.log(`${indent}${colors.success(`✅ [Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`)}`);
-        console.log('');
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputSystem('approval', {
+            tool: toolName,
+            decision: 'auto_approved',
+            reason: 'remote_mode_skill'
+          });
+        } else {
+          console.log('');
+          console.log(`${indent}${colors.success(`✅ [Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`)}`);
+          console.log('');
+        }
         return await cancellationManager.withCancellation(
           tool.execute(params, executionMode),
           `tool-${toolName}`
@@ -3372,11 +3429,20 @@ export class ToolRegistry {
       // Decide whether to execute based on approval result
       if (result.decision === 'approved') {
         // Whitelist or AI approval passed, execute directly
-        console.log('');
-        console.log(`${indent}${colors.success(`✅ [Smart Mode] Tool '${toolName}' passed approval, executing directly`)}`);
-        console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
-        console.log(`${indent}${colors.textDim(`  Latency: ${result.latency}ms`)}`);
-        console.log('');
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputSystem('approval', {
+            tool: toolName,
+            decision: 'approved',
+            detectionMethod: result.detectionMethod,
+            latency: result.latency
+          });
+        } else {
+          console.log('');
+          console.log(`${indent}${colors.success(`✅ [Smart Mode] Tool '${toolName}' passed approval, executing directly`)}`);
+          console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
+          console.log(`${indent}${colors.textDim(`  Latency: ${result.latency}ms`)}`);
+          console.log('');
+        }
         return await cancellationManager.withCancellation(
           tool.execute(params, executionMode),
           `tool-${toolName}`
@@ -3386,25 +3452,47 @@ export class ToolRegistry {
         const confirmed = await approvalEngine.requestConfirmation(result);
 
         if (confirmed) {
-          console.log('');
-          console.log(`${indent}${colors.success(`✅ [Smart Mode] User confirmed execution of tool '${toolName}'`)}`);
-          console.log('');
+          if (this.isSdkMode && this.sdkOutputAdapter) {
+            this.sdkOutputAdapter.outputSystem('approval', {
+              tool: toolName,
+              decision: 'user_confirmed'
+            });
+          } else {
+            console.log('');
+            console.log(`${indent}${colors.success(`✅ [Smart Mode] User confirmed execution of tool '${toolName}'`)}`);
+            console.log('');
+          }
           return await cancellationManager.withCancellation(
             tool.execute(params, executionMode),
             `tool-${toolName}`
           );
         } else {
-          console.log('');
-          console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled execution of tool '${toolName}'`)}`);
-          console.log('');
+          if (this.isSdkMode && this.sdkOutputAdapter) {
+            this.sdkOutputAdapter.outputSystem('approval', {
+              tool: toolName,
+              decision: 'user_cancelled'
+            });
+          } else {
+            console.log('');
+            console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled execution of tool '${toolName}'`)}`);
+            console.log('');
+          }
           throw new Error(`Tool execution cancelled by user: ${toolName}`);
         }
       } else {
         // Rejected execution
-        console.log('');
-        console.log(`${indent}${colors.error(`❌ [Smart Mode] Tool '${toolName}' execution rejected`)}`);
-        console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
-        console.log('');
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputSystem('approval', {
+            tool: toolName,
+            decision: 'rejected',
+            reason: result.description
+          });
+        } else {
+          console.log('');
+          console.log(`${indent}${colors.error(`❌ [Smart Mode] Tool '${toolName}' execution rejected`)}`);
+          console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
+          console.log('');
+        }
         throw new Error(`Tool execution rejected: ${toolName}`);
       }
     }
@@ -3419,7 +3507,7 @@ export class ToolRegistry {
   /**
    * Execute an MCP tool call
    */
-  private async executeMCPTool(toolName: string, params: any, executionMode: ExecutionMode, indent: string = ''): Promise<any> {
+  private async executeMCPTool(toolName: string, params: any, executionMode: ExecutionMode, indent: string = '', isSdkMode: boolean = false, sdkOutputAdapter: any = null): Promise<any> {
     const { getMCPManager } = await import('./mcp.js');
     const mcpManager = getMCPManager();
     const cancellationManager = getCancellationManager();
@@ -3434,8 +3522,16 @@ export class ToolRegistry {
     const serverTools = server?.getToolNames() || [];
     
     // Display tool call info
-    console.log('');
-    console.log(`${indent}${colors.warning(`${icons.tool} MCP Tool Call: ${serverName}::${actualToolName}`)}`);
+    if (isSdkMode && sdkOutputAdapter) {
+      sdkOutputAdapter.outputSystem('mcp_tool_call', {
+        server: serverName,
+        tool: actualToolName,
+        status: 'calling'
+      });
+    } else {
+      console.log('');
+      console.log(`${indent}${colors.warning(`${icons.tool} MCP Tool Call: ${serverName}::${actualToolName}`)}`);
+    }
 
     // Smart approval mode for MCP tools
     if (executionMode === ExecutionMode.SMART) {
@@ -3448,7 +3544,15 @@ export class ToolRegistry {
 
       // Remote mode: remote LLM has already approved the tool, auto-approve
       if (isRemoteMode) {
-        console.log(`${indent}${colors.success(`✅ [Smart Mode] Remote mode: MCP tool '${serverName}::${actualToolName}' auto-approved`)}`);
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputSystem('approval', {
+            tool: `MCP[${serverName}]::${actualToolName}`,
+            decision: 'auto_approved',
+            reason: 'remote_mode'
+          });
+        } else {
+          console.log(`${indent}${colors.success(`✅ [Smart Mode] Remote mode: MCP tool '${serverName}::${actualToolName}' auto-approved`)}`);
+        }
       } else {
         const approvalEngine = getSmartApprovalEngine(debugMode);
 
@@ -3460,17 +3564,41 @@ export class ToolRegistry {
         });
 
         if (result.decision === 'approved') {
-          console.log(`${indent}${colors.success(`✅ [Smart Mode] MCP tool '${serverName}::${actualToolName}' passed approval`)}`);
-          console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
+          if (isSdkMode && sdkOutputAdapter) {
+            sdkOutputAdapter.outputSystem('approval', {
+              tool: `MCP[${serverName}]::${actualToolName}`,
+              decision: 'approved',
+              detectionMethod: result.detectionMethod,
+              latency: result.latency
+            });
+          } else {
+            console.log(`${indent}${colors.success(`✅ [Smart Mode] MCP tool '${serverName}::${actualToolName}' passed approval`)}`);
+            console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
+          }
         } else if (result.decision === 'requires_confirmation') {
           const confirmed = await approvalEngine.requestConfirmation(result);
           if (!confirmed) {
-            console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled MCP tool execution`)}`);
+            if (isSdkMode && sdkOutputAdapter) {
+              sdkOutputAdapter.outputSystem('approval', {
+                tool: `MCP[${serverName}]::${actualToolName}`,
+                decision: 'user_cancelled'
+              });
+            } else {
+              console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled MCP tool execution`)}`);
+            }
             throw new Error(`Tool execution cancelled by user: ${toolName}`);
           }
         } else {
-          console.log(`${indent}${colors.error(`❌ [Smart Mode] MCP tool execution rejected`)}`);
-          console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
+          if (isSdkMode && sdkOutputAdapter) {
+            sdkOutputAdapter.outputSystem('approval', {
+              tool: `MCP[${serverName}]::${actualToolName}`,
+              decision: 'rejected',
+              reason: result.description
+            });
+          } else {
+            console.log(`${indent}${colors.error(`❌ [Smart Mode] MCP tool execution rejected`)}`);
+            console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
+          }
           throw new Error(`Tool execution rejected: ${toolName}`);
         }
       }

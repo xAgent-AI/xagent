@@ -201,6 +201,14 @@ export class InteractiveSession {
     this.isSdkMode = true;
     this.sdkOutputAdapter = adapter;
     adapter.setIndentLevel(this.indentLevel);
+    // Also enable SDK mode for tool registry (async to avoid circular deps)
+    this.initToolRegistrySdkMode(adapter);
+  }
+
+  private async initToolRegistrySdkMode(adapter: SdkOutputAdapter): Promise<void> {
+    const { getToolRegistry } = await import('./tools.js');
+    const toolRegistry = getToolRegistry();
+    toolRegistry.setSdkMode(true, adapter);
   }
 
   /**
@@ -1121,19 +1129,31 @@ export class InteractiveSession {
 
       const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
-      let frameIndex = 0;
+            let frameIndex = 0;
 
-  
+            let spinnerInterval: NodeJS.Timeout | null = null;
 
-      // Custom spinner: only icon rotates, text stays static
+      
 
-      const spinnerInterval = setInterval(() => {
+            // SDK mode: use structured output instead of spinner
 
-        process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
+            if (this.isSdkMode && this.sdkOutputAdapter) {
 
-        frameIndex = (frameIndex + 1) % frames.length;
+              this.output('thinking', 'compact', { content: 'Thinking... (Press ESC to cancel)', status: 'started' });
 
-      }, 120);
+            } else {
+
+              // Custom spinner: only icon rotates, text stays static
+
+              spinnerInterval = setInterval(() => {
+
+                process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
+
+                frameIndex = (frameIndex + 1) % frames.length;
+
+              }, 120);
+
+            }
 
   
 
@@ -1217,9 +1237,35 @@ export class InteractiveSession {
 
   
 
-        clearInterval(spinnerInterval);
+                if (this.isSdkMode && this.sdkOutputAdapter) {
 
-        process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r'); // Clear spinner line
+  
+
+                  this.output('thinking', 'compact', { content: 'Thinking... (Press ESC to cancel)', status: 'completed' });
+
+  
+
+                } else {
+
+  
+
+                  if (spinnerInterval) {
+
+  
+
+                    clearInterval(spinnerInterval);
+
+  
+
+                  }
+
+  
+
+                  process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r'); // Clear spinner line
+
+  
+
+                }
 
   
 
@@ -1315,11 +1361,23 @@ export class InteractiveSession {
 
         (this as any)._isOperationInProgress = false;
 
-      } catch (error: any) {
+            } catch (error: any) {
 
-        clearInterval(spinnerInterval);
+              if (this.isSdkMode && this.sdkOutputAdapter) {
 
-        process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
+                this.output('thinking', 'compact', { content: 'Thinking... (Press ESC to cancel)', status: 'completed' });
+
+              } else {
+
+                if (spinnerInterval) {
+
+                  clearInterval(spinnerInterval);
+
+                }
+
+                process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
+
+              }
 
   
 
@@ -1484,10 +1542,15 @@ export class InteractiveSession {
       // Operation completed successfully
       (this as any)._isOperationInProgress = false;
 
-    } catch (error: any) {
-      clearInterval(spinnerInterval);
-      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
-
+          } catch (error: any) {
+            if (this.isSdkMode && this.sdkOutputAdapter) {
+              this.output('thinking', 'compact', { content: 'Thinking... (Press ESC to cancel)', status: 'completed' });
+            } else {
+              if (spinnerInterval) {
+                clearInterval(spinnerInterval);
+              }
+              process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
+            }
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
 
@@ -1823,7 +1886,9 @@ export class InteractiveSession {
           return;
         }
 
-        if (!this.isSdkMode) {
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputToolError(tool, error);
+        } else {
           console.log('');
           console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
         }

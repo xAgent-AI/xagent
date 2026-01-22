@@ -41,13 +41,27 @@ export class SessionManager {
       for (const file of files) {
         if (file.endsWith('.json')) {
           const filePath = path.join(this.sessionsDir, file);
-          const content = await fs.readFile(filePath, 'utf-8');
-          const session: Session = JSON.parse(content);
-          this.sessions.set(session.id, session);
+          try {
+            const content = await fs.readFile(filePath, 'utf-8');
+            // Skip empty or invalid JSON files
+            if (!content || content.trim() === '') {
+              continue;
+            }
+            const session: Session = JSON.parse(content);
+            if (session && session.id) {
+              this.sessions.set(session.id, session);
+            }
+          } catch (parseError) {
+            // Skip files that can't be parsed (corrupted or empty)
+            console.warn(`Skipping invalid session file: ${file}`);
+          }
         }
       }
     } catch (error) {
-      console.error('Failed to load sessions:', error);
+      // Directory might not exist yet, which is fine
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.error('Failed to load sessions:', error);
+      }
     }
   }
 

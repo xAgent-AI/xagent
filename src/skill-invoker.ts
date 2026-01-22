@@ -889,47 +889,32 @@ class GenericSkillExecutor implements SkillExecutor {
       allFiles = [path.join(skillPath, 'SKILL.md')];
     }
 
-    // Separate markdown files and script files
-    const mdFiles = allFiles.filter(f => f.endsWith('.md'));
-    const scriptFiles = allFiles.filter(f => f.endsWith('.js') || f.endsWith('.py'));
-
-    // Sort: SKILL.md first, then other .md files, then scripts
-    mdFiles.sort((a, b) => {
-      if (a.endsWith('SKILL.md')) return -1;
-      if (b.endsWith('SKILL.md')) return 1;
-      return a.localeCompare(b);
-    });
-
+    // Step 1: Read SKILL.md first
+    const skillMdPathOnly = path.join(skillPath, 'SKILL.md');
     nextSteps.push({
       step: 1,
-      action: 'Explore skill directory and read documentation',
-      description: `List directory: ${skillPath}`,
-      reason: 'Discover available files and documentation'
+      action: 'Read SKILL.md to understand the skill workflow',
+      description: `Read: ${skillMdPathOnly}`,
+      reason: 'Understand the skill workflow and best practices from the main documentation'
     });
 
+    // Step 2: Explore skill directory and read reference files if needed (optional)
     nextSteps.push({
       step: 2,
-      action: 'Read SKILL.md and other documentation',
-      description: `Read: ${mdFiles.join(', ')}`,
-      reason: 'Understand the skill workflow and best practices'
+      action: 'Explore skill directory and read reference files (if needed)',
+      description: `Explore: ${skillPath}`,
+      reason: 'Discover available reference files and read them based on SKILL.md guidance'
     });
 
     nextSteps.push({
       step: 3,
-      action: 'Read relevant scripts if needed',
-      description: `Read: ${scriptFiles.slice(0, 3).join(', ')}`,
-      reason: 'Understand implementation details if documentation is insufficient'
+      action: 'Analyze documentation, verify data/content completeness, and design approach',
+      description: `For content creation: ensure all info/materials collected. For info retrieval: ensure all required data retrieved. Then design execution plan for: ${taskWorkspace}`,
+      reason: 'Review requirements, verify data/content completeness, fill gaps if needed, then plan execution based on the documentation'
     });
 
     nextSteps.push({
       step: 4,
-      action: 'Analyze documentation and design approach',
-      description: `Based on documentation, determine the best approach for: ${taskWorkspace}`,
-      reason: 'Plan your execution based on the documentation'
-    });
-
-    nextSteps.push({
-      step: 5,
       action: 'Execute your plan',
       description: 'Create workspace, write code, run scripts, verify output',
       reason: 'Execute the task using your own understanding'
@@ -937,24 +922,24 @@ class GenericSkillExecutor implements SkillExecutor {
 
     return `### Skill Execution\n\n` +
            `**Your task**: ${params.taskDescription}\n\n` +
-           `**Step 1**: Explore the skill directory to see what files are available\n` +
-           `  - Command: ListDirectory(path="${skillPath}")\n\n` +
-           `**Step 2**: Read documentation files (SKILL.md first, then other .md files)\n` +
-           mdFiles.map(f => `  - read_file: ${f}`).join('\n') + '\n\n' +
-           (scriptFiles.length > 0
-             ? `**Step 3**: Read relevant scripts if needed\n` +
-               scriptFiles.slice(0, 3).map(f => `  - read_file: ${f}`).join('\n') + '\n\n'
-             : '') +
+           `**Step 1**: Read SKILL.md to understand the skill workflow\n` +
+           `  - read_file: ${skillMdPathOnly}\n\n` +
+           `**Step 2**: Explore skill directory and read reference files (if needed)\n` +
+           `  - ListDirectory(path="${skillPath}")\n` +
+           `  - read_file relevant .md and script files as needed\n\n` +
            `Then analyze the documentation and create your own execution plan.\n\n` +
            `**Workspace**: \`${taskWorkspace}\`\n\n` +
            `**⚠️ Windows Path Execution**: Use absolute paths, NOT \`cd && command\`:\n` +
            `  - ✅ Correct: \`node "${taskWorkspace}/script.js"\`\n` +
            `  - ❌ Wrong: \`cd "${taskWorkspace}" && node script.js\` (fails in PowerShell 5.1)\n` +
            `  - ✅ Correct: \`python "${taskWorkspace}/script.py"\`\n\n` +
-           `**📦 Dependency Management**: REUSE existing libraries FIRST:\n` +
-           `  1. Use xagent/node_modules - check before installing anything\n` +
-           `  2. If module missing, install to: xagent/node_modules or xagent/skills/[skill-name]/\n` +
-           `  3. NEVER install in taskWorkspace - dependencies persist across calls\n\n` +
+           `**📦 Dependency Management**:\n` +
+           `  - BashTool automatically sets NODE_PATH when executing, scripts can use require() directly\n` +
+           `  - ✅ Correct: Bash(command="node script.js", cwd="${taskWorkspace}")\n` +
+           `  - ❌ Wrong: cd "${taskWorkspace}" && node script.js (loses NODE_PATH!)\n` +
+           `  - If script needs to run by user manually, pass NODE_PATH in command:\n` +
+           `    Windows: set NODE_PATH=xAgent/node_modules/path && node script.js\n` +
+           `    Linux/Mac: NODE_PATH=xAgent/node_modules/path node script.js\n\n` +
            `**🧹 Cleanup**: Delete all intermediate/temporary files when task completes:\n` +
            `  - Remove: all files generated during the task\n` +
            `  - Keep: Only the final output file (output.pptx/docx/xlsx/pdf)\n\n` +

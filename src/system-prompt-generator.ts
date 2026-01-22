@@ -52,11 +52,14 @@ export class SystemPromptGenerator {
 
     // Only add tool-related content if tools are available
     if (allAvailableTools.length > 0) {
-      const toolSchemas = this.getToolSchemas(allAvailableTools);
-      const hasInvokeSkillTool = localTools.some(tool => tool.name === 'InvokeSkill');
-      const skillInstructions = hasInvokeSkillTool ? await this.generateSkillInstructions() : '';
-      const toolUsageGuide = this.generateToolUsageGuide(toolSchemas, skillInstructions);
-      const decisionMakingGuide = this.generateDecisionMakingGuide(localTools);
+      // Pre-load skills for dynamic generation
+      const skillInvoker = getSkillInvoker();
+      await skillInvoker.initialize();
+      const availableSkills = await skillInvoker.listAvailableSkills();
+
+      const toolSchemas = this.getToolSchemas(allAvailableTools, availableSkills);
+      const toolUsageGuide = this.generateToolUsageGuide(toolSchemas);
+      const decisionMakingGuide = this.generateDecisionMakingGuide(localTools, availableSkills);
       const executionStrategy = this.generateExecutionStrategy();
 
 
@@ -106,11 +109,25 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
     return enhancedPrompt;
   }
 
-  private getToolSchemas(tools: any[]): ToolSchema[] {
-    return tools.map(tool => this.createToolSchema(tool));
+  private getToolSchemas(tools: any[], skills: SkillInfo[] = []): ToolSchema[] {
+    return tools.map(tool => this.createToolSchema(tool, skills));
   }
 
-  private createToolSchema(tool: any): ToolSchema {
+  //
+  // createToolSchema
+  //
+  // This method defines custom schemas for each tool, which OVERRIDES the description
+  // property defined in tools.ts (e.g., ReadTool.description, WriteTool.description).
+  //
+  // The tool.description from tools.ts is read but NOT directly used - instead, we use
+  // the schemas defined here. This allows for:
+  // 1. Dynamic content (like skills list in InvokeSkill)
+  // 2. Customized descriptions for better LLM understanding
+  // 3. Consistent formatting across all tools
+  //
+  // Only tools NOT in the schemas object will fall back to using tool.description.
+  //
+  private createToolSchema(tool: any, skills: SkillInfo[] = []): ToolSchema {
     const schemas: Record<string, ToolSchema> = {
       Read: {
         name: 'Read',
@@ -517,7 +534,41 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
           'Specify desired response language if needed',
           'Review agent results carefully'
         ]
-      }
+      },
+      InvokeSkill: (() => {
+        // Build skills list string from the provided skills, including description
+        const skillsList = skills && skills.length > 0
+          ? skills.map(skill => `- ${skill.name}: ${skill.description}`).join('\n')
+          : 'No skills available';
+
+        return {
+          name: 'InvokeSkill',
+          description: 'Invoke a specialized skill to get execution guidance for complex tasks. The skill will analyze your request and provide a step-by-step execution plan - you must follow these steps to complete the task.\n\n**Workflow**: Invoke skill → Receive guidance with nextSteps → Execute each step using appropriate tools → Complete the task.\n\n**Available Skills**:\n' + skillsList,
+          parameters: {
+            skillId: {
+              type: 'string',
+              description: 'The skill identifier (e.g., "docx", "pdf", "pptx", "frontend-design")',
+              required: true
+            },
+            taskDescription: {
+              type: 'string',
+              description: 'Detailed description of what to accomplish',
+              required: true
+            }
+          },
+          usage: 'Use when facing complex domain-specific tasks. The skill provides guidance - you must execute the steps yourself.',
+          examples: skills && skills.length > 0
+            ? skills.slice(0, 3).map(skill =>
+                `InvokeSkill(skillId="${skill.id}", taskDescription="...")`
+              )
+            : [],
+          bestPractices: [
+            'Invoke skill to get step-by-step execution guidance',
+            'Follow the nextSteps provided by the skill in order',
+            'Use appropriate tools (Read/Write/Run) to execute each step'
+          ]
+        };
+      })()
     };
 
     // Fallback for unknown tools (including MCP tools)
@@ -624,7 +675,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
     return output;
   }
 
-  private generateDecisionMakingGuide(availableTools: any[]): string {
+  private generateDecisionMakingGuide(availableTools: any[], skills: SkillInfo[] = []): string {
     // Tool name to short description mapping
     const toolDescriptions: Record<string, string> = {
       'Read': 'When you need to understand existing code, configuration, or documentation',
@@ -646,7 +697,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       'exit_plan_mode': 'When you have completed planning and are ready to execute',
       'xml_escape': 'When you need to escape special characters in XML/HTML files',
       'image_read': 'When you need to analyze or read image files',
-      'InvokeSkill': 'When you need to use specialized skills for domain tasks (see Available Skills section for details)'
+      'InvokeSkill': 'When you need to use specialized skills for domain tasks (see InvokeSkill tool description for available skills)'
     };
 
     // Generate based on available tools "When to Use Tools" 部分
@@ -742,46 +793,6 @@ When a user asks you to:
 - Provide clear summaries of what you've done
 - Highlight any assumptions you've made
 - Ask for confirmation on destructive operations`;
-  }
-
-  /**
-   * Dynamically generate skill instructions from loaded skills
-   */
-  private async generateSkillInstructions(): Promise<string> {
-    try {
-      const skillInvoker = getSkillInvoker();
-      await skillInvoker.initialize();
-      const skills = await skillInvoker.listAvailableSkills();
-
-      if (skills.length === 0) {
-        return '';
-      }
-
-      // Group skills by category
-      const skillsByCategory = new Map<string, SkillInfo[]>();
-      for (const skill of skills) {
-        const existing = skillsByCategory.get(skill.category) || [];
-        existing.push(skill);
-        skillsByCategory.set(skill.category, existing);
-      }
-
-      let guide = '## Available Skills\n\n';
-      guide += 'When users request tasks matching these domains, use the "InvokeSkill" tool to access specialized capabilities:\n\n';
-
-      for (const [category, categorySkills] of skillsByCategory) {
-        guide += `### ${category}\n`;
-        for (const skill of categorySkills) {
-          guide += `- **${skill.name}**: ${skill.description}\n`;
-          guide += `  → Invoke: InvokeSkill(skillId="${skill.id}", taskDescription="...")\n`;
-        }
-        guide += '\n';
-      }
-
-      return guide;
-    } catch (error) {
-      // If skills can't be loaded, return empty string
-      return '';
-    }
   }
 
   getToolDefinitions(): any[] {

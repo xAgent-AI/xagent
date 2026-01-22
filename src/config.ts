@@ -255,7 +255,22 @@ export class ConfigManager {
   }
 
   getWorkspacePath(): string | undefined {
-    return this.settings.workspacePath;
+    if (this.settings.workspacePath) {
+      return this.settings.workspacePath;
+    }
+    // Auto-detect: ~/.xagent/workspace
+    const detectedPath = path.join(os.homedir(), '.xagent', 'workspace');
+    
+    // Ensure directory exists
+    try {
+      if (!fs.existsSync(detectedPath)) {
+        fs.mkdirSync(detectedPath, { recursive: true });
+      }
+    } catch {
+      // Ignore errors - caller will handle missing path
+    }
+    
+    return detectedPath;
   }
 
   setWorkspacePath(path: string): void {

@@ -196,3 +196,73 @@ export interface CompressionStats {
   originalMessagesTotal: number;
   compressedMessagesTotal: number;
 }
+
+// ============================================================================
+// SDK Message Types (for programmatic access)
+// ============================================================================
+
+/**
+ * SDK input message from client
+ */
+export interface SdkInputMessage {
+  type: 'user';
+  content: string;
+  uuid?: string;
+  parent_tool_use_id?: string | null;
+}
+
+/**
+ * SDK control request message
+ */
+export interface SdkControlRequest {
+  type: 'control_request';
+  request_id: string;
+  request: {
+    subtype: 'interrupt' | 'initialize' | 'set_permission_mode' | 'set_model';
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * Check if a string is a JSON message
+ */
+export function isSdkMessage(input: string): boolean {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith('{')) {
+    return false;
+  }
+  
+  try {
+    const parsed = JSON.parse(trimmed);
+    // Check for known message types
+    return (
+      parsed.type === 'user' ||
+      parsed.type === 'control_request'
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Try to parse SDK message from string
+ */
+export function parseSdkMessage(input: string): SdkInputMessage | SdkControlRequest | null {
+  const trimmed = input.trim();
+  
+  try {
+    const parsed = JSON.parse(trimmed);
+    
+    if (parsed.type === 'user') {
+      return parsed as SdkInputMessage;
+    }
+    
+    if (parsed.type === 'control_request') {
+      return parsed as SdkControlRequest;
+    }
+    
+    return null;
+  } catch {
+    return null;
+  }
+}

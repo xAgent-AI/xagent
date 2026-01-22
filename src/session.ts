@@ -367,6 +367,21 @@ export class InteractiveSession {
       } else if (!authConfig.apiKey) {
         // No API key configured, need to set up authentication
         spinner.stop();
+        
+        // In SDK mode, we cannot interactively set up authentication
+        if (this.isSdkMode) {
+          spinner.fail(colors.error('Authentication required for SDK mode'));
+          console.log('');
+          console.log(colors.info('Please configure authentication before using SDK mode.'));
+          console.log(colors.textMuted('Run "xagent auth" to configure authentication.'));
+          console.log('');
+          
+          // Output error through SDK adapter if available
+          this.sdkOutputAdapter?.outputError('Authentication required. Please configure with "xagent auth" command.');
+          
+          throw new Error('Authentication required for SDK mode');
+        }
+        
         await this.setupAuthentication();
         authConfig = this.configManager.getAuthConfig();
 
@@ -772,6 +787,52 @@ export class InteractiveSession {
       return;
     }
 
+    // Check for SDK JSON message format
+    if (this.isSdkMode) {
+      const { isSdkMessage, parseSdkMessage } = await import('./types.js');
+      
+      // Debug: Log raw input
+      if (trimmedInput.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(trimmedInput);
+          this.sdkOutputAdapter?.outputSystem('debug', { 
+            message: 'Received JSON input',
+            parsedType: parsed.type,
+            contentLength: String(parsed.content || '').length
+          });
+        } catch (e) {
+          this.sdkOutputAdapter?.outputSystem('debug', { 
+            message: 'Invalid JSON input',
+            error: String(e)
+          });
+        }
+      }
+      
+      if (isSdkMessage(trimmedInput)) {
+        const sdkMessage = parseSdkMessage(trimmedInput);
+        
+        if (sdkMessage) {
+          if (sdkMessage.type === 'control_request') {
+            // Handle control request
+            await this.handleControlRequest(sdkMessage);
+            return;
+          } else if (sdkMessage.type === 'user') {
+            // Handle user message from SDK
+            await this.processUserMessage(sdkMessage.content);
+            return;
+          }
+        }
+      } else {
+        // Not a JSON SDK message, treat as regular text
+        this.sdkOutputAdapter?.outputSystem('debug', { 
+          message: 'Not recognized as SDK message, treating as text',
+          inputPreview: trimmedInput.substring(0, 50)
+        });
+        await this.processUserMessage(trimmedInput);
+        return;
+      }
+    }
+
     if (trimmedInput.startsWith('/')) {
       const handled = await this.slashCommandHandler.handleCommand(trimmedInput);
       if (handled) {
@@ -789,6 +850,47 @@ export class InteractiveSession {
     }
 
     await this.processUserMessage(trimmedInput);
+  }
+
+  /**
+   * Handle SDK control requests
+   */
+  private async handleControlRequest(request: any): Promise<void> {
+    const { request_id, request: req } = request;
+    
+    switch (req.subtype) {
+      case 'interrupt':
+        this.sdkOutputAdapter?.outputSystem('interrupt', { request_id });
+        (this as any)._isShuttingDown = true;
+        process.exit(0);
+        break;
+        
+      case 'set_permission_mode':
+        const { ExecutionMode } = await import('./types.js');
+        const modeMap: Record<string, ExecutionMode> = {
+          'default': ExecutionMode.DEFAULT,
+          'acceptEdits': ExecutionMode.ACCEPT_EDITS,
+          'plan': ExecutionMode.PLAN,
+          'bypassPermissions': ExecutionMode.YOLO,
+        };
+        const mode = modeMap[req.mode] || ExecutionMode.SMART;
+        this.executionMode = mode;
+        this.sdkOutputAdapter?.outputSystem('permission_mode_changed', { 
+          request_id, 
+          mode: req.mode 
+        });
+        break;
+        
+      case 'set_model':
+        this.sdkOutputAdapter?.outputSystem('model_changed', { 
+          request_id, 
+          model: req.model 
+        });
+        break;
+        
+      default:
+        this.sdkOutputAdapter?.outputWarning(`Unknown control request: ${req.subtype}`);
+    }
   }
 
   private async handleSubAgentCommand(input: string): Promise<void> {

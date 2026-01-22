@@ -1,4 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
+import https from 'https';
 import { AuthConfig } from './types.js';
 
 // Message content block type for Anthropic format
@@ -265,7 +266,8 @@ export class AIClient {
     this.client = axios.create({
       baseURL: authConfig.baseUrl,
       headers,
-      timeout: 240000
+      timeout: 240000,
+      httpsAgent: new https.Agent({ rejectUnauthorized: false })
     });
   }
 

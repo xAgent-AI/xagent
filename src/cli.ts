@@ -2,6 +2,8 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
+import https from 'https';
+import axios from 'axios';
 import { startInteractiveSession } from './session.js';
 import { getConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
@@ -386,20 +388,17 @@ program
 
       if (!isLocalMode && authConfig.baseUrl) {
         const remoteBaseUrl = `${authConfig.baseUrl}/api/agent/vlm`;
+        const httpsAgent = new https.Agent({ rejectUnauthorized: false });
         remoteVlmCaller = async (messages: any[], _systemPrompt: string): Promise<string> => {
-          const response = await fetch(remoteBaseUrl, {
-            method: 'POST',
+          const response = await axios.post(remoteBaseUrl, { messages }, {
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${authConfig.apiKey || ''}`,
+              'Authorization': `Bearer ${authConfig.apiKey || ''}`
             },
-            body: JSON.stringify({ messages }),
+            httpsAgent,
+            timeout: 120000
           });
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Remote VLM error: ${response.status} - ${errorText}`);
-          }
-          const result = await response.json() as { response?: string; content?: string; message?: string };
+          const result = response.data as { response?: string; content?: string; message?: string };
           return result.response || result.content || result.message || '';
         };
       }

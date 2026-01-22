@@ -1,4 +1,6 @@
 import { EventEmitter } from 'events';
+import https from 'https';
+import axios from 'axios';
 import { ChatMessage, SessionOutput, ToolCall } from './types.js';
 import { ChatCompletionResponse, ChatCompletionOptions, Message } from './ai-client.js';
 import { getLogger } from './logger.js';
@@ -109,14 +111,19 @@ export class RemoteAIClient extends EventEmitter {
       }
     }
 
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+    
+    console.log('[DEBUG] RemoteAIClient sending to:', url);
+    console.log('[DEBUG] Token prefix:', this.authToken.substring(0, 20) + '...');
+
     try {
-      const response = await fetch(url, {
-        method: 'POST',
+      const response = await axios.post(url, requestBody, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.authToken}`
         },
-        body: JSON.stringify(requestBody)
+        httpsAgent,
+        timeout: 120000
       });
 
       // Check for 401 and throw TokenInvalidError
@@ -124,16 +131,8 @@ export class RemoteAIClient extends EventEmitter {
         throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
       }
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        if (this.showAIDebugInfo) {
-          console.log('[RemoteAIClient] Error response:', errorText);
-        }
-        const errorData = JSON.parse(errorText) as { error?: string };
-        throw new Error(errorData.error || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json() as RemoteChatResponse;
+      const data = response.data as RemoteChatResponse;
+      console.log('[DEBUG] RemoteAIClient response received, status:', response.status);
       if (this.showAIDebugInfo) {
         console.log('[RemoteAIClient] Received response, content length:', data.content?.length || 0);
         console.log('[RemoteAIClient] toolCalls count:', data.toolCalls?.length || 0);
@@ -146,9 +145,12 @@ export class RemoteAIClient extends EventEmitter {
         timestamp: Date.now()
       };
 
-    } catch (error) {
+    } catch (error: any) {
       if (this.showAIDebugInfo) {
-        console.log('[RemoteAIClient] Request exception:', error);
+        console.log('[RemoteAIClient] Request exception:', error.message);
+      }
+      if (error.response?.status === 401) {
+        throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
       }
       throw error;
     }
@@ -387,37 +389,26 @@ export class RemoteAIClient extends EventEmitter {
     }
 
     try {
-      const response = await fetch(this.vlmApi, {
-        method: 'POST',
+      const response = await axios.post(this.vlmApi, requestBody, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.authToken}`
         },
-        body: JSON.stringify(requestBody),
-        signal: abortSignal
+        signal: abortSignal,
+        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        timeout: 120000
       });
-
-      // Check for 401 and throw TokenInvalidError
-      if (response.status === 401) {
-        throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
-      }
 
       if (this.showAIDebugInfo) {
         console.log('[RemoteAIClient] VLM response status:', response.status);
       }
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        const errorData = JSON.parse(errorText) as { error?: string };
-        throw new Error(errorData.error || `HTTP ${response.status}`);
-      }
-
-      const data = await response.json() as RemoteVLMResponse;
+      const data = response.data as RemoteVLMResponse;
       return data.content || '';
 
-    } catch (error) {
+    } catch (error: any) {
       if (this.showAIDebugInfo) {
-        console.log('[RemoteAIClient] VLM request exception:', error);
+        console.log('[RemoteAIClient] VLM request exception:', error.message);
       }
       throw error;
     }
@@ -430,15 +421,12 @@ export class RemoteAIClient extends EventEmitter {
   async validateToken(): Promise<boolean> {
     try {
       const url = `${this.webBaseUrl}/api/auth/me`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${this.authToken}`,
-          'Content-Type': 'application/json'
-        }
+      const response = await axios.get(url, {
+        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        timeout: 10000
       });
-      return response.ok;
-    } catch (error) {
+      return response.status === 200;
+    } catch {
       return false;
     }
   }
@@ -460,98 +448,96 @@ export class RemoteAIClient extends EventEmitter {
     const errorData = JSON.parse(errorText) as { error?: string };
     throw new Error(errorData.error || `HTTP ${response.status}`);
   }
-  async getConversations(): Promise<any[]> {
-    const url = `${this.agentApi}/conversations`;
-    if (this.showAIDebugInfo) {
-      console.log('[RemoteAIClient] Getting conversation list:', url);
-    }
-
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${this.authToken}`
+    async getConversations(): Promise<any[]> {
+      const url = `${this.agentApi}/conversations`;
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] Getting conversation list:', url);
       }
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to get conversation list');
-    }
-
-    const data = await response.json() as { conversations?: any[] };
-    return data.conversations || [];
-  }
-
-  /**
-   * Get conversation details
-   */
-  async getConversation(conversationId: string): Promise<any> {
-    const url = `${this.agentApi}/conversations/${conversationId}`;
-    if (this.showAIDebugInfo) {
-      console.log('[RemoteAIClient] Getting conversation details:', url);
-    }
-
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${this.authToken}`
+  
+      const response = await axios.get(url, {
+        headers: {
+          'Authorization': `Bearer ${this.authToken}`
+        },
+        httpsAgent: new https.Agent({ rejectUnauthorized: false })
+      });
+  
+      if (response.status !== 200) {
+        throw new Error('Failed to get conversation list');
       }
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to get conversation details');
+  
+      const data = response.data as { conversations?: any[] };
+      return data.conversations || [];
     }
-
-    const data = await response.json() as { conversation?: any };
-    return data.conversation;
-  }
-
-  /**
-   * Create new conversation
-   */
-  async createConversation(title?: string): Promise<any> {
-    const url = `${this.agentApi}/conversations`;
-    if (this.showAIDebugInfo) {
-      console.log('[RemoteAIClient] Creating conversation:', url);
-    }
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.authToken}`
-      },
-      body: JSON.stringify({ title })
-    });
-
-    if (!response.ok) {
-      throw new Error('Failed to create conversation');
-    }
-
-    const data = await response.json() as { conversation?: any };
-    return data.conversation;
-  }
-
-  /**
-   * Delete conversation
-   */
-  async deleteConversation(conversationId: string): Promise<void> {
-    const url = `${this.agentApi}/conversations/${conversationId}`;
-    if (this.showAIDebugInfo) {
-      console.log('[RemoteAIClient] Deleting conversation:', url);
-    }
-
-    const response = await fetch(url, {
-      method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${this.authToken}`
+  
+    /**
+     * Get conversation details
+     */
+    async getConversation(conversationId: string): Promise<any> {
+      const url = `${this.agentApi}/conversations/${conversationId}`;
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] Getting conversation details:', url);
       }
-    });
-
-        if (!response.ok) {
-
-          throw new Error('Failed to delete conversation');
-
-        }
-
+  
+      const response = await axios.get(url, {
+        headers: {
+          'Authorization': `Bearer ${this.authToken}`
+        },
+        httpsAgent: new https.Agent({ rejectUnauthorized: false })
+      });
+  
+      if (response.status !== 200) {
+        throw new Error('Failed to get conversation details');
       }
+  
+      const data = response.data as { conversation?: any };
+      return data.conversation;
+    }
+  
+    /**
+     * Create new conversation
+     */
+    async createConversation(title?: string): Promise<any> {
+      const url = `${this.agentApi}/conversations`;
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] Creating conversation:', url);
+      }
+  
+      const response = await axios.post(url, { title }, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.authToken}`
+        },
+        httpsAgent: new https.Agent({ rejectUnauthorized: false })
+      });
+  
+      if (response.status !== 200) {
+        throw new Error('Failed to create conversation');
+      }
+  
+      const data = response.data as { conversation?: any };
+      return data.conversation;
+    }
+  
+    /**
+     * Delete conversation
+     */
+    async deleteConversation(conversationId: string): Promise<void> {
+      const url = `${this.agentApi}/conversations/${conversationId}`;
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] Deleting conversation:', url);
+      }
+  
+      const response = await axios.delete(url, {
+        headers: {
+          'Authorization': `Bearer ${this.authToken}`
+        },
+        httpsAgent: new https.Agent({ rejectUnauthorized: false })
+      });
+  
+      if (!response.status.toString().startsWith('2')) {
+        throw new Error('Failed to delete conversation');
+      }
+    }
 
     }
 

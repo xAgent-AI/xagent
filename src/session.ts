@@ -1,5 +1,7 @@
 import readline from 'readline';
 import chalk from 'chalk';
+import https from 'https';
+import axios from 'axios';
 import ora from 'ora';
 import inquirer from 'inquirer';
 import { ExecutionMode, ChatMessage, ToolCall, AuthType } from './types.js';
@@ -198,15 +200,14 @@ export class InteractiveSession {
       logger.debug('[SESSION] 调用 configManager.load()...');
       await this.configManager.load();
 
-      logger.debug('[SESSION] 调用 configManager.getAuthConfig()...');
+      console.log('[DEBUG] Config loaded');
       let authConfig = this.configManager.getAuthConfig();
       const selectedAuthType = this.configManager.get('selectedAuthType');
 
-      logger.debug('[SESSION] getAuthConfig() 返回:');
-      logger.debug('  - apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
-      logger.debug('  - selectedAuthType:', String(selectedAuthType));
-      logger.debug('  - authConfig.type:', String(authConfig.type));
-      logger.debug('  - authConfig.baseUrl:', String(authConfig.baseUrl));
+      console.log('[DEBUG] authConfig.apiKey exists:', !!authConfig.apiKey);
+      console.log('[DEBUG] selectedAuthType:', selectedAuthType);
+      console.log('[DEBUG] AuthType.OAUTH_XAGENT:', AuthType.OAUTH_XAGENT);
+      console.log('[DEBUG] Will validate:', !!(authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT));
 
       // Only validate OAuth tokens, skip validation for third-party API keys
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
@@ -358,21 +359,33 @@ export class InteractiveSession {
    * Returns true if token is valid, false otherwise
    */
   private async validateToken(baseUrl: string, apiKey: string): Promise<boolean> {
+    console.log('[DEBUG] validateToken called with baseUrl:', baseUrl);
+    console.log('[DEBUG] apiKey exists:', apiKey ? 'yes' : 'no');
+    
     try {
       // For OAuth XAGENT auth, use /api/auth/me endpoint
       const url = `${baseUrl}/api/auth/me`;
+      const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
-      const response = await fetch(url, {
-        method: 'GET',
+      console.log('[DEBUG] Sending validation request to:', url);
+
+      const response = await axios.get(url, {
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json'
-        }
+        },
+        httpsAgent,
+        timeout: 10000
       });
 
-      return response.ok;
+      console.log('[DEBUG] Validation response status:', response.status);
+      return response.status === 200;
     } catch (error: any) {
       // Network error - log details but still consider token may be invalid
+      console.log('[DEBUG] Error:', error.message);
+      if (error.response) {
+        console.log('[DEBUG] Response status:', error.response.status);
+      }
       // For network errors, we still return false to trigger re-authentication
       // This ensures security but the user can retry
       return false;
@@ -382,17 +395,15 @@ export class InteractiveSession {
   private async refreshToken(baseUrl: string, refreshToken: string): Promise<string | null> {
     try {
       const url = `${baseUrl}/api/auth/refresh`;
+      const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ refreshToken })
+      const response = await axios.post(url, { refreshToken }, {
+        httpsAgent,
+        timeout: 10000
       });
 
-      if (response.ok) {
-        const data = await response.json() as { token?: string; refreshToken?: string };
+      if (response.status === 200) {
+        const data = response.data as { token?: string; refreshToken?: string };
         return data.token || null;
       } else {
         return null;

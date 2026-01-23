@@ -244,6 +244,21 @@ export class SkillLoader {
 
             if (parsed.name) {
               this.skillDirectories.set(parsed.name, categoryPath);
+              
+              // Also populate loadedSkills so getSkill() can find it
+              const skillInfo: SkillInfo = {
+                id: parsed.name,
+                name: parsed.name,
+                description: parsed.description || '',
+                license: parsed.license || 'Unknown',
+                version: parsed.version || '1.0.0',
+                author: parsed.author || 'Anonymous',
+                category: category.name,
+                markdown: content,
+                skillsPath: categoryPath
+              };
+              this.loadedSkills.set(parsed.name, skillInfo);
+              
               skillIds.push(parsed.name);
             }
           } catch (error) {

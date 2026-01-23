@@ -55,7 +55,7 @@ export class InteractiveSession {
   private resolveInput: ((value: string | null) => void) | null = null;
   private _currentRequestId: string | null = null;
   private heartbeatTimeout: NodeJS.Timeout | null = null;
-  private heartbeatTimeoutMs: number = 60000; // 60 seconds default timeout
+  private heartbeatTimeoutMs: number = 300000; // 5 minutes timeout for long AI responses
   private lastActivityTime: number = Date.now();
 
   constructor(indentLevel: number = 0) {

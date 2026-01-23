@@ -460,7 +460,9 @@ program
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${authConfig.apiKey || ''}`,
             },
-            body: JSON.stringify({ messages }),
+            body: JSON.stringify({
+              messages
+            }),
           });
           if (!response.ok) {
             const errorText = await response.text();

@@ -44,6 +44,7 @@ export class InteractiveSession {
   private indentLevel: number;
   private indentString: string;
   private remoteConversationId: string | null = null;
+  private currentTaskId: string | null = null;
 
     constructor(indentLevel: number = 0) {
 
@@ -826,10 +827,10 @@ export class InteractiveSession {
    * Create unified LLM Caller
    * Implement transparency: caller doesn't need to care about remote vs local mode
    */
-  private createLLMCaller() {
+  private createLLMCaller(taskId: string) {
     // Remote mode: use RemoteAIClient
     if (this.remoteAIClient) {
-      return this.createRemoteCaller();
+      return this.createRemoteCaller(taskId);
     }
 
     // Local mode: use AIClient
@@ -842,11 +843,11 @@ export class InteractiveSession {
   /**
    * Create remote mode LLM caller
    */
-  private createRemoteCaller() {
+  private createRemoteCaller(taskId: string) {
     const client = this.remoteAIClient!;
     return {
-      chatCompletion: (messages: ChatMessage[], options: any) => 
-        client.chatCompletion(messages, options),
+      chatCompletion: (messages: ChatMessage[], options: any) =>
+        client.chatCompletion(messages, { ...options, taskId }),
       isRemote: true
     };
   }
@@ -864,8 +865,12 @@ export class InteractiveSession {
   }
 
   private async generateResponse(thinkingTokens: number = 0): Promise<void> {
-    // Use unified LLM Caller
-    const { chatCompletion, isRemote } = this.createLLMCaller();
+    // Create taskId for this user interaction (for remote mode tracking)
+    const taskId = crypto.randomUUID();
+    this.currentTaskId = taskId;
+
+    // Use unified LLM Caller with taskId
+    const { chatCompletion, isRemote } = this.createRemoteCaller(taskId);
 
     if (!isRemote && !this.aiClient) {
       console.log(colors.error('AI client not initialized'));
@@ -1022,6 +1027,10 @@ export class InteractiveSession {
       (this as any)._isOperationInProgress = false;
 
       if (error.message === 'Operation cancelled by user') {
+        // Mark task as cancelled
+        if (this.remoteAIClient && this.currentTaskId) {
+          await this.remoteAIClient.cancelTask(this.currentTaskId);
+        }
         return;
       }
 
@@ -1035,8 +1044,12 @@ export class InteractiveSession {
    * 与本地模式 generateResponse 保持一致
    */
   private async generateRemoteResponse(thinkingTokens: number = 0): Promise<void> {
+    // Create taskId for this user interaction (for remote mode tracking)
+    const taskId = crypto.randomUUID();
+    this.currentTaskId = taskId;
+
     // 使用统一的 LLM Caller
-    const { chatCompletion, isRemote } = this.createLLMCaller();
+    const { chatCompletion, isRemote } = this.createLLMCaller(taskId);
 
     if (!isRemote) {
       // 如果不是远程模式，回退到本地模式
@@ -1171,6 +1184,11 @@ export class InteractiveSession {
 
       // Operation completed successfully
       (this as any)._isOperationInProgress = false;
+
+      // Mark task as completed (发送 status: 'end')
+      if (this.remoteAIClient && this.currentTaskId) {
+        await this.remoteAIClient.completeTask(this.currentTaskId);
+      }
 
     } catch (error: any) {
       clearInterval(spinnerInterval);
@@ -1696,6 +1714,14 @@ export class InteractiveSession {
    */
   getRemoteAIClient(): RemoteAIClient | null {
     return this.remoteAIClient;
+  }
+
+  /**
+   * Get the current taskId for this user interaction
+   * Used by GUI operations to track the same task
+   */
+  getTaskId(): string | null {
+    return this.currentTaskId;
   }
 }
 

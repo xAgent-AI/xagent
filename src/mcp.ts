@@ -13,9 +13,17 @@ export class MCPServer {
   private tools: Map<string, MCPTool> = new Map();
   private isConnected: boolean = false;
   private sessionId: string | null = null;  // Save MCP session-id
+  private sdkOutputAdapter: any = null;  // SDK output adapter for JSON output
 
   constructor(config: MCPServerConfig) {
     this.config = config;
+  }
+
+  /**
+   * Set SDK output adapter for JSON output in SDK mode
+   */
+  setSdkOutputAdapter(adapter: any): void {
+    this.sdkOutputAdapter = adapter;
   }
 
   /**
@@ -41,7 +49,9 @@ export class MCPServer {
       }
 
       this.isConnected = true;
-      if (process.env.XAGENT_SDK !== 'true') {
+      if (this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputSystem('success', { message: 'MCP Server connected' });
+      } else {
         console.log(`✅ MCP Server connected`);
       }
     } catch (error) {
@@ -131,7 +141,11 @@ export class MCPServer {
     }
 
     const transportType = this.getTransportType();
-    if (process.env.XAGENT_SDK !== 'true') {
+    if (this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputSystem('info', {
+        message: `Connecting to MCP Server at ${this.config.url} (${transportType})`
+      });
+    } else {
       console.log(`Connecting to MCP Server at ${this.config.url} (${transportType})`);
     }
 
@@ -313,7 +327,11 @@ export class MCPServer {
         if (!tool.name || typeof tool.name !== 'string' || tool.name.trim() === '') continue;
         this.tools.set(tool.name, tool);
       }
-      if (process.env.XAGENT_SDK !== 'true') {
+      if (this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputSystem('info', {
+          message: `Loaded ${result.tools.length} tools from MCP Server`
+        });
+      } else {
         console.log(`Loaded ${result.tools.length} tools from MCP Server`);
       }
     }

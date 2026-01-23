@@ -302,11 +302,19 @@ export class InteractiveSession {
     logger.debug('\n[SESSION] ========== initialize() 开始 ==========\n');
 
     try {
-      const spinner = ora({
-        text: colors.textMuted('Initializing XAGENT CLI...'),
-        spinner: 'dots',
-        color: 'cyan',
-      }).start();
+      // In SDK mode, output through adapter; in normal mode, use spinner
+      const spinner = this.isSdkMode
+        ? null
+        : ora({
+            text: colors.textMuted('Initializing XAGENT CLI...'),
+            spinner: 'dots',
+            color: 'cyan',
+          }).start();
+
+      // SDK mode: output initialization status
+      if (this.isSdkMode) {
+        this.sdkOutputAdapter?.outputSystem('info', { message: 'Initializing XAGENT CLI...' });
+      }
 
       logger.debug('[SESSION] 调用 configManager.load()...');
       await this.configManager.load();
@@ -323,13 +331,21 @@ export class InteractiveSession {
 
       // Only validate OAuth tokens, skip validation for third-party API keys
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
-        spinner.text = colors.textMuted('Validating authentication...');
+        if (spinner) {
+          spinner.text = colors.textMuted('Validating authentication...');
+        } else {
+          this.sdkOutputAdapter?.outputSystem('info', { message: 'Validating authentication...' });
+        }
         const baseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
         let isValid = await this.validateToken(baseUrl, authConfig.apiKey);
 
         // Try refresh token if validation failed
         if (!isValid && authConfig.refreshToken) {
-          spinner.text = colors.textMuted('Refreshing authentication...');
+          if (spinner) {
+            spinner.text = colors.textMuted('Refreshing authentication...');
+          } else {
+            this.sdkOutputAdapter?.outputSystem('info', { message: 'Refreshing authentication...' });
+          }
           const newToken = await this.refreshToken(baseUrl, authConfig.refreshToken);
 
           if (newToken) {
@@ -342,11 +358,16 @@ export class InteractiveSession {
         }
 
         if (!isValid) {
-          spinner.stop();
-          console.log('');
-          console.log(colors.warning('⚠️  Authentication expired or invalid'));
-          console.log(colors.info('Please log in again to continue.'));
-          console.log('');
+          if (spinner) {
+            spinner.stop();
+            console.log('');
+            console.log(colors.warning('⚠️  Authentication expired or invalid'));
+            console.log(colors.info('Please log in again to continue.'));
+            console.log('');
+          } else {
+            this.sdkOutputAdapter?.outputWarning('Authentication expired or invalid');
+            this.sdkOutputAdapter?.outputSystem('info', { message: 'Please log in again to continue.' });
+          }
 
           // Clear invalid credentials and persist
           await this.configManager.set('apiKey', '');
@@ -371,22 +392,20 @@ export class InteractiveSession {
               // readline closed
             });
           }
-          spinner.start();
+          if (spinner) {
+            spinner.start();
+          }
         }
       } else if (!authConfig.apiKey) {
         // No API key configured, need to set up authentication
-        spinner.stop();
+        if (spinner) {
+          spinner.stop();
+        }
         
         // In SDK mode, we cannot interactively set up authentication
         if (this.isSdkMode) {
-          spinner.fail(colors.error('Authentication required for SDK mode'));
-          console.log('');
-          console.log(colors.info('Please configure authentication before using SDK mode.'));
-          console.log(colors.textMuted('Run "xagent auth" to configure authentication.'));
-          console.log('');
-          
-          // Output error through SDK adapter if available
-          this.sdkOutputAdapter?.outputError('Authentication required. Please configure with "xagent auth" command.');
+          this.sdkOutputAdapter?.outputError(`Authentication required for SDK mode`);
+          this.sdkOutputAdapter?.outputSystem('info', { message: 'Please configure authentication before using SDK mode. Run "xagent auth" to configure.' });
           
           throw new Error('Authentication required for SDK mode');
         }
@@ -405,7 +424,9 @@ export class InteractiveSession {
             // readline closed
           });
         }
-        spinner.start();
+        if (spinner) {
+          spinner.start();
+        }
       }
       // For OPENAI_COMPATIBLE with API key, skip validation and proceed directly
 
@@ -450,6 +471,11 @@ export class InteractiveSession {
       Object.entries(mcpServers).forEach(([name, config]) => {
         this.sdkOutputAdapter?.outputMCPRegistering(name, config.transport || 'stdio');
         this.mcpManager.registerServer(name, config);
+        // Set SDK output adapter for each server
+        const server = this.mcpManager.getServer(name);
+        if (server && this.sdkOutputAdapter) {
+          server.setSdkOutputAdapter(this.sdkOutputAdapter);
+        }
       });
 
       // Eagerly connect to MCP servers to get tool definitions
@@ -498,10 +524,18 @@ export class InteractiveSession {
 
       this.currentAgent = this.agentManager.getAgent('general-purpose');
 
-      spinner.succeed(colors.success('Initialization complete'));
+      if (spinner) {
+        spinner.succeed(colors.success('Initialization complete'));
+      } else {
+        this.sdkOutputAdapter?.outputSystem('success', { message: 'Initialization complete' });
+      }
     } catch (error: any) {
-      const spinner = ora({ text: '', spinner: 'dots', color: 'red' }).start();
-      spinner.fail(colors.error(`Initialization failed: ${error.message}`));
+      if (this.isSdkMode) {
+        this.sdkOutputAdapter?.outputError(`Initialization failed: ${error.message}`);
+      } else {
+        const failSpinner = ora({ text: '', spinner: 'dots', color: 'red' }).start();
+        failSpinner.fail(colors.error(`Initialization failed: ${error.message}`));
+      }
       throw error;
     }
   }
@@ -948,6 +982,14 @@ export class InteractiveSession {
   }
 
   /**
+   * Update activity timestamp - call this at the start of any work
+   * to prevent heartbeat timeout during active processing
+   */
+  private updateActivity(): void {
+    this.lastActivityTime = Date.now();
+  }
+
+  /**
    * Stop heartbeat monitoring (public method for cleanup)
    */
   public stopHeartbeatMonitor(): void {
@@ -958,6 +1000,9 @@ export class InteractiveSession {
    * Handle SDK control requests
    */
   private async handleControlRequest(request: any): Promise<void> {
+    // Update activity to prevent heartbeat timeout during control requests
+    this.updateActivity();
+
     const { request_id, request: req } = request;
     
     switch (req.subtype) {
@@ -996,6 +1041,9 @@ export class InteractiveSession {
   }
 
   private async handleSubAgentCommand(input: string): Promise<void> {
+    // Update activity to prevent heartbeat timeout during subagent execution
+    this.updateActivity();
+
     const [agentType, ...taskParts] = input.slice(1).split(' ');
     const task = taskParts.join(' ');
 
@@ -1021,6 +1069,9 @@ export class InteractiveSession {
   }
 
   public async processUserMessage(message: string, agent?: any): Promise<void> {
+    // Update activity to prevent heartbeat timeout during message processing
+    this.updateActivity();
+
     const inputs = parseInput(message);
     const textInput = inputs.find((i) => i.type === 'text');
     const fileInputs = inputs.filter((i) => i.type === 'file');
@@ -1352,6 +1403,9 @@ export class InteractiveSession {
   }
 
   private async generateResponse(thinkingTokens: number = 0): Promise<void> {
+    // Update activity to prevent heartbeat timeout during AI response generation
+    this.updateActivity();
+
     // Use unified LLM Caller
 
     const { chatCompletion, isRemote } = this.createLLMCaller();
@@ -1821,6 +1875,9 @@ export class InteractiveSession {
   }
 
   private async handleToolCalls(toolCalls: any[]): Promise<void> {
+    // Update activity to prevent heartbeat timeout during tool execution
+    this.updateActivity();
+
     // Mark that tool execution is in progress
     (this as any)._isOperationInProgress = true;
 

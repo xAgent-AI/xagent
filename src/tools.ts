@@ -2748,36 +2748,45 @@ export class ToolRegistry {
         suffix++;
       }
 
-      if (!this.tools.has(toolName)) {
-        // Create a wrapper tool for the MCP tool - hide MCP origin from LLM
-        const mcpTool: any = {
-          name: toolName,
-          description: tool.description || 'MCP tool',
-          allowedModes: [ExecutionMode.YOLO, ExecutionMode.SMART, ExecutionMode.ACCEPT_EDITS],
-          inputSchema: tool.inputSchema,
-          _isMcpTool: true,
-          _mcpServerName: serverName,
-          _mcpFullName: fullName,
-          execute: async (params: any) => {
-            const { getMCPManager } = await import('./mcp.js');
-            const mcpManager = getMCPManager();
-            return await mcpManager.callTool(fullName, params);
+              if (!this.tools.has(toolName)) {
+              // Create a wrapper tool for the MCP tool - hide MCP origin from LLM
+              const mcpTool: any = {
+                name: toolName,
+                description: tool.description || 'MCP tool',
+                allowedModes: [ExecutionMode.YOLO, ExecutionMode.SMART, ExecutionMode.ACCEPT_EDITS],
+                inputSchema: tool.inputSchema,
+                _isMcpTool: true,
+                _mcpServerName: serverName,
+                _mcpFullName: fullName,
+                execute: async (params: any) => {
+                  const { getMCPManager } = await import('./mcp.js');
+                  const mcpManager = getMCPManager();
+                  return await mcpManager.callTool(fullName, params);
+                }
+              };
+              this.tools.set(toolName, mcpTool);
+              registeredCount++;
+      
+              if (toolName !== originalName) {
+                const renameMsg = `[MCP] Tool '${originalName}' renamed to '${toolName}' to avoid conflict`;
+                if (this._isSdkMode && this._sdkOutputAdapter) {
+                  this._sdkOutputAdapter.outputSystem('info', { message: renameMsg });
+                } else {
+                  console.log(renameMsg);
+                }
+              }
+            }
           }
-        };
-        this.tools.set(toolName, mcpTool);
-        registeredCount++;
-
-        if (toolName !== originalName) {
-          console.log(`[MCP] Tool '${originalName}' renamed to '${toolName}' to avoid conflict`);
+      
+          if (registeredCount > 0) {
+            const msg = `[MCP] Registered ${registeredCount} tool(s)`;
+            if (this._isSdkMode && this._sdkOutputAdapter) {
+              this._sdkOutputAdapter.outputSystem('success', { message: msg });
+            } else {
+              console.log(msg);
+            }
+          }
         }
-      }
-    }
-
-    if (registeredCount > 0) {
-      console.log(`[MCP] Registered ${registeredCount} tool(s)`);
-    }
-  }
-
   /**
    * Remove all MCP tool wrappers (useful when MCP servers are removed)
    */

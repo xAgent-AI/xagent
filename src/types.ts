@@ -207,6 +207,7 @@ export interface CompressionStats {
 export interface SdkInputMessage {
   type: 'user';
   content: string;
+  request_id?: string;  // Optional request ID for tracking
   uuid?: string;
   parent_tool_use_id?: string | null;
 }
@@ -224,6 +225,20 @@ export interface SdkControlRequest {
 }
 
 /**
+ * SDK ping message (heartbeat)
+ */
+export interface SdkPingMessage {
+  type: 'ping';
+  request_id?: string;
+  timestamp: number;
+}
+
+/**
+ * SDK input message union type
+ */
+export type SdkInputMessageType = SdkInputMessage | SdkControlRequest | SdkPingMessage;
+
+/**
  * Check if a string is a JSON message
  */
 export function isSdkMessage(input: string): boolean {
@@ -237,7 +252,8 @@ export function isSdkMessage(input: string): boolean {
     // Check for known message types
     return (
       parsed.type === 'user' ||
-      parsed.type === 'control_request'
+      parsed.type === 'control_request' ||
+      parsed.type === 'ping'
     );
   } catch {
     return false;
@@ -247,7 +263,7 @@ export function isSdkMessage(input: string): boolean {
 /**
  * Try to parse SDK message from string
  */
-export function parseSdkMessage(input: string): SdkInputMessage | SdkControlRequest | null {
+export function parseSdkMessage(input: string): SdkInputMessageType | null {
   const trimmed = input.trim();
   
   try {
@@ -259,6 +275,10 @@ export function parseSdkMessage(input: string): SdkInputMessage | SdkControlRequ
     
     if (parsed.type === 'control_request') {
       return parsed as SdkControlRequest;
+    }
+    
+    if (parsed.type === 'ping') {
+      return parsed as SdkPingMessage;
     }
     
     return null;

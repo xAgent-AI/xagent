@@ -53,6 +53,10 @@ export class InteractiveSession {
   private isSdkMode: boolean = false;
   private sdkInputBuffer: string[] = [];
   private resolveInput: ((value: string | null) => void) | null = null;
+  private _currentRequestId: string | null = null;
+  private heartbeatTimeout: NodeJS.Timeout | null = null;
+  private heartbeatTimeoutMs: number = 60000; // 60 seconds default timeout
+  private lastActivityTime: number = Date.now();
 
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
@@ -282,6 +286,11 @@ export class InteractiveSession {
     this.cancellationManager.on('cancelled', cancelHandler);
 
     this.promptLoop();
+
+    // Start heartbeat timeout monitoring in SDK mode
+    if (this.isSdkMode) {
+      this.startHeartbeatMonitoring();
+    }
 
     // Keep the promise pending until shutdown
     return new Promise((resolve) => {
@@ -609,6 +618,11 @@ export class InteractiveSession {
     }
 
     this.showExecutionMode();
+
+    // SDK mode: signal that CLI is ready to accept requests
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputReady();
+    }
   }
 
   private showExecutionMode(): void {
@@ -740,12 +754,14 @@ export class InteractiveSession {
           const cleanLine = line
             .replace(/^\uFEFF/, '')
             .replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
-          this.sdkInputBuffer.push(cleanLine);
-          this.sdkInputBuffer = []; // Clear buffer after processing
 
           if (this.resolveInput) {
+            // Immediate handler available, resolve immediately
             this.resolveInput(cleanLine);
             this.resolveInput = null;
+          } else {
+            // No handler available, queue the message
+            this.sdkInputBuffer.push(cleanLine);
           }
         });
 
@@ -781,6 +797,9 @@ export class InteractiveSession {
   }
 
   private async handleInput(input: string): Promise<void> {
+    // Reset heartbeat timeout on any input activity
+    this.resetHeartbeatTimeout();
+
     const trimmedInput = input.trim();
 
     if (!trimmedInput) {
@@ -790,33 +809,39 @@ export class InteractiveSession {
     // Check for SDK JSON message format
     if (this.isSdkMode) {
       const { isSdkMessage, parseSdkMessage } = await import('./types.js');
-      
+
       // Debug: Log raw input
       if (trimmedInput.startsWith('{')) {
         try {
           const parsed = JSON.parse(trimmedInput);
-          this.sdkOutputAdapter?.outputSystem('debug', { 
+          this.sdkOutputAdapter?.outputSystem('debug', {
             message: 'Received JSON input',
             parsedType: parsed.type,
             contentLength: String(parsed.content || '').length
           });
         } catch (e) {
-          this.sdkOutputAdapter?.outputSystem('debug', { 
+          this.sdkOutputAdapter?.outputSystem('debug', {
             message: 'Invalid JSON input',
             error: String(e)
           });
         }
       }
-      
+
       if (isSdkMessage(trimmedInput)) {
         const sdkMessage = parseSdkMessage(trimmedInput);
-        
+
         if (sdkMessage) {
-          if (sdkMessage.type === 'control_request') {
+          if (sdkMessage.type === 'ping') {
+            // Handle ping - respond with pong
+            await this.handlePing(sdkMessage);
+            return;
+          } else if (sdkMessage.type === 'control_request') {
             // Handle control request
             await this.handleControlRequest(sdkMessage);
             return;
           } else if (sdkMessage.type === 'user') {
+            // Store request_id for tracking
+            this._currentRequestId = sdkMessage.request_id || null;
             // Handle user message from SDK
             await this.processUserMessage(sdkMessage.content);
             return;
@@ -824,7 +849,7 @@ export class InteractiveSession {
         }
       } else {
         // Not a JSON SDK message, treat as regular text
-        this.sdkOutputAdapter?.outputSystem('debug', { 
+        this.sdkOutputAdapter?.outputSystem('debug', {
           message: 'Not recognized as SDK message, treating as text',
           inputPreview: trimmedInput.substring(0, 50)
         });
@@ -850,6 +875,83 @@ export class InteractiveSession {
     }
 
     await this.processUserMessage(trimmedInput);
+  }
+
+  /**
+   * Handle SDK ping messages (heartbeat)
+   */
+  private async handlePing(pingMessage: any): Promise<void> {
+    const requestId = pingMessage.request_id || `ping_${Date.now()}`;
+
+    // Reset activity timestamp on ping (heartbeat activity)
+    this.lastActivityTime = Date.now();
+
+    // Send pong response through SDK adapter for consistency
+    this.sdkOutputAdapter?.output({
+      type: 'system',
+      subtype: 'pong',
+      timestamp: Date.now(),
+      data: {
+        type: 'pong',
+        request_id: requestId,
+        timestamp: Date.now()
+      }
+    });
+  }
+
+  /**
+   * Start heartbeat timeout monitoring in SDK mode
+   */
+  private startHeartbeatMonitoring(): void {
+    // Clear any existing timeout
+    this.stopHeartbeatMonitoring();
+
+    // Check heartbeat timeout periodically
+    this.heartbeatTimeout = setInterval(() => {
+      const now = Date.now();
+      const elapsed = now - this.lastActivityTime;
+
+      if (elapsed > this.heartbeatTimeoutMs) {
+        // Heartbeat timeout - no activity for too long
+        this.sdkOutputAdapter?.output({
+          type: 'system',
+          subtype: 'heartbeat_timeout',
+          timestamp: now,
+          data: {
+            message: 'No activity detected, connection may be stale',
+            lastActivity: this.lastActivityTime,
+            timeoutMs: this.heartbeatTimeoutMs,
+            elapsedMs: elapsed
+          }
+        });
+        // Reset for next monitoring cycle
+        this.lastActivityTime = now;
+      }
+    }, 10000); // Check every 10 seconds
+  }
+
+  /**
+   * Stop heartbeat timeout monitoring
+   */
+  private stopHeartbeatMonitoring(): void {
+    if (this.heartbeatTimeout) {
+      clearInterval(this.heartbeatTimeout);
+      this.heartbeatTimeout = null;
+    }
+  }
+
+  /**
+   * Reset heartbeat timeout (called on activity)
+   */
+  private resetHeartbeatTimeout(): void {
+    this.lastActivityTime = Date.now();
+  }
+
+  /**
+   * Stop heartbeat monitoring (public method for cleanup)
+   */
+  public stopHeartbeatMonitor(): void {
+    this.stopHeartbeatMonitoring();
   }
 
   /**
@@ -1427,6 +1529,12 @@ export class InteractiveSession {
       // Operation completed successfully, clear the flag
 
       (this as any)._isOperationInProgress = false;
+
+      // Signal request completion to SDK
+      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
+        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, 'success');
+        this._currentRequestId = null;
+      }
     } catch (error: any) {
       if (this.isSdkMode && this.sdkOutputAdapter) {
         this.output('thinking', 'compact', {
@@ -1444,6 +1552,13 @@ export class InteractiveSession {
       // Clear the operation flag
 
       (this as any)._isOperationInProgress = false;
+
+      // Signal request completion to SDK
+      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
+        const status = error.message === 'Operation cancelled by user' ? 'cancelled' : 'error';
+        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, status);
+        this._currentRequestId = null;
+      }
 
       if (error.message === 'Operation cancelled by user') {
         return;
@@ -1593,6 +1708,12 @@ export class InteractiveSession {
 
       // Operation completed successfully
       (this as any)._isOperationInProgress = false;
+
+      // Signal request completion to SDK
+      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
+        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, 'success');
+        this._currentRequestId = null;
+      }
     } catch (error: any) {
       if (this.isSdkMode && this.sdkOutputAdapter) {
         this.output('thinking', 'compact', {
@@ -1607,6 +1728,13 @@ export class InteractiveSession {
       }
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
+
+      // Signal request completion to SDK
+      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
+        const status = error.message === 'Operation cancelled by user' ? 'cancelled' : 'error';
+        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, status);
+        this._currentRequestId = null;
+      }
 
       if (error.message === 'Operation cancelled by user') {
         return;

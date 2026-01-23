@@ -94,28 +94,35 @@ export class SdkOutputAdapter {
   }
 
   /**
-   * Format and output a prompt.
+   * Format and output ready signal.
+   * This is sent when the CLI is fully initialized and ready to accept requests.
    */
-  outputPrompt(): void {
+  outputReady(): void {
     this.output({
-      type: 'input',
-      subtype: 'prompt',
+      type: 'system',
+      subtype: 'ready',
       timestamp: Date.now(),
       data: {
-        prompt: '❯ '
+        status: 'initialized',
+        message: 'CLI is ready to accept requests'
       }
     });
   }
 
   /**
-   * Format and output user input.
+   * Format and output request done signal.
+   * This is sent when a user request has been fully processed.
    */
-  outputUserInput(content: string): void {
+  outputRequestDone(requestId: string, status: 'success' | 'cancelled' | 'error' = 'success'): void {
     this.output({
-      type: 'input',
-      subtype: 'user',
+      type: 'result',
+      subtype: 'request_done',
       timestamp: Date.now(),
-      data: { content }
+      data: {
+        requestId,
+        status,
+        message: status === 'success' ? 'Request completed successfully' : `Request ${status}`
+      }
     });
   }
 

@@ -42,9 +42,12 @@ export async function startSdkSession(): Promise<void> {
     }
     (session as any)._isShuttingDown = true;
     process.removeAllListeners('SIGINT');
-    
+
+    // Stop heartbeat monitoring
+    session.stopHeartbeatMonitor();
+
     outputAdapter.outputSystem('shutdown', { reason: 'user_interrupt' });
-    
+
     process.exit(0);
   });
 

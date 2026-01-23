@@ -149,7 +149,7 @@ export class RemoteAIClient extends EventEmitter {
             break;
           case 429:
             errorMessage = 'Too Many Requests';
-            userFriendlyMessage = 'Too many requests. Please wait a moment and try again.';
+            userFriendlyMessage = 'XAgent service rate limit exceeded. Please wait a moment and try again.';
             break;
           case 500:
             errorMessage = 'Internal Server Error';
@@ -161,7 +161,7 @@ export class RemoteAIClient extends EventEmitter {
             break;
           case 503:
             errorMessage = 'Service Unavailable';
-            userFriendlyMessage = 'Service temporarily unavailable. Please try again later.';
+            userFriendlyMessage = 'AI service request timed out. Please try again.';
             break;
           case 504:
             errorMessage = 'Gateway Timeout';
@@ -211,7 +211,12 @@ export class RemoteAIClient extends EventEmitter {
    * Call backend to update task status to 'end'
    */
   async completeTask(taskId: string): Promise<void> {
-    if (!taskId) return;
+    if (!taskId) {
+      logger.debug('[RemoteAIClient] completeTask called with empty taskId, skipping');
+      return;
+    }
+
+    logger.debug(`[RemoteAIClient] completeTask called: taskId=${taskId}`);
 
     const url = `${this.agentApi}/chat`;
     const requestBody = {
@@ -222,7 +227,7 @@ export class RemoteAIClient extends EventEmitter {
     };
 
     try {
-      await fetch(url, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -230,6 +235,7 @@ export class RemoteAIClient extends EventEmitter {
         },
         body: JSON.stringify(requestBody)
       });
+      logger.debug(`[RemoteAIClient] completeTask response status: ${response.status}`);
     } catch (error) {
       console.error('[RemoteAIClient] Failed to mark task as completed:', error);
     }
@@ -316,7 +322,8 @@ export class RemoteAIClient extends EventEmitter {
       toolResults: undefined,
       context: undefined,
       model: options.model,
-      taskId: (options as any).taskId  // 从 options 中提取 taskId
+      taskId: (options as any).taskId,
+      status: 'begin'  // Mark as beginning of task
     });
 
     // Debug output for response
@@ -540,7 +547,7 @@ export class RemoteAIClient extends EventEmitter {
             break;
           case 429:
             errorMessage = 'Too Many Requests';
-            userFriendlyMessage = 'Too many requests. Please wait a moment and try again.';
+            userFriendlyMessage = 'XAgent service rate limit exceeded. Please wait a moment and try again.';
             break;
           case 500:
             errorMessage = 'Internal Server Error';
@@ -552,7 +559,7 @@ export class RemoteAIClient extends EventEmitter {
             break;
           case 503:
             errorMessage = 'Service Unavailable';
-            userFriendlyMessage = 'Service temporarily unavailable. Please try again later.';
+            userFriendlyMessage = 'AI service request timed out. Please try again.';
             break;
           case 504:
             errorMessage = 'Gateway Timeout';

@@ -1042,11 +1042,14 @@ export class InteractiveSession {
    * Generate response using remote AI service（OAuth XAGENT 模式）
    * Support full tool calling loop
    * 与本地模式 generateResponse 保持一致
+   * @param thinkingTokens - Optional thinking tokens config
+   * @param existingTaskId - Optional existing taskId to reuse (for tool call continuation)
    */
-  private async generateRemoteResponse(thinkingTokens: number = 0): Promise<void> {
-    // Create taskId for this user interaction (for remote mode tracking)
-    const taskId = crypto.randomUUID();
+  private async generateRemoteResponse(thinkingTokens: number = 0, existingTaskId?: string): Promise<void> {
+    // Reuse existing taskId or create new one for this user interaction
+    const taskId = existingTaskId || crypto.randomUUID();
     this.currentTaskId = taskId;
+    logger.debug(`[Session] generateRemoteResponse: taskId=${taskId}, existingTaskId=${!!existingTaskId}`);
 
     // 使用统一的 LLM Caller
     const { chatCompletion, isRemote } = this.createLLMCaller(taskId);
@@ -1186,6 +1189,7 @@ export class InteractiveSession {
       (this as any)._isOperationInProgress = false;
 
       // Mark task as completed (发送 status: 'end')
+      logger.debug(`[Session] Task completed: taskId=${this.currentTaskId}`);
       if (this.remoteAIClient && this.currentTaskId) {
         await this.remoteAIClient.completeTask(this.currentTaskId);
       }
@@ -1569,7 +1573,8 @@ export class InteractiveSession {
 
     // For all other cases (GUI success/failure, other tool errors), return results to main agent
     // This allows main agent to decide how to handle failures (retry, fallback, user notification, etc.)
-    await this.generateRemoteResponse();
+    // Reuse existing taskId instead of generating new one
+    await this.generateRemoteResponse(0, this.currentTaskId || undefined);
   }
 
   /**

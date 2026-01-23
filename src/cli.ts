@@ -37,6 +37,68 @@ setConfigProvider(() => {
 
 const program = new Command();
 
+/**
+ * Format error message for user-friendly display
+ */
+function formatError(error: unknown): { message: string; suggestion: string } {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+
+  // Network errors
+  if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('ECONNREFUSED')) {
+    return {
+      message: 'Unable to connect to the server',
+      suggestion: 'Please check your network connection and try again.'
+    };
+  }
+  if (errorMessage.includes('ETIMEDOUT') || errorMessage.includes('ECONNRESET')) {
+    return {
+      message: 'Connection timed out',
+      suggestion: 'The server may be busy. Please wait a moment and try again.'
+    };
+  }
+  // Authentication errors
+  if (errorMessage.includes('401') || errorMessage.includes('Unauthorized') || errorMessage.includes('invalid token')) {
+    return {
+      message: 'Authentication failed',
+      suggestion: 'Please login again using: xagent auth'
+    };
+  }
+  // Token expired
+  if (errorMessage.includes('token') && errorMessage.includes('expired')) {
+    return {
+      message: 'Session expired',
+      suggestion: 'Please login again using: xagent auth'
+    };
+  }
+  // Permission errors
+  if (errorMessage.includes('EACCES') || errorMessage.includes('permission denied')) {
+    return {
+      message: 'Permission denied',
+      suggestion: 'Please check your file permissions or run with appropriate privileges.'
+    };
+  }
+  // File not found
+  if (errorMessage.includes('ENOENT') || errorMessage.includes('not found')) {
+    return {
+      message: 'File or resource not found',
+      suggestion: 'Please check the path and try again.'
+    };
+  }
+  // Invalid JSON
+  if (errorMessage.includes('JSON') || errorMessage.includes('parse')) {
+    return {
+      message: 'Invalid data format',
+      suggestion: 'The configuration file may be corrupted. Please check the file content.'
+    };
+  }
+
+  // Default friendly message
+  return {
+    message: 'An error occurred',
+    suggestion: 'Please try again. If the problem persists, check your configuration.'
+  };
+}
+
 program
   .name('xagent')
   .description('AI-powered command-line assistant')
@@ -155,9 +217,10 @@ program
         console.log(colors.success(`Agent ${options.remove} removed successfully`));
         console.log('');
       } catch (error: any) {
+        const { message, suggestion } = formatError(error);
         console.log('');
-        console.log(colors.error(`Failed to remove agent: ${error.message}`));
-        console.log(colors.textMuted('Check if the agent exists and try again'));
+        console.log(colors.error(`Failed to remove agent: ${message}`));
+        console.log(colors.textMuted(suggestion));
         console.log('');
       }
     } else {
@@ -218,9 +281,10 @@ program
         console.log(colors.success(`MCP server ${options.remove} removed successfully`));
         console.log('');
       } catch (error: any) {
+        const { message, suggestion } = formatError(error);
         console.log('');
-        console.log(colors.error(`Failed to remove MCP server: ${error.message}`));
-        console.log(colors.textMuted('Check if the server exists and try again'));
+        console.log(colors.error(`Failed to remove MCP server: ${message}`));
+        console.log(colors.textMuted(suggestion));
         console.log('');
       }
     } else {
@@ -249,8 +313,9 @@ program
       console.log(colors.textMuted('You can now run "xagent start" to begin'));
       console.log('');
     } catch (error: any) {
-      console.log(colors.error(`Initialization failed: ${error.message}`));
-      console.log(colors.textMuted('Check if you have write permissions for this directory'));
+      const { message, suggestion } = formatError(error);
+      console.log(colors.error(`Initialization failed: ${message}`));
+      console.log(colors.textMuted(suggestion));
       console.log('');
       process.exit(1);
     }
@@ -296,9 +361,10 @@ program
         console.log(colors.success(`Workflow ${options.add} added successfully!`));
         console.log('');
       } catch (error: any) {
+        const { message, suggestion } = formatError(error);
         console.log('');
-        console.log(colors.error(error.message));
-        console.log(colors.textMuted('Check the workflow ID and try again'));
+        console.log(colors.error(message));
+        console.log(colors.textMuted(suggestion));
         console.log('');
         process.exit(1);
       }
@@ -309,9 +375,10 @@ program
         console.log(colors.success(`Workflow ${options.remove} removed successfully!`));
         console.log('');
       } catch (error: any) {
+        const { message, suggestion } = formatError(error);
         console.log('');
-        console.log(colors.error(error.message));
-        console.log(colors.textMuted('Check if the workflow exists and try again'));
+        console.log(colors.error(message));
+        console.log(colors.textMuted(suggestion));
         console.log('');
         process.exit(1);
       }
@@ -404,7 +471,9 @@ program
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${authConfig.apiKey || ''}`,
             },
-            body: JSON.stringify({ messages }),
+            body: JSON.stringify({
+              messages
+            }),
           });
           if (!response.ok) {
             const errorText = await response.text();
@@ -440,8 +509,10 @@ program
       console.log(colors.primaryBright('Use the GUI tools in the interactive session to control the computer.'));
       console.log('');
     } catch (error: any) {
+      const { message, suggestion } = formatError(error);
       console.log('');
-      console.log(colors.error(`Failed to start GUI Subagent: ${error.message}`));
+      console.log(colors.error(`Failed to start GUI Subagent: ${message}`));
+      console.log(colors.textMuted(suggestion));
       console.log('');
     }
   });
@@ -451,3 +522,28 @@ program.parse(process.argv);
 if (!process.argv.slice(2).length) {
   program.outputHelp();
 }
+
+// ============================================================
+// Global error handling - prevent crashes from uncaught errors
+// ============================================================
+
+// Handle uncaught promise rejections
+process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+  console.error('\n❌ An unexpected error occurred');
+  if (reason instanceof Error) {
+    console.error(`   ${reason.message}`);
+  } else if (reason) {
+    console.error(`   ${String(reason)}`);
+  }
+  console.error('\n   If this problem persists, please report this issue.');
+  console.error('');
+  process.exit(1);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error: Error) => {
+  console.error('\n❌ Critical error - application will exit');
+  console.error(`   ${error.message}`);
+  console.error('');
+  process.exit(1);
+});

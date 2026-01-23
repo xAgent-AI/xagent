@@ -256,10 +256,15 @@ export class MCPServer {
       }
     } catch (error: any) {
       clearTimeout(timeoutId);
+      const serverInfo = this.config.url || this.config.command || 'MCP server';
       if (error.name === 'AbortError') {
-        console.error('SSE connection timed out');
+        console.error(`\n❌ SSE connection timed out`);
+        console.error(`   Server: ${serverInfo}`);
+        console.error(`   The server is not responding. Please try again later.`);
       } else {
-        console.error(`SSE connection failed: ${error.message}`);
+        console.error(`\n❌ SSE connection failed`);
+        console.error(`   Server: ${serverInfo}`);
+        console.error(`   ${error.message}`);
       }
       throw error;
     }
@@ -369,10 +374,14 @@ export class MCPServer {
       } else if (resultData?.tools) {
         this.handleToolsList(resultData);
       } else if (resultData?.error) {
-        console.error(`MCP tools/list error: ${resultData.error.message}`);
+        console.error(`\n❌ MCP server returned an error`);
+        console.error(`   ${resultData.error.message || 'Unknown error'}`);
       }
     } catch (error: any) {
-      console.error(`Failed to load MCP tools: ${error.message}`);
+      const serverInfo = this.config.url || this.config.command || 'MCP server';
+      console.error(`\n❌ Failed to load MCP tools`);
+      console.error(`   Server: ${serverInfo}`);
+      console.error(`   ${error.message}`);
     }
   }
 
@@ -464,7 +473,7 @@ export class MCPServer {
       // Check for error response
       if (resultData?.isError) {
         const errorMsg = resultData?.content?.[0]?.text || 'Unknown error';
-        throw new Error(`MCP error: ${errorMsg}`);
+        throw new Error(`MCP server error: ${errorMsg}`);
       }
 
       return resultData?.result;
@@ -501,14 +510,14 @@ export class MCPServer {
             this.process?.stdout?.off('data', responseHandler);
             
             if (response.error) {
-              reject(new Error(response.error.message));
+              reject(new Error(`MCP tool error: ${response.error.message || 'Unknown error'}`));
             } else {
               resolve(response.result);
             }
           }
         } catch (error) {
           console.error('\n========== MCP STDIO Parse Error ==========');
-          console.error('Raw data:', data.toString());
+            console.error('Raw data:', data.toString());
           console.error('Error:', error);
           console.error('==========================================\n');
           reject(error);
@@ -553,7 +562,7 @@ export class MCPManager {
   async connectServer(name: string): Promise<void> {
     const server = this.servers.get(name);
     if (!server) {
-      throw new Error(`MCP Server not found: ${name}`);
+      throw new Error(`MCP server not found: ${name}. Please check the server name and try again.`);
     }
     await server.connect();
   }
@@ -564,7 +573,7 @@ export class MCPManager {
         try {
           await server.connect();
         } catch (error) {
-          console.error(`Failed to connect MCP Server ${name}:`, error);
+          console.error(`Failed to connect MCP server ${name}:`, error);
         }
       }
     );

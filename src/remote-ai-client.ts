@@ -17,6 +17,8 @@ export class TokenInvalidError extends Error {
 
 export interface RemoteChatOptions {
   model?: string;
+  taskId?: string;
+  status?: 'begin' | 'continue' | 'end' | 'cancel';
   conversationId?: string;
   context?: {
     cwd?: string;
@@ -85,18 +87,20 @@ export class RemoteAIClient extends EventEmitter {
    */
   async chat(
     messages: ChatMessage[],
-    options: RemoteChatOptions = {}
+    remoteChatOptions: RemoteChatOptions = {}
   ): Promise<SessionOutput> {
     // Pass complete messages array to backend, backend forwards directly to LLM
     const requestBody = {
       messages: messages,  // Pass complete message history
-      conversationId: options.conversationId,
-      context: options.context,
+      taskId: remoteChatOptions.taskId,
+      status: remoteChatOptions.status || 'begin',
+      conversationId: remoteChatOptions.conversationId,
+      context: remoteChatOptions.context,
       options: {
-        model: options.model
+        model: remoteChatOptions.model
       },
-      toolResults: options.toolResults,
-      tools: options.tools
+      toolResults: remoteChatOptions.toolResults,
+      tools: remoteChatOptions.tools
     };
 
     const url = `${this.agentApi}/chat`;
@@ -104,8 +108,8 @@ export class RemoteAIClient extends EventEmitter {
       logger.debug(`[RemoteAIClient] Sending request to: ${url}`);
       logger.debug(`[RemoteAIClient] Token prefix: ${this.authToken.substring(0, 20)}...`);
       logger.debug(`[RemoteAIClient] Message count: ${messages.length}`);
-      if (options.tools) {
-        logger.debug(`[RemoteAIClient] Tool count: ${options.tools.length}`);
+      if (remoteChatOptions.tools) {
+        logger.debug(`[RemoteAIClient] Tool count: ${remoteChatOptions.tools.length}`);
       }
     }
 
@@ -126,11 +130,59 @@ export class RemoteAIClient extends EventEmitter {
 
       if (!response.ok) {
         const errorText = await response.text();
-        if (this.showAIDebugInfo) {
-          console.log('[RemoteAIClient] Error response:', errorText);
+        let errorMessage: string;
+        let userFriendlyMessage: string;
+
+        // Provide user-friendly error messages based on status code
+        switch (response.status) {
+          case 400:
+            errorMessage = errorText ? JSON.parse(errorText).error || 'Bad Request' : 'Bad Request';
+            userFriendlyMessage = 'Invalid request parameters. Please check your input and try again.';
+            break;
+          case 401:
+            errorMessage = 'Unauthorized';
+            userFriendlyMessage = 'Your session has expired. Please log in again to continue.';
+            break;
+          case 413:
+            errorMessage = 'Payload Too Large';
+            userFriendlyMessage = 'Request data is too large. Please reduce input content or screenshot size and try again.';
+            break;
+          case 429:
+            errorMessage = 'Too Many Requests';
+            userFriendlyMessage = 'XAgent service rate limit exceeded. Please wait a moment and try again.';
+            break;
+          case 500:
+            errorMessage = 'Internal Server Error';
+            userFriendlyMessage = 'Server error. Please try again later. If the problem persists, contact the administrator.';
+            break;
+          case 502:
+            errorMessage = 'Bad Gateway';
+            userFriendlyMessage = 'Gateway error. Service temporarily unavailable. Please try again later.';
+            break;
+          case 503:
+            errorMessage = 'Service Unavailable';
+            userFriendlyMessage = 'AI service request timed out. Please try again.';
+            break;
+          case 504:
+            errorMessage = 'Gateway Timeout';
+            userFriendlyMessage = 'Gateway timeout. Please try again later.';
+            break;
+          default:
+            try {
+              errorMessage = errorText ? JSON.parse(errorText).error || `HTTP ${response.status}` : `HTTP ${response.status}`;
+            } catch {
+              errorMessage = `HTTP ${response.status}`;
+            }
+            userFriendlyMessage = `Request failed with status code: ${response.status}`;
         }
-        const errorData = JSON.parse(errorText) as { error?: string };
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+
+        // Print user-friendly error message
+        console.error(`\n❌ Request failed (${response.status})`);
+        console.error(`   ${userFriendlyMessage}`);
+        if (this.showAIDebugInfo) {
+          console.error(`   Original error: ${errorMessage}`);
+        }
+        throw new Error(userFriendlyMessage);
       }
 
       const data = await response.json() as RemoteChatResponse;
@@ -151,6 +203,70 @@ export class RemoteAIClient extends EventEmitter {
         console.log('[RemoteAIClient] Request exception:', error);
       }
       throw error;
+    }
+  }
+
+  /**
+   * Mark task as completed
+   * Call backend to update task status to 'end'
+   */
+  async completeTask(taskId: string): Promise<void> {
+    if (!taskId) {
+      logger.debug('[RemoteAIClient] completeTask called with empty taskId, skipping');
+      return;
+    }
+
+    logger.debug(`[RemoteAIClient] completeTask called: taskId=${taskId}`);
+
+    const url = `${this.agentApi}/chat`;
+    const requestBody = {
+      taskId,
+      status: 'end',
+      messages: [],
+      options: {}
+    };
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.authToken}`
+        },
+        body: JSON.stringify(requestBody)
+      });
+      logger.debug(`[RemoteAIClient] completeTask response status: ${response.status}`);
+    } catch (error) {
+      console.error('[RemoteAIClient] Failed to mark task as completed:', error);
+    }
+  }
+
+  /**
+   * Mark task as cancelled
+   * Call backend to update task status to 'cancel'
+   */
+  async cancelTask(taskId: string): Promise<void> {
+    if (!taskId) return;
+
+    const url = `${this.agentApi}/chat`;
+    const requestBody = {
+      taskId,
+      status: 'cancel',
+      messages: [],
+      options: {}
+    };
+
+    try {
+      await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.authToken}`
+        },
+        body: JSON.stringify(requestBody)
+      });
+    } catch (error) {
+      console.error('[RemoteAIClient] Failed to mark task as cancelled:', error);
     }
   }
 
@@ -205,7 +321,9 @@ export class RemoteAIClient extends EventEmitter {
       tools: options.tools as any,
       toolResults: undefined,
       context: undefined,
-      model: options.model
+      model: options.model,
+      taskId: (options as any).taskId,
+      status: 'begin'  // Mark as beginning of task
     });
 
     // Debug output for response
@@ -357,19 +475,21 @@ export class RemoteAIClient extends EventEmitter {
    * Invoke VLM for image understanding
    * @param messages - full messages array (consistent with local mode)
    * @param systemPrompt - system prompt (optional, for reference)
-   * @param options - other options including AbortSignal
+   * @param remoteChatOptions - other options including AbortSignal, taskId
    */
   async invokeVLM(
     messages: any[],
     _systemPrompt?: string,
-    options: RemoteChatOptions = {}
+    remoteChatOptions: RemoteChatOptions = {}
   ): Promise<string> {
     // Forward complete messages to backend (same format as local mode)
     const requestBody = {
       messages,  // Pass complete messages array
-      context: options.context,
+      taskId: remoteChatOptions.taskId,
+      status: remoteChatOptions.status || 'begin',
+      context: remoteChatOptions.context,
       options: {
-        model: options.model
+        model: remoteChatOptions.model
       }
     };
 
@@ -378,12 +498,12 @@ export class RemoteAIClient extends EventEmitter {
     }
 
     // Handle abort signal
-    const controller = options.signal ? new AbortController() : undefined;
-    const abortSignal = options.signal || controller?.signal;
+    const controller = remoteChatOptions.signal ? new AbortController() : undefined;
+    const abortSignal = remoteChatOptions.signal || controller?.signal;
 
     // If external signal is provided, listen to it
-    if (options.signal) {
-      options.signal.addEventListener?.('abort', () => controller?.abort());
+    if (remoteChatOptions.signal) {
+      remoteChatOptions.signal.addEventListener?.('abort', () => controller?.abort());
     }
 
     try {
@@ -408,8 +528,59 @@ export class RemoteAIClient extends EventEmitter {
 
       if (!response.ok) {
         const errorText = await response.text();
-        const errorData = JSON.parse(errorText) as { error?: string };
-        throw new Error(errorData.error || `HTTP ${response.status}`);
+        let errorMessage: string;
+        let userFriendlyMessage: string;
+
+        // Provide user-friendly error messages based on status code
+        switch (response.status) {
+          case 400:
+            errorMessage = errorText ? JSON.parse(errorText).error || 'Bad Request' : 'Bad Request';
+            userFriendlyMessage = 'Invalid request parameters. Please check your input and try again.';
+            break;
+          case 401:
+            errorMessage = 'Unauthorized';
+            userFriendlyMessage = 'Your session has expired. Please log in again to continue.';
+            break;
+          case 413:
+            errorMessage = 'Payload Too Large';
+            userFriendlyMessage = 'Request data is too large. Possible solutions: 1) Reduce screenshot size; 2) Capture smaller area; 3) Use a smaller image.';
+            break;
+          case 429:
+            errorMessage = 'Too Many Requests';
+            userFriendlyMessage = 'XAgent service rate limit exceeded. Please wait a moment and try again.';
+            break;
+          case 500:
+            errorMessage = 'Internal Server Error';
+            userFriendlyMessage = 'Server error. Please try again later. If the problem persists, contact the administrator.';
+            break;
+          case 502:
+            errorMessage = 'Bad Gateway';
+            userFriendlyMessage = 'Gateway error. Service temporarily unavailable. Please try again later.';
+            break;
+          case 503:
+            errorMessage = 'Service Unavailable';
+            userFriendlyMessage = 'AI service request timed out. Please try again.';
+            break;
+          case 504:
+            errorMessage = 'Gateway Timeout';
+            userFriendlyMessage = 'Gateway timeout. Please try again later.';
+            break;
+          default:
+            try {
+              errorMessage = errorText ? JSON.parse(errorText).error || `HTTP ${response.status}` : `HTTP ${response.status}`;
+            } catch {
+              errorMessage = `HTTP ${response.status}`;
+            }
+            userFriendlyMessage = `Request failed with status code: ${response.status}`;
+        }
+
+        // Print user-friendly error message
+        console.error(`\n❌ VLM request failed (${response.status})`);
+        console.error(`   ${userFriendlyMessage}`);
+        if (this.showAIDebugInfo) {
+          console.error(`   Original error: ${errorMessage}`);
+        }
+        throw new Error(userFriendlyMessage);
       }
 
       const data = await response.json() as RemoteVLMResponse;

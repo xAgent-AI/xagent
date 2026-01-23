@@ -444,6 +444,7 @@ export class AuthService {
 
           if (token) {
             logger.info('Authentication successful! Received token');
+            console.log();  // 确保换行，让后续输入在新行显示
             cleanup();
 
             // Save refresh token if provided

@@ -1435,9 +1435,8 @@ export class InteractiveSession {
     // SDK mode: use structured output instead of spinner
 
     if (this.isSdkMode && this.sdkOutputAdapter) {
-      this.output('thinking', 'compact', {
-        content: 'Thinking... (Press ESC to cancel)',
-        status: 'started',
+      this.output('system', 'info', {
+        message: 'Processing request...',
       });
     } else {
       // Custom spinner: only icon rotates, text stays static
@@ -1512,9 +1511,8 @@ export class InteractiveSession {
       );
 
       if (this.isSdkMode && this.sdkOutputAdapter) {
-        this.output('thinking', 'compact', {
-          content: 'Thinking... (Press ESC to cancel)',
-          status: 'completed',
+        this.output('system', 'info', {
+          message: 'Request processed',
         });
       } else {
         if (spinnerInterval) {
@@ -1590,18 +1588,11 @@ export class InteractiveSession {
         this._currentRequestId = null;
       }
     } catch (error: any) {
-      if (this.isSdkMode && this.sdkOutputAdapter) {
-        this.output('thinking', 'compact', {
-          content: 'Thinking... (Press ESC to cancel)',
-          status: 'completed',
-        });
-      } else {
-        if (spinnerInterval) {
-          clearInterval(spinnerInterval);
-        }
-
-        process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
+      if (spinnerInterval) {
+        clearInterval(spinnerInterval);
       }
+
+      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
 
       // Clear the operation flag
 
@@ -1769,17 +1760,10 @@ export class InteractiveSession {
         this._currentRequestId = null;
       }
     } catch (error: any) {
-      if (this.isSdkMode && this.sdkOutputAdapter) {
-        this.output('thinking', 'compact', {
-          content: 'Thinking... (Press ESC to cancel)',
-          status: 'completed',
-        });
-      } else {
-        if (spinnerInterval) {
-          clearInterval(spinnerInterval);
-        }
-        process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
+      if (spinnerInterval) {
+        clearInterval(spinnerInterval);
       }
+      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
 

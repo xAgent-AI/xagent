@@ -209,12 +209,13 @@ export class InteractiveSession {
 
       logger.debug('[SESSION] Config loaded');
       let authConfig = this.configManager.getAuthConfig();
-      const selectedAuthType = this.configManager.get('selectedAuthType');
+      let selectedAuthType = this.configManager.get('selectedAuthType');
 
       logger.debug('[SESSION] authConfig.apiKey exists:', String(!!authConfig.apiKey));
-      logger.debug('[SESSION] selectedAuthType:', String(selectedAuthType));
+      logger.debug('[SESSION] selectedAuthType (initial):', String(selectedAuthType));
       logger.debug('[SESSION] AuthType.OAUTH_XAGENT:', String(AuthType.OAUTH_XAGENT));
-      logger.debug('[SESSION] Will validate:', String(!!(authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT)));
+      logger.debug('[SESSION] AuthType.OPENAI_COMPATIBLE:', String(AuthType.OPENAI_COMPATIBLE));
+      logger.debug('[SESSION] Will validate OAuth:', String(!!(authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT)));
 
       // Only validate OAuth tokens, skip validation for third-party API keys
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
@@ -244,9 +245,9 @@ export class InteractiveSession {
           console.log('');
 
           // Clear invalid credentials and persist
+          // Note: Do NOT overwrite selectedAuthType - let user re-select their preferred auth method
           await this.configManager.set('apiKey', '');
           await this.configManager.set('refreshToken', '');
-          await this.configManager.set('selectedAuthType', AuthType.OAUTH_XAGENT);
           await this.configManager.save('global');
 
           await this.configManager.load();
@@ -271,6 +272,8 @@ export class InteractiveSession {
         spinner.stop();
         await this.setupAuthentication();
         authConfig = this.configManager.getAuthConfig();
+        selectedAuthType = this.configManager.get('selectedAuthType');
+        logger.debug('[SESSION] selectedAuthType (after setup):', String(selectedAuthType));
 
         // Recreate readline interface after inquirer
         this.rl.close();
@@ -289,6 +292,8 @@ export class InteractiveSession {
       this.contextCompressor.setAIClient(this.aiClient);
 
       // Initialize remote AI client for OAuth XAGENT mode
+      logger.debug('[SESSION] Final selectedAuthType:', String(selectedAuthType));
+      logger.debug('[SESSION] Creating RemoteAIClient?', String(selectedAuthType === AuthType.OAUTH_XAGENT));
       if (selectedAuthType === AuthType.OAUTH_XAGENT) {
         const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://154.8.140.52:443';
         // In OAuth XAGENT mode, we still pass apiKey (can be empty or used for other purposes)
@@ -663,7 +668,12 @@ export class InteractiveSession {
     await this.checkAndCompressContext(lastUserMessage);
 
     // Use remote AI client if available (OAuth XAGENT mode)
-          logger.debug('[DEBUG processUserMessage] this.remoteAIClient exists:', !!this.remoteAIClient ? 'true' : 'false');    if (this.remoteAIClient) {
+    const currentSelectedAuthType = this.configManager.get('selectedAuthType');
+    logger.debug('[DEBUG processUserMessage] remoteAIClient exists:', !!this.remoteAIClient ? 'true' : 'false');
+    logger.debug('[DEBUG processUserMessage] selectedAuthType:', String(currentSelectedAuthType));
+    logger.debug('[DEBUG processUserMessage] AuthType.OAUTH_XAGENT:', String(AuthType.OAUTH_XAGENT));
+
+    if (this.remoteAIClient) {
       logger.debug('[DEBUG processUserMessage] Using generateRemoteResponse');
       await this.generateRemoteResponse(thinkingTokens);
     } else {
@@ -1220,9 +1230,9 @@ export class InteractiveSession {
         console.log('');
 
         // Clear invalid credentials and persist
+        // Note: Do NOT overwrite selectedAuthType - preserve user's chosen auth method
         await this.configManager.set('apiKey', '');
         await this.configManager.set('refreshToken', '');
-        await this.configManager.set('selectedAuthType', AuthType.OAUTH_XAGENT);
         await this.configManager.save('global');
 
         logger.debug('[DEBUG generateRemoteResponse] Cleared invalid credentials, starting re-authentication...');

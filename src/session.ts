@@ -921,32 +921,6 @@ export class InteractiveSession {
         }))
       ];
 
-      // Debug: Print full prompt info
-      // const logger = new Logger({ minLevel: LogLevel.DEBUG });
-      // logger.debug('[DEBUG] Full Prompt to be sent to AI:');
-      // console.log('\n' + '='.repeat(60));
-      // console.log('【SYSTEM PROMPT】');
-      // console.log('-'.repeat(60));
-      // console.log(messages[0]?.content || '(none)');
-      // console.log('='.repeat(60));
-      // console.log('【CONVERSATION】');
-      // console.log('-'.repeat(60));
-      // messages.slice(1).forEach((msg, idx) => {
-      //   const contentStr = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-      //   console.log(`[${idx + 1}] [${msg.role}]: ${contentStr.substring(0, 200)}${contentStr.length > 200 ? '...' : ''}`);
-      // });
-      // console.log('='.repeat(60));
-      // console.log(`【AVAILABLE TOOLS】: ${availableTools.length} items`);
-      // availableTools.forEach((tool: any) => {
-      //   console.log(`  - ${tool.function.name}`);
-            // });      // console.log('='.repeat(60) + '\n');
-      
-            // Debug: Print AI input info (moved to ai-client.ts)
-            // if (this.configManager.get('showAIDebugInfo')) {
-            //   this.displayAIDebugInfo('INPUT', messages, availableTools);
-            // }
-      
-            // Generate AI response with cancellation support
       const operationId = `ai-response-${Date.now()}`;
       const response = await this.cancellationManager.withCancellation(
         chatCompletion(messages, {
@@ -962,19 +936,10 @@ export class InteractiveSession {
 
       const assistantMessage = response.choices[0].message;
 
-      // Debug: Print AI output info (moved to ai-client.ts)
-      // if (this.configManager.get('showAIDebugInfo')) {
-      //   this.displayAIDebugInfo('OUTPUT', response, assistantMessage);
-      // }
-
       const content = typeof assistantMessage.content === 'string'
         ? assistantMessage.content
         : '';
       const reasoningContent = assistantMessage.reasoning_content || '';
-
-      // console.error('[SESSION DEBUG] assistantMessage:', JSON.stringify(assistantMessage).substring(0, 200));
-      // console.error('[SESSION DEBUG] content:', content);
-
       // Display reasoning content if available and thinking mode is enabled
       if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
         this.displayThinkingContent(reasoningContent);
@@ -1032,6 +997,12 @@ export class InteractiveSession {
           await this.remoteAIClient.cancelTask(this.currentTaskId);
         }
         return;
+      }
+
+      // Mark task as cancelled when error occurs (发送 status: 'cancel')
+      logger.debug(`[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}`);
+      if (this.remoteAIClient && this.currentTaskId) {
+        await this.remoteAIClient.cancelTask(this.currentTaskId);
       }
 
       console.log(colors.error(`Error: ${error.message}`));
@@ -1258,6 +1229,12 @@ export class InteractiveSession {
         return this.generateRemoteResponse(thinkingTokens);
       }
 
+      // Mark task as cancelled when error occurs (发送 status: 'cancel')
+      logger.debug(`[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}`);
+      if (this.remoteAIClient && this.currentTaskId) {
+        await this.remoteAIClient.cancelTask(this.currentTaskId);
+      }
+
       console.log(colors.error(`Error: ${error.message}`));
       return;
     }
@@ -1482,6 +1459,7 @@ export class InteractiveSession {
     );
 
     // Process results and maintain order
+    let hasError = false;
     for (const { tool, result, error } of results) {
       const toolCall = preparedToolCalls.find(tc => tc.name === tool);
       if (!toolCall) continue;
@@ -1495,6 +1473,8 @@ export class InteractiveSession {
         if (error === 'Operation cancelled by user') {
           return;
         }
+
+        hasError = true;
 
         console.log('');
         console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
@@ -1569,6 +1549,11 @@ export class InteractiveSession {
       console.log(`${indent}${colors.textMuted('GUI task cancelled by user')}`);
       (this as any)._isOperationInProgress = false;
       return;
+    }
+
+    // If any tool call failed, throw error to mark task as cancelled
+    if (hasError) {
+      throw new Error('Tool execution failed');
     }
 
     // For all other cases (GUI success/failure, other tool errors), return results to main agent

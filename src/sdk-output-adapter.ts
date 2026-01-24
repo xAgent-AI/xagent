@@ -9,6 +9,41 @@
 
 import { ChatMessage, SessionInput, SessionOutput } from './types.js';
 
+// GUI Agent types (re-exported for SDK usage)
+export type GUIAgentStatus = 'init' | 'running' | 'paused' | 'end' | 'error' | 'user_stopped' | 'call_user';
+
+export interface GUIAgentOutput {
+  type: 'status' | 'conversation' | 'action' | 'screenshot' | 'error' | 'complete';
+  timestamp: number;
+  data: Record<string, unknown>;
+}
+
+export interface GUIAgentConversation {
+  from: 'human' | 'assistant';
+  value: string;
+  screenshotBase64?: string;
+  screenshotContext?: {
+    size: { width: number; height: number };
+    mime?: string;
+    scaleFactor: number;
+  };
+  actionType?: string;
+  actionInputs?: Record<string, unknown>;
+  timing?: {
+    start: number;
+    end: number;
+    cost: number;
+  };
+  predictionParsed?: Array<{
+    action_type: string;
+    [key: string]: unknown;
+  }>;
+}
+
+export interface GUIAgentHandler {
+  (output: GUIAgentOutput): void;
+}
+
 export interface SdkOutputMessage {
   type: 'output' | 'input' | 'system' | 'tool' | 'error' | 'thinking' | 'result';
   subtype?: string;
@@ -467,6 +502,174 @@ export class SdkOutputAdapter {
         status
       }
     });
+  }
+
+  // ==================== GUI Agent Output Methods ====================
+
+  /**
+   * Format and output GUI agent start.
+   */
+  outputGUIAgentStart(description: string, mode: 'local' | 'remote'): void {
+    this.output({
+      type: 'system',
+      subtype: 'gui_agent_start',
+      timestamp: Date.now(),
+      data: {
+        description,
+        mode
+      }
+    });
+  }
+
+  /**
+   * Format and output GUI agent status update.
+   */
+  outputGUIAgentStatus(status: GUIAgentStatus, iteration?: number, error?: string): void {
+    this.output({
+      type: 'system',
+      subtype: `gui_status_${status}`,
+      timestamp: Date.now(),
+      data: {
+        status,
+        iteration,
+        error
+      }
+    });
+  }
+
+  /**
+   * Format and output GUI agent action/step.
+   */
+  outputGUIAgentAction(iteration: number, actionType: string, cost?: number): void {
+    this.output({
+      type: 'output',
+      subtype: 'gui_action',
+      timestamp: Date.now(),
+      data: {
+        iteration,
+        actionType,
+        cost
+      }
+    });
+  }
+
+  /**
+   * Format and output GUI agent conversation (screenshot).
+   */
+  outputGUIConversation(iteration: number, from: 'human' | 'assistant', cost?: number): void {
+    this.output({
+      type: 'output',
+      subtype: 'gui_conversation',
+      timestamp: Date.now(),
+      data: {
+        iteration,
+        from,
+        cost
+      }
+    });
+  }
+
+  /**
+   * Format and output GUI agent completion.
+   */
+  outputGUIAgentComplete(description: string, iterations: number): void {
+    this.output({
+      type: 'system',
+      subtype: 'gui_complete',
+      timestamp: Date.now(),
+      data: {
+        description,
+        iterations,
+        message: `GUI task completed in ${iterations} iterations`
+      }
+    });
+  }
+
+  /**
+   * Format and output GUI agent cancellation.
+   */
+  outputGUIAgentCancelled(description: string): void {
+    this.output({
+      type: 'system',
+      subtype: 'gui_cancelled',
+      timestamp: Date.now(),
+      data: {
+        description,
+        message: 'GUI task cancelled by user'
+      }
+    });
+  }
+
+  /**
+   * Format and output GUI agent error.
+   */
+  outputGUIAgentError(description: string, error: string): void {
+    this.output({
+      type: 'error',
+      subtype: 'gui_error',
+      timestamp: Date.now(),
+      data: {
+        description,
+        error
+      }
+    });
+  }
+
+  /**
+   * Create a GUI Agent output handler that maps GUIAgentOutput to SDK format.
+   * This handler can be passed directly to GUIAgent.
+   */
+  createGUIAgentHandler(): GUIAgentHandler {
+    return (output: GUIAgentOutput) => {
+      switch (output.type) {
+        case 'action':
+          this.output({
+            type: 'system',
+            subtype: 'gui_action',
+            timestamp: output.timestamp,
+            data: output.data
+          });
+          break;
+        case 'status':
+          this.outputGUIAgentStatus(
+            output.data.status as GUIAgentStatus,
+            output.data.iteration as number | undefined,
+            output.data.error as string | undefined
+          );
+          break;
+        case 'conversation':
+          this.outputGUIConversation(
+            output.data.iteration as number,
+            output.data.from as 'human' | 'assistant',
+            (output.data.timing as { cost: number } | undefined)?.cost
+          );
+          break;
+        case 'complete':
+          this.output({
+            type: 'system',
+            subtype: 'gui_complete',
+            timestamp: output.timestamp,
+            data: output.data
+          });
+          break;
+        case 'error':
+          this.output({
+            type: 'error',
+            subtype: 'gui_error',
+            timestamp: output.timestamp,
+            data: output.data
+          });
+          break;
+        case 'screenshot':
+          this.output({
+            type: 'output',
+            subtype: 'gui_screenshot',
+            timestamp: output.timestamp,
+            data: output.data
+          });
+          break;
+      }
+    };
   }
 
   /**

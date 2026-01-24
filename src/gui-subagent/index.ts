@@ -107,6 +107,7 @@ export async function createGUISubAgent<T extends Operator>(
     maxLoopCount: mergedConfig.maxLoopCount,
     showAIDebugInfo: mergedConfig.showAIDebugInfo,
     signal: abortController.signal,
+    sdkOutputHandler: mergedConfig.sdkOutputHandler,
   };
 
   const agent = new GUIAgent<T>(agentConfig);

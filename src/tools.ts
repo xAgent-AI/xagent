@@ -1170,9 +1170,29 @@ export class TaskTool implements Tool {
   ): Promise<{ success: boolean; cancelled?: boolean; message: string; result?: any }> {
     const indent = '  '.repeat(indentLevel);
 
-    console.log(`${indent}${colors.primaryBright(`${icons.robot} GUI Agent`)}: ${description}`);
-    console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
-    console.log('');
+    // SDK mode output helper
+    const sdkOutput = (type: string, subtype: string, data: Record<string, unknown>) => {
+      if (isSdkMode && sdkOutputAdapter) {
+        sdkOutputAdapter.output({
+          type: type as any,
+          subtype,
+          timestamp: Date.now(),
+          data
+        });
+      }
+    };
+
+    // SDK mode: output header
+    if (isSdkMode) {
+      sdkOutput('system', 'gui_agent_start', {
+        description,
+        mode: remoteAIClient ? 'remote' : 'local'
+      });
+    } else {
+      console.log(`${indent}${colors.primaryBright(`${icons.robot} GUI Agent`)}: ${description}`);
+      console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
+      console.log('');
+    }
 
     // Get VLM configuration (used for local mode fallback)
     const baseUrl = config.get('guiSubagentBaseUrl') || config.get('baseUrl') || '';
@@ -1184,20 +1204,36 @@ export class TaskTool implements Tool {
 
     // Log mode information
     if (isRemoteMode) {
-      console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
-    } else {
-      console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
-      // Local mode requires configuration check
-      if (!baseUrl) {
-        return {
-          success: false,
-          message: `GUI task "${description}" failed: No valid API URL configured`
-        };
+      if (isSdkMode) {
+        sdkOutput('system', 'info', {
+          message: 'Using remote VLM service'
+        });
+      } else {
+        console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
       }
-      console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
-      console.log(`${indent}${colors.textMuted(`  Base URL: ${baseUrl}`)}`);
+    } else {
+      if (isSdkMode) {
+        sdkOutput('system', 'info', {
+          message: 'Using local VLM configuration',
+          model: modelName,
+          baseUrl
+        });
+      } else {
+        console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
+        // Local mode requires configuration check
+        if (!baseUrl) {
+          return {
+            success: false,
+            message: `GUI task "${description}" failed: No valid API URL configured`
+          };
+        }
+        console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
+        console.log(`${indent}${colors.textMuted(`  Base URL: ${baseUrl}`)}`);
+      }
     }
-    console.log('');
+    if (!isSdkMode) {
+      console.log('');
+    }
 
     // Create remoteVlmCaller using the unified method (handles both local and remote modes)
     const remoteVlmCaller = this.createRemoteVlmCaller(remoteAIClient, { baseUrl, apiKey, modelName });
@@ -1259,6 +1295,11 @@ export class TaskTool implements Tool {
       // Import and create GUIAgent
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
 
+      // SDK mode: create output handler for GUI Agent using SdkOutputAdapter
+      const sdkOutputHandler = isSdkMode && sdkOutputAdapter
+        ? sdkOutputAdapter.createGUIAgentHandler()
+        : undefined;
+
       const guiAgent = await createGUISubAgent({
         model: !isRemoteMode ? modelName : undefined,
         modelBaseUrl: !isRemoteMode ? baseUrl : undefined,
@@ -1268,6 +1309,7 @@ export class TaskTool implements Tool {
         maxLoopCount: 30,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
+        sdkOutputHandler,
       });
 
       // Add constraints to prompt if any
@@ -1283,8 +1325,17 @@ export class TaskTool implements Tool {
       if (cancelled || cancellationManager.isOperationCancelled()) {
         cleanupStdinPolling();
         cancellationManager.off('cancelled', cancelHandler);
-        // Flush stdout to prevent residual output after prompt
-        process.stdout.write('\n');
+
+        // SDK mode: output cancellation
+        if (isSdkMode) {
+          sdkOutput('system', 'gui_cancelled', {
+            description,
+            message: 'GUI task cancelled by user'
+          });
+        } else {
+          // Flush stdout to prevent residual output after prompt
+          process.stdout.write('\n');
+        }
         return {
           success: true,
           cancelled: true,  // Mark as cancelled so main agent won't continue
@@ -1297,12 +1348,22 @@ export class TaskTool implements Tool {
       cancellationManager.off('cancelled', cancelHandler);
 
       // Flush stdout to ensure all output is displayed before returning
-      process.stdout.write('\n');
+      if (!isSdkMode) {
+        process.stdout.write('\n');
+      }
 
       // Return result based on GUIAgent status
       if (result.status === 'end') {
         const iterations = result.conversations.filter(c => c.from === 'human' && c.screenshotBase64).length;
-        console.log(`${indent}${colors.success(`${icons.check} GUI task completed in ${iterations} iterations`)}`);
+        if (isSdkMode) {
+          sdkOutput('system', 'gui_complete', {
+            description,
+            iterations,
+            message: `GUI task completed in ${iterations} iterations`
+          });
+        } else {
+          console.log(`${indent}${colors.success(`${icons.check} GUI task completed in ${iterations} iterations`)}`);
+        }
         return {
           success: true,
           message: `GUI task "${description}" completed`,
@@ -1317,6 +1378,12 @@ export class TaskTool implements Tool {
       } else {
         // status is 'error' or other non-success status
         const errorMsg = result.error || 'Unknown error';
+        if (isSdkMode) {
+          sdkOutput('error', 'gui_error', {
+            description,
+            message: errorMsg
+          });
+        }
         return {
           success: false,
           message: `GUI task "${description}" failed: ${errorMsg}`
@@ -1326,12 +1393,18 @@ export class TaskTool implements Tool {
       cleanupStdinPolling();
       cancellationManager.off('cancelled', cancelHandler);
 
-      // Flush stdout to prevent residual output
-      process.stdout.write('\n');
-
       // If the user cancelled the task, ignore any API errors (like 429)
       // and return cancelled status instead
       if (cancelled || cancellationManager.isOperationCancelled()) {
+        if (isSdkMode) {
+          sdkOutput('system', 'gui_cancelled', {
+            description,
+            message: 'GUI task cancelled by user'
+          });
+        } else {
+          // Flush stdout to prevent residual output
+          process.stdout.write('\n');
+        }
         return {
           success: true,
           cancelled: true,  // Mark as cancelled so main agent won't continue
@@ -1341,11 +1414,31 @@ export class TaskTool implements Tool {
       }
 
       if (error.message === 'Operation cancelled by user') {
+        if (isSdkMode) {
+          sdkOutput('system', 'gui_cancelled', {
+            description,
+            message: 'GUI task cancelled by user'
+          });
+        } else {
+          // Flush stdout to prevent residual output
+          process.stdout.write('\n');
+        }
         return {
           success: true,
           message: `GUI task "${description}" cancelled by user`,
           result: 'Task cancelled'
         };
+      }
+
+      // SDK mode: output error
+      if (isSdkMode) {
+        sdkOutput('error', 'gui_error', {
+          description,
+          message: error.message
+        });
+      } else {
+        // Flush stdout to prevent residual output
+        process.stdout.write('\n');
       }
 
       // Return failure without throwing - let the main agent handle it

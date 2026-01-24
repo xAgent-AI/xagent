@@ -45,6 +45,7 @@ export class InteractiveSession {
   private indentString: string;
   private remoteConversationId: string | null = null;
   private currentTaskId: string | null = null;
+  private taskCompleted: boolean = false;
 
     constructor(indentLevel: number = 0) {
 
@@ -1068,6 +1069,9 @@ export class InteractiveSession {
     // Mark that an operation is in progress
     (this as any)._isOperationInProgress = true;
 
+    // Reset taskCompleted flag for each new API call
+    this.taskCompleted = false;
+
     // Custom spinner: only icon rotates, text stays static
     const spinnerInterval = setInterval(() => {
       process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
@@ -1188,9 +1192,11 @@ export class InteractiveSession {
       // Operation completed successfully
       (this as any)._isOperationInProgress = false;
 
-      // Mark task as completed (发送 status: 'end')
-      logger.debug(`[Session] Task completed: taskId=${this.currentTaskId}`);
-      if (this.remoteAIClient && this.currentTaskId) {
+      // Mark task as completed only when there's no tool call (final response)
+      // If there are tool calls, handleRemoteToolCalls will handle completion
+      if (toolCalls.length === 0 && this.remoteAIClient && this.currentTaskId && !this.taskCompleted) {
+        this.taskCompleted = true;
+        logger.debug(`[Session] DEBUG: Calling completeTask for taskId=${this.currentTaskId}`);
         await this.remoteAIClient.completeTask(this.currentTaskId);
       }
 
@@ -1571,7 +1577,20 @@ export class InteractiveSession {
       return;
     }
 
-    // For all other cases (GUI success/failure, other tool errors), return results to main agent
+    // For GUI subtask that completed successfully, complete the task
+    // This is the final step of a GUI task
+    if (guiSubagentFailed && !guiSubagentCancelled) {
+      // GUI subtask completed (success or failure), mark the main task as complete
+      if (this.remoteAIClient && this.currentTaskId && !this.taskCompleted) {
+        this.taskCompleted = true;
+        logger.debug(`[Session] DEBUG: Calling completeTask for GUI subtask, taskId=${this.currentTaskId}`);
+        await this.remoteAIClient.completeTask(this.currentTaskId);
+      }
+      (this as any)._isOperationInProgress = false;
+      return;
+    }
+
+    // For all other cases (non-GUI tools), return results to main agent
     // This allows main agent to decide how to handle failures (retry, fallback, user notification, etc.)
     // Reuse existing taskId instead of generating new one
     await this.generateRemoteResponse(0, this.currentTaskId || undefined);

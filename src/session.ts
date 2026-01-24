@@ -2,6 +2,7 @@ import readline from 'readline';
 import chalk from 'chalk';
 import https from 'https';
 import axios from 'axios';
+import crypto from 'crypto';
 import ora from 'ora';
 import inquirer from 'inquirer';
 import { ExecutionMode, ChatMessage, ToolCall, AuthType } from './types.js';
@@ -46,6 +47,9 @@ export class InteractiveSession {
   private indentLevel: number;
   private indentString: string;
   private remoteConversationId: string | null = null;
+  private currentTaskId: string | null = null;
+  private taskCompleted: boolean = false;
+  private isFirstApiCall: boolean = true;
 
     constructor(indentLevel: number = 0) {
 
@@ -837,10 +841,10 @@ export class InteractiveSession {
    * Create unified LLM Caller
    * Implement transparency: caller doesn't need to care about remote vs local mode
    */
-  private createLLMCaller() {
+  private createLLMCaller(taskId: string, status: 'begin' | 'continue') {
     // Remote mode: use RemoteAIClient
     if (this.remoteAIClient) {
-      return this.createRemoteCaller();
+      return this.createRemoteCaller(taskId, status);
     }
 
     // Local mode: use AIClient
@@ -853,11 +857,11 @@ export class InteractiveSession {
   /**
    * Create remote mode LLM caller
    */
-  private createRemoteCaller() {
+  private createRemoteCaller(taskId: string, status: 'begin' | 'continue') {
     const client = this.remoteAIClient!;
     return {
-      chatCompletion: (messages: ChatMessage[], options: any) => 
-        client.chatCompletion(messages, options),
+      chatCompletion: (messages: ChatMessage[], options: any) =>
+        client.chatCompletion(messages, { ...options, taskId, status }),
       isRemote: true
     };
   }
@@ -875,8 +879,16 @@ export class InteractiveSession {
   }
 
   private async generateResponse(thinkingTokens: number = 0): Promise<void> {
-    // Use unified LLM Caller
-    const { chatCompletion, isRemote } = this.createLLMCaller();
+    // Create taskId for this user interaction (for remote mode tracking)
+    const taskId = crypto.randomUUID();
+    this.currentTaskId = taskId;
+    this.isFirstApiCall = true;
+
+    // Determine status based on whether this is the first API call
+    const status: 'begin' | 'continue' = this.isFirstApiCall ? 'begin' : 'continue';
+
+    // Use unified LLM Caller with taskId
+    const { chatCompletion, isRemote } = this.createRemoteCaller(taskId, status);
 
     if (!isRemote && !this.aiClient) {
       console.log(colors.error('AI client not initialized'));
@@ -963,6 +975,9 @@ export class InteractiveSession {
         operationId
       );
 
+      // Mark that first API call is complete
+      this.isFirstApiCall = false;
+
       clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r'); // Clear spinner line
 
@@ -1033,6 +1048,10 @@ export class InteractiveSession {
       (this as any)._isOperationInProgress = false;
 
       if (error.message === 'Operation cancelled by user') {
+        // Mark task as cancelled
+        if (this.remoteAIClient && this.currentTaskId) {
+          await this.remoteAIClient.cancelTask(this.currentTaskId);
+        }
         return;
       }
 
@@ -1044,10 +1063,26 @@ export class InteractiveSession {
    * Generate response using remote AI service（OAuth XAGENT 模式）
    * Support full tool calling loop
    * 与本地模式 generateResponse 保持一致
+   * @param thinkingTokens - Optional thinking tokens config
+   * @param existingTaskId - Optional existing taskId to reuse (for tool call continuation)
    */
-  private async generateRemoteResponse(thinkingTokens: number = 0): Promise<void> {
+  private async generateRemoteResponse(thinkingTokens: number = 0, existingTaskId?: string): Promise<void> {
+    // Reuse existing taskId or create new one for this user interaction
+    const taskId = existingTaskId || crypto.randomUUID();
+    this.currentTaskId = taskId;
+    logger.debug(`[Session] generateRemoteResponse: taskId=${taskId}, existingTaskId=${!!existingTaskId}`);
+
+    // Reset isFirstApiCall for new task, keep true for continuation
+    if (!existingTaskId) {
+      this.isFirstApiCall = true;
+    }
+
+    // Determine status based on whether this is the first API call
+    const status: 'begin' | 'continue' = this.isFirstApiCall ? 'begin' : 'continue';
+    logger.debug(`[Session] Status for this call: ${status}, isFirstApiCall=${this.isFirstApiCall}`);
+
     // 使用统一的 LLM Caller
-    const { chatCompletion, isRemote } = this.createLLMCaller();
+    const { chatCompletion, isRemote } = this.createLLMCaller(taskId, status);
 
     if (!isRemote) {
       // 如果不是远程模式，回退到本地模式
@@ -1062,6 +1097,9 @@ export class InteractiveSession {
 
     // Mark that an operation is in progress
     (this as any)._isOperationInProgress = true;
+
+    // Reset taskCompleted flag for each new API call
+    this.taskCompleted = false;
 
     // Custom spinner: only icon rotates, text stays static
     const spinnerInterval = setInterval(() => {
@@ -1124,6 +1162,9 @@ export class InteractiveSession {
         operationId
       );
 
+      // Mark that first API call is complete
+      this.isFirstApiCall = false;
+
       clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
       console.log('');
@@ -1178,6 +1219,14 @@ export class InteractiveSession {
           [...this.conversation],
           [...this.toolCalls]
         );
+      }
+
+      // Mark task as completed only when there's no tool call (final response)
+      // If there are tool calls, handleRemoteToolCalls will handle completion
+      if (toolCalls.length === 0 && this.remoteAIClient && this.currentTaskId && !this.taskCompleted) {
+        this.taskCompleted = true;
+        logger.debug(`[Session] DEBUG: Calling completeTask for taskId=${this.currentTaskId}`);
+        await this.remoteAIClient.completeTask(this.currentTaskId);
       }
 
       // Operation completed successfully
@@ -1561,9 +1610,23 @@ export class InteractiveSession {
       return;
     }
 
-    // For all other cases (GUI success/failure, other tool errors), return results to main agent
+    // For GUI subtask that completed successfully, complete the task
+    // This is the final step of a GUI task
+    if (guiSubagentFailed && !guiSubagentCancelled) {
+      // GUI subtask completed (success or failure), mark the main task as complete
+      if (this.remoteAIClient && this.currentTaskId && !this.taskCompleted) {
+        this.taskCompleted = true;
+        logger.debug(`[Session] DEBUG: Calling completeTask for GUI subtask, taskId=${this.currentTaskId}`);
+        await this.remoteAIClient.completeTask(this.currentTaskId);
+      }
+      (this as any)._isOperationInProgress = false;
+      return;
+    }
+
+    // For all other cases (non-GUI tools), return results to main agent
     // This allows main agent to decide how to handle failures (retry, fallback, user notification, etc.)
-    await this.generateRemoteResponse();
+    // Reuse existing taskId instead of generating new one
+    await this.generateRemoteResponse(0, this.currentTaskId || undefined);
   }
 
   /**

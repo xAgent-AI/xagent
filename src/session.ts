@@ -1101,9 +1101,6 @@ export class InteractiveSession {
     // Mark that an operation is in progress
     (this as any)._isOperationInProgress = true;
 
-    // Reset taskCompleted flag for each new API call
-    this.taskCompleted = false;
-
     // Custom spinner: only icon rotates, text stays static
     const spinnerInterval = setInterval(() => {
       process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
@@ -1231,9 +1228,6 @@ export class InteractiveSession {
         logger.debug(`[Session] DEBUG: Calling completeTask for taskId=${this.currentTaskId}`);
         await this.remoteAIClient.completeTask(this.currentTaskId);
       }
-
-      // Operation completed successfully
-      (this as any)._isOperationInProgress = false;
 
     } catch (error: any) {
       clearInterval(spinnerInterval);
@@ -1613,20 +1607,7 @@ export class InteractiveSession {
       return;
     }
 
-    // For GUI subtask that completed successfully, complete the task
-    // This is the final step of a GUI task
-    if (guiSubagentFailed && !guiSubagentCancelled) {
-      // GUI subtask completed (success or failure), mark the main task as complete
-      if (this.remoteAIClient && this.currentTaskId && !this.taskCompleted) {
-        this.taskCompleted = true;
-        logger.debug(`[Session] DEBUG: Calling completeTask for GUI subtask, taskId=${this.currentTaskId}`);
-        await this.remoteAIClient.completeTask(this.currentTaskId);
-      }
-      (this as any)._isOperationInProgress = false;
-      return;
-    }
-
-    // For all other cases (non-GUI tools), return results to main agent
+    // For all other cases (GUI success/failure, other tool errors), return results to main agent
     // This allows main agent to decide how to handle failures (retry, fallback, user notification, etc.)
     // Reuse existing taskId instead of generating new one
     await this.generateRemoteResponse(0, this.currentTaskId || undefined);

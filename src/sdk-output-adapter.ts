@@ -556,16 +556,18 @@ export class SdkOutputAdapter {
   /**
    * Format and output GUI agent conversation (screenshot).
    */
-  outputGUIConversation(iteration: number, from: 'human' | 'assistant', cost?: number): void {
+  outputGUIConversation(data: {
+    iteration: number;
+    from: 'human' | 'assistant';
+    actionType?: string;
+    indentLevel?: number;
+    timing?: { start: number; end: number; cost: number };
+  }): void {
     this.output({
       type: 'output',
       subtype: 'gui_conversation',
       timestamp: Date.now(),
-      data: {
-        iteration,
-        from,
-        cost
-      }
+      data
     });
   }
 
@@ -638,11 +640,13 @@ export class SdkOutputAdapter {
           );
           break;
         case 'conversation':
-          this.outputGUIConversation(
-            output.data.iteration as number,
-            output.data.from as 'human' | 'assistant',
-            (output.data.timing as { cost: number } | undefined)?.cost
-          );
+          this.outputGUIConversation({
+            iteration: output.data.iteration as number,
+            from: output.data.from as 'human' | 'assistant',
+            actionType: output.data.actionType as string | undefined,
+            indentLevel: output.data.indentLevel as number | undefined,
+            timing: output.data.timing as { start: number; end: number; cost: number } | undefined
+          });
           break;
         case 'complete':
           this.output({

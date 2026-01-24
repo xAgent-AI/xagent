@@ -870,8 +870,8 @@ export class InteractiveSession {
     const taskId = crypto.randomUUID();
     this.currentTaskId = taskId;
 
-    // Use unified LLM Caller with taskId
-    const { chatCompletion, isRemote } = this.createRemoteCaller(taskId);
+    // Use unified LLM Caller with taskId (automatically selects local or remote mode)
+    const { chatCompletion, isRemote } = this.createLLMCaller(taskId);
 
     if (!isRemote && !this.aiClient) {
       console.log(colors.error('AI client not initialized'));

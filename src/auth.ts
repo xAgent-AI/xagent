@@ -481,7 +481,7 @@ export class AuthService {
   }
 
   getAuthConfig(): AuthConfig {
-    return { ...this.authConfig };
+    return { ...this.authConfig, type: this.authConfig.type };
   }
 
   updateAuthConfig(config: Partial<AuthConfig>): void {

@@ -1051,12 +1051,13 @@ export class TaskTool implements Tool {
    */
   private createRemoteVlmCaller(
     remoteAIClient: any,
+    taskId: string | null,
     localConfig: { baseUrl: string; apiKey: string; modelName: string },
     signal?: AbortSignal
   ): (messages: any[], systemPrompt: string) => Promise<string> {
     // Remote mode: use RemoteAIClient
     if (remoteAIClient) {
-      return this.createRemoteVLMCaller(remoteAIClient, signal);
+      return this.createRemoteVLMCaller(remoteAIClient, taskId, signal);
     }
 
     // Local mode: use local API
@@ -1067,10 +1068,10 @@ export class TaskTool implements Tool {
    * Create remote VLM caller using RemoteAIClient
    * Now receives full messages array for consistent behavior with local mode
    */
-  private createRemoteVLMCaller(remoteAIClient: any, signal?: AbortSignal) {
+  private createRemoteVLMCaller(remoteAIClient: any, taskId: string | null, signal?: AbortSignal) {
     return async (messages: any[], systemPrompt: string): Promise<string> => {
       try {
-        return await remoteAIClient.invokeVLM(messages, systemPrompt, { signal });
+        return await remoteAIClient.invokeVLM(messages, systemPrompt, { signal, taskId });
       } catch (error: any) {
         throw new Error(`Remote VLM call failed: ${error.message}`);
       }
@@ -1167,8 +1168,20 @@ export class TaskTool implements Tool {
     }
     console.log('');
 
+    // Get taskId from session for tracking (remote mode only)
+    let taskId: string | null = null;
+    if (isRemoteMode) {
+      try {
+        const { getSingletonSession } = await import('./session.js');
+        const session = getSingletonSession();
+        taskId = session?.getTaskId() || null;
+      } catch (e) {
+        taskId = null;
+      }
+    }
+
     // Create remoteVlmCaller using the unified method (handles both local and remote modes)
-    const remoteVlmCaller = this.createRemoteVlmCaller(remoteAIClient, { baseUrl, apiKey, modelName });
+    const remoteVlmCaller = this.createRemoteVlmCaller(remoteAIClient, taskId, { baseUrl, apiKey, modelName });
 
     // Set up stdin polling for ESC cancellation
     let rawModeEnabled = false;

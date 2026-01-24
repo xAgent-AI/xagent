@@ -2,8 +2,6 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import https from 'https';
-import axios from 'axios';
 import { startInteractiveSession } from './session.js';
 import { getConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
@@ -25,6 +23,19 @@ const packageJsonPath = join(__dirname, '../package.json');
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
 
 const logger = getLogger();
+
+// Initialize CancellationManager early to set up ESC handler
+getCancellationManager();
+
+// Set up config provider for logger to read loggerLevel
+setConfigProvider(() => {
+  const configManager = getConfigManager();
+  return {
+    getLoggerLevel: () => configManager.getLoggerLevel()
+  };
+});
+
+const program = new Command();
 
 /**
  * Format error message for user-friendly display
@@ -87,19 +98,6 @@ function formatError(error: unknown): { message: string; suggestion: string } {
     suggestion: 'Please try again. If the problem persists, check your configuration.'
   };
 }
-
-// Initialize CancellationManager early to set up ESC handler
-getCancellationManager();
-
-// Set up config provider for logger to read loggerLevel
-setConfigProvider(() => {
-  const configManager = getConfigManager();
-  return {
-    getLoggerLevel: () => configManager.getLoggerLevel()
-  };
-});
-
-const program = new Command();
 
 program
   .name('xagent')
@@ -466,17 +464,22 @@ program
 
       if (!isLocalMode && authConfig.baseUrl) {
         const remoteBaseUrl = `${authConfig.baseUrl}/api/agent/vlm`;
-        const httpsAgent = new https.Agent({ rejectUnauthorized: false });
         remoteVlmCaller = async (messages: any[], _systemPrompt: string): Promise<string> => {
-          const response = await axios.post(remoteBaseUrl, { messages }, {
+          const response = await fetch(remoteBaseUrl, {
+            method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${authConfig.apiKey || ''}`
+              'Authorization': `Bearer ${authConfig.apiKey || ''}`,
             },
-            httpsAgent,
-            timeout: 120000
+            body: JSON.stringify({
+              messages
+            }),
           });
-          const result = response.data as { response?: string; content?: string; message?: string };
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Remote VLM error: ${response.status} - ${errorText}`);
+          }
+          const result = await response.json() as { response?: string; content?: string; message?: string };
           return result.response || result.content || result.message || '';
         };
       }

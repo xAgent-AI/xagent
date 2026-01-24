@@ -156,6 +156,9 @@ export class InteractiveSession {
     // Set this session as the singleton for access from other modules
     setSingletonSession(this);
 
+    // Initialize taskId for GUI operations
+    this.currentTaskId = crypto.randomUUID();
+
     const separator = icons.separator.repeat(60);
     console.log('');
     console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
@@ -1771,6 +1774,14 @@ export class InteractiveSession {
    */
   getRemoteAIClient(): RemoteAIClient | null {
     return this.remoteAIClient;
+  }
+
+  /**
+   * Get the current taskId for this user interaction
+   * Used by GUI operations to track the same task
+   */
+  getTaskId(): string | null {
+    return this.currentTaskId;
   }
 }
 

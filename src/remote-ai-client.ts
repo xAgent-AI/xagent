@@ -150,9 +150,74 @@ export class RemoteAIClient extends EventEmitter {
       if (this.showAIDebugInfo) {
         console.log('[RemoteAIClient] Request exception:', error.message);
       }
-      if (error.response?.status === 401) {
-        throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
+
+      // Provide user-friendly error messages based on status code
+      if (error.response) {
+        const status = error.response.status;
+        let errorMessage: string;
+        let userFriendlyMessage: string;
+
+        switch (status) {
+          case 400:
+            errorMessage = 'Bad Request';
+            userFriendlyMessage = 'Invalid request parameters. Please check your input and try again.';
+            break;
+          case 401:
+            throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
+          case 413:
+            errorMessage = 'Payload Too Large';
+            userFriendlyMessage = 'Request data is too large. Please reduce input content or screenshot size and try again.';
+            break;
+          case 429:
+            errorMessage = 'Too Many Requests';
+            userFriendlyMessage = 'XAgent service rate limit exceeded. Please wait a moment and try again.';
+            break;
+          case 500:
+            // Try to parse server's detailed error message
+            try {
+              const errorData = error.response.data || null;
+              errorMessage = errorData?.error || 'Internal Server Error';
+              if (errorData?.error && errorData?.errorType === 'AI_SERVICE_ERROR') {
+                userFriendlyMessage = `${errorData.error}\n\nSuggestion: ${errorData.suggestion}`;
+              } else {
+                userFriendlyMessage = errorData?.error || 'Server error. Please try again later. If the problem persists, contact the administrator.';
+              }
+            } catch {
+              errorMessage = 'Internal Server Error';
+              userFriendlyMessage = 'Server error. Please try again later. If the problem persists, contact the administrator.';
+            }
+            break;
+          case 502:
+            errorMessage = 'Bad Gateway';
+            userFriendlyMessage = 'Gateway error. Service temporarily unavailable. Please try again later.';
+            break;
+          case 503:
+            errorMessage = 'Service Unavailable';
+            userFriendlyMessage = 'AI service request timed out. Please try again.';
+            break;
+          case 504:
+            errorMessage = 'Gateway Timeout';
+            userFriendlyMessage = 'Gateway timeout. Please try again later.';
+            break;
+          default:
+            try {
+              errorMessage = error.response.data?.error || `HTTP ${status}`;
+            } catch {
+              errorMessage = `HTTP ${status}`;
+            }
+            userFriendlyMessage = `Request failed with status code: ${status}`;
+        }
+
+        // Print user-friendly error message
+        console.error(`\n❌ Request failed (${status})`);
+        console.error(`   ${userFriendlyMessage}`);
+        if (this.showAIDebugInfo) {
+          console.error(`   Original error: ${errorMessage}`);
+        }
+        throw new Error(userFriendlyMessage);
       }
+
+      // Network error or other error
       throw error;
     }
   }

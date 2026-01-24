@@ -152,8 +152,20 @@ export class RemoteAIClient extends EventEmitter {
             userFriendlyMessage = 'XAgent service rate limit exceeded. Please wait a moment and try again.';
             break;
           case 500:
-            errorMessage = 'Internal Server Error';
-            userFriendlyMessage = 'Server error. Please try again later. If the problem persists, contact the administrator.';
+            // Try to parse server's detailed error message
+            try {
+              const errorData = errorText ? JSON.parse(errorText) : null;
+              errorMessage = errorData?.error || 'Internal Server Error';
+              // If server provides detailed error, show it
+              if (errorData?.error && errorData?.errorType === 'AI_SERVICE_ERROR') {
+                userFriendlyMessage = `${errorData.error}\n\nSuggestion: ${errorData.suggestion}`;
+              } else {
+                userFriendlyMessage = errorData?.error || 'Server error. Please try again later. If the problem persists, contact the administrator.';
+              }
+            } catch {
+              errorMessage = 'Internal Server Error';
+              userFriendlyMessage = 'Server error. Please try again later. If the problem persists, contact the administrator.';
+            }
             break;
           case 502:
             errorMessage = 'Bad Gateway';
@@ -550,8 +562,20 @@ export class RemoteAIClient extends EventEmitter {
             userFriendlyMessage = 'XAgent service rate limit exceeded. Please wait a moment and try again.';
             break;
           case 500:
-            errorMessage = 'Internal Server Error';
-            userFriendlyMessage = 'Server error. Please try again later. If the problem persists, contact the administrator.';
+            // Try to parse server's detailed error message
+            try {
+              const errorData = errorText ? JSON.parse(errorText) : null;
+              errorMessage = errorData?.error || 'Internal Server Error';
+              // If server provides detailed error, show it
+              if (errorData?.error && errorData?.errorType === 'AI_SERVICE_ERROR') {
+                userFriendlyMessage = `${errorData.error}\n\nSuggestion: ${errorData.suggestion}`;
+              } else {
+                userFriendlyMessage = errorData?.error || 'Server error. Please try again later. If the problem persists, contact the administrator.';
+              }
+            } catch {
+              errorMessage = 'Internal Server Error';
+              userFriendlyMessage = 'Server error. Please try again later. If the problem persists, contact the administrator.';
+            }
             break;
           case 502:
             errorMessage = 'Bad Gateway';

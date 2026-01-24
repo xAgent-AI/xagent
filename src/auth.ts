@@ -1,7 +1,6 @@
 import axios from 'axios';
 import open from 'open';
 import inquirer from 'inquirer';
-import http from 'http';
 import { AuthConfig, AuthType } from './types.js';
 import { getLogger } from './logger.js';
 
@@ -408,8 +407,8 @@ export class AuthService {
     // Use xagentApiBaseUrl from config, fallback to default
     const webBaseUrl = this.authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
     const authUrl = `${webBaseUrl}/login`;
-    // Callback URL must use the same domain as the web to ensure proper routing
-    const callbackUrl = 'http://xagent-colife.net:8080/callback';
+    // Store callback URL in localStorage for web to read
+    const callbackUrl = 'http://localhost:8080/callback';
 
     // 如果已有保存的token，通过URL参数传给Web页面
     const existingToken = this.authConfig.apiKey;
@@ -424,79 +423,76 @@ export class AuthService {
       }
     }
 
-    // Start HTTP server to receive callback, then open browser
-    return new Promise((resolve, reject) => {
+    // Open browser for login, then poll for token
+    return new Promise(async (resolve, reject) => {
       let timeoutId: NodeJS.Timeout | null = null;
-      let server: http.Server | null = null;
+      let pollIntervalId: NodeJS.Timeout | null = null;
 
       const cleanup = () => {
         if (timeoutId) {
           clearTimeout(timeoutId);
           timeoutId = null;
         }
+        if (pollIntervalId) {
+          clearInterval(pollIntervalId);
+          pollIntervalId = null;
+        }
       };
 
-      const serverCallback = (req: any, res: any) => {
-        if (req.url.startsWith('/callback')) {
-          const url = new URL(req.url, `http://${req.headers.host}`);
-          const token = url.searchParams.get('token');
-          const refreshToken = url.searchParams.get('refreshToken');
-
-          if (token) {
-            logger.info('Authentication successful! Received token');
-            console.log();  // 确保换行，让后续输入在新行显示
-            cleanup();
-
-            // Save refresh token if provided
-            if (refreshToken) {
-              this.authConfig.refreshToken = refreshToken;
+      // Poll for token from server
+      const pollForToken = async (): Promise<string | null> => {
+        try {
+          const getTokenUrl = `${webBaseUrl}/api/cli/get-token`;
+          const response = await fetch(getTokenUrl, {
+            method: 'GET',
+            headers: {
+              'Content-Type': 'application/json'
             }
+          });
 
-            // Redirect directly to home page after successful authentication
-            // Use the same webBaseUrl that was used to open the login page
-            const redirectUrl = `${webBaseUrl}/`;
-            res.writeHead(302, { 'Location': redirectUrl });
-            res.end();
-            if (server) {
-              server.close();
+          if (response.ok) {
+            const data = await response.json() as { token?: string; refreshToken?: string };
+            if (data.token) {
+              logger.info('Authentication successful! Received token from server');
+              console.log();
+              if (data.refreshToken) {
+                this.authConfig.refreshToken = data.refreshToken;
+              }
+              return data.token;
             }
-            resolve(token);
-          } else {
-            logger.warn('No token in callback URL');
-            cleanup();
-
-            res.writeHead(400, { 'Content-Type': 'text/html' });
-            res.end('<h1>Authentication Failed: No token</h1>');
-            if (server) {
-              server.close();
-            }
-            reject(new Error('No token received'));
           }
-        } else if (req.url === '/' || req.url === '') {
-          // Root path - likely a redirect from the web app
-          res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end('<html><body><h1>XAGENT CLI Authentication Callback Server</h1><p>Waiting for authentication...</p></body></html>');
-        } else {
-          res.writeHead(404, { 'Content-Type': 'text/plain' });
-          res.end('Not Found');
+          return null;
+        } catch (error) {
+          // Server might not be ready, continue polling
+          return null;
         }
       };
 
-      server = http.createServer(serverCallback);
-
-      // Set timeout timer (after server is created)
+      // Set timeout timer (after browser opens)
       timeoutId = setTimeout(() => {
+        cleanup();
         logger.warn('Authentication timeout after 30 minutes');
-        if (server) {
-          server.close();
-        }
         reject(new Error('Authentication timeout'));
       }, 1800000); // 30 minutes
 
-      server.listen(8080, '0.0.0.0', async () => {
+      try {
+        // Open browser for login
         logger.info('Waiting for authentication...', 'Opening browser for login...');
         await open(loginUrl);
-      });
+
+        // Start polling for token
+        pollIntervalId = setInterval(async () => {
+          const token = await pollForToken();
+          if (token) {
+            cleanup();
+            resolve(token);
+          }
+        }, 2000); // Poll every 2 seconds
+
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
     });
   }
 

@@ -890,8 +890,8 @@ export class InteractiveSession {
     // Determine status based on whether this is the first API call
     const status: 'begin' | 'continue' = this.isFirstApiCall ? 'begin' : 'continue';
 
-    // Use unified LLM Caller with taskId
-    const { chatCompletion, isRemote } = this.createRemoteCaller(taskId, status);
+    // Use unified LLM Caller with taskId (automatically selects local or remote mode)
+    const { chatCompletion, isRemote } = this.createLLMCaller(taskId, status);
 
     if (!isRemote && !this.aiClient) {
       console.log(colors.error('AI client not initialized'));

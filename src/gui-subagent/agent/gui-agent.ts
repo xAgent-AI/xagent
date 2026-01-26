@@ -251,18 +251,18 @@ export class GUIAgent<T extends Operator> {
 
       // Simplified: show step number and action
       const actionSummary = content.replace(/Thought:[\s\S]*?Action:\s*/i, '').trim();
-      const actionType = conversation.predictionParsed?.[0]?.action_type || 'action';
+      const actionType = conversation.predictionParsed?.[0]?.action_type;
 
-      // SDK 模式或普通模式
-      this.output('conversation', {
-        from: 'assistant',
-        iteration,
-        indentLevel,
-        actionType,
-        timing
-      });
-
-      // 注意：output() 方法中已包含 console.log 输出，不需要重复输出
+      // Only output if actionType has a specific value (not empty/default)
+      if (actionType) {
+        this.output('conversation', {
+          from: 'assistant',
+          iteration,
+          indentLevel,
+          actionType,
+          timing
+        });
+      }
     } else if (conversation.from === 'human' && conversation.screenshotBase64) {
       // Show minimal indicator for screenshot
       if (this.showAIDebugInfo) {

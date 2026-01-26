@@ -14,7 +14,7 @@
 
 ![xAgent CLI 截图](./assets/xagent-cli.png)
 
-**[English](README.md)** | **[中文](README_CN.md)**
+**[官网](http://154.8.140.52)** | **[English](README.md)** | **[中文](README_CN.md)**
 
 </div>
 

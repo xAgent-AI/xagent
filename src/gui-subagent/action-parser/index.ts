@@ -1,6 +1,8 @@
-/*
- * Copyright (c) 2025 Bytedance, Inc. and its affiliates.
- * SPDX-License-Identifier: Apache-2.0
+/**
+ * Action Parser Module
+ * Based on UI-TARS architecture (@ui-tars/sdk)
+ *
+ * Exports action parsing functionality for gui-subagent
  */
 export { actionParser } from './actionParser.js';
 export type { PredictionParsed, ActionInputs, UITarsModelVersion } from './types.js';

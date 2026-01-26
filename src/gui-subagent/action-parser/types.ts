@@ -1,6 +1,6 @@
-/*
- * Copyright (c) 2025 Bytedance, Inc. and its affiliates.
- * SPDX-License-Identifier: Apache-2.0
+/**
+ * Type definitions for Action Parser
+ * Based on UI-TARS architecture (@ui-tars/sdk/core)
  */
 
 export type Coords = [number, number] | [];

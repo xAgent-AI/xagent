@@ -5,6 +5,12 @@ import axios from 'axios';
 import crypto from 'crypto';
 import ora from 'ora';
 import inquirer from 'inquirer';
+import { createRequire } from 'module';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
+
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json');
 import { ExecutionMode, ChatMessage, ToolCall, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { RemoteAIClient, TokenInvalidError } from './remote-ai-client.js';
@@ -164,7 +170,7 @@ export class InteractiveSession {
     console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
     console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
     console.log(' '.repeat(14) + '🤖 ' + colors.gradient('XAGENT CLI') + ' '.repeat(32) + colors.gradient('  ║'));
-    console.log(' '.repeat(17) + colors.textMuted('v1.0.0') + ' '.repeat(36) + colors.gradient('  ║'));
+    console.log(' '.repeat(17) + colors.textMuted(`v${packageJson.version}`) + ' '.repeat(36) + colors.gradient('  ║'));
     console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
     console.log(colors.gradient('╚════════════════════════════════════════════════════════════╝'));
     console.log(colors.textMuted('  AI-powered command-line assistant'));

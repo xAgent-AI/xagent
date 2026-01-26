@@ -1002,7 +1002,7 @@ export class TaskTool implements Tool {
       
       const { AIClient } = await import('./ai-client.js');
       const aiClient = new AIClient({
-        type: AuthType.API_KEY,
+        type: AuthType.OPENAI_COMPATIBLE,
         apiKey: config.get('apiKey'),
         baseUrl: config.get('baseUrl'),
         modelName: config.get('modelName') || 'Qwen3-Coder'
@@ -1409,7 +1409,7 @@ export class TaskTool implements Tool {
     // Create a new AIClient for this subagent with its specific model
     const { AIClient: SubAgentAIClient } = await import('./ai-client.js');
     const subAgentClient = new SubAgentAIClient({
-      type: AuthType.API_KEY,
+      type: AuthType.OPENAI_COMPATIBLE,
       apiKey: apiKey,
       baseUrl: baseUrl,
       modelName: modelName,
@@ -2272,7 +2272,7 @@ export class ImageReadTool implements Tool {
       const config = getConfigManager();
       
       const aiClient = new AIClient({
-        type: AuthType.API_KEY,
+        type: AuthType.OPENAI_COMPATIBLE,
         apiKey: config.get('apiKey'),
         baseUrl: config.get('baseUrl'),
         modelName: config.get('modelName') || 'Qwen3-Coder'

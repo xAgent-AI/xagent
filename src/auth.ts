@@ -145,9 +145,6 @@ export class AuthService {
       case AuthType.OAUTH_XAGENT:
         result = await this.authenticateWithXAgent();
         break;
-      case AuthType.API_KEY:
-        result = await this.authenticateWithApiKey();
-        break;
       case AuthType.OPENAI_COMPATIBLE:
         result = await this.authenticateWithOpenAICompatible();
         break;
@@ -177,44 +174,13 @@ export class AuthService {
       this.authConfig.baseUrl = 'https://154.8.140.52:443/v1';
       this.authConfig.xagentApiBaseUrl = xagentApiBaseUrl;
       this.authConfig.apiKey = token;
+    this.authConfig.type = AuthType.OAUTH_XAGENT;
 
       logger.success('Successfully authenticated with xAgent!');
       return true;
     } catch (error: any) {
       logger.error('Authentication failed', error.message || 'Unknown error');
       logger.debug('Full error:', JSON.stringify(error.response?.data || error.message));
-      return false;
-    }
-  }
-
-  private async authenticateWithApiKey(): Promise<boolean> {
-    logger.info('Authenticating with API Key...');
-
-    const answers = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'apiKey',
-        message: 'Enter your xAgent API Key:',
-        validate: (input: string) => {
-          if (!input || input.trim().length === 0) {
-            return 'API Key cannot be empty';
-          }
-          return true;
-        }
-      }
-    ]);
-
-    const apiKey = answers.apiKey as string;
-
-    this.authConfig.apiKey = apiKey.trim();
-    this.authConfig.baseUrl = 'https://apis.xagent.cn/v1';
-
-    const isValid = await this.validateApiKey();
-    if (isValid) {
-      logger.success('API Key verified successfully!', 'You can now start using xAgent CLI');
-      return true;
-    } else {
-      logger.error('Invalid API Key, please try again.', 'Make sure you entered the correct API Key');
       return false;
     }
   }
@@ -329,6 +295,7 @@ export class AuthService {
     this.authConfig.baseUrl = baseUrl;
     this.authConfig.apiKey = (apiKey as string).trim();
     this.authConfig.modelName = modelName;
+    this.authConfig.type = AuthType.OPENAI_COMPATIBLE;
 
     const isValid = await this.validateApiKey();
     if (isValid) {

@@ -16,7 +16,6 @@ export enum LogLevel {
 
 export enum AuthType {
   OAUTH_XAGENT = 'oauth-xagent',
-  API_KEY = 'api_key',
   OPENAI_COMPATIBLE = 'openai_compatible'
 }
 

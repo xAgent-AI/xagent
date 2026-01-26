@@ -49,6 +49,7 @@ export interface RemoteChatOptions {
 
 export interface RemoteChatResponse {
   content: string;
+  reasoningContent?: string;
   toolCalls?: ToolCall[];
   conversationId: string;
 }
@@ -142,6 +143,7 @@ export class RemoteAIClient extends EventEmitter {
       return {
         role: 'assistant',
         content: data.content || '',
+        reasoningContent: data.reasoningContent || '',
         toolCalls: data.toolCalls,
         timestamp: Date.now()
       };
@@ -417,7 +419,7 @@ export class RemoteAIClient extends EventEmitter {
           message: {
             role: 'assistant',
             content: response.content,
-            reasoning_content: '',
+            reasoning_content: response.reasoningContent || '',
             tool_calls: response.toolCalls
           },
           finish_reason: 'stop'

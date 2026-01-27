@@ -204,12 +204,15 @@ export class InteractiveSession {
     logger.debug('\n[SESSION] ========== initialize() 开始 ==========\n');
 
     try {
-      const spinner = ora({
-        text: colors.textMuted('Initializing XAGENT CLI...'),
-        spinner: 'dots',
-        color: 'cyan'
-      }).start();
-
+            // Custom spinner for initialization (like Thinking...)
+            const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+            let frameIndex = 0;
+            const validatingText = colors.textMuted('Validating authentication...');
+      
+            const spinnerInterval = setInterval(() => {
+              process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${validatingText}`);
+              frameIndex = (frameIndex + 1) % frames.length;
+            }, 120);
       logger.debug('[SESSION] 调用 configManager.load()...');
       await this.configManager.load();
 
@@ -225,14 +228,24 @@ export class InteractiveSession {
 
       // Only validate OAuth tokens, skip validation for third-party API keys
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
-        spinner.text = colors.textMuted('Validating authentication...');
+        clearInterval(spinnerInterval);
+        process.stdout.write('\r' + ' '.repeat(50) + '\r'); // Clear the line
+        
         const baseUrl = authConfig.xagentApiBaseUrl || 'https://154.8.140.52:443';
         let isValid = await this.validateToken(baseUrl, authConfig.apiKey);
 
         // Try refresh token if validation failed
         if (!isValid && authConfig.refreshToken) {
-          spinner.text = colors.textMuted('Refreshing authentication...');
+          const refreshingText = colors.textMuted('Refreshing authentication...');
+          frameIndex = 0;
+          const refreshInterval = setInterval(() => {
+            process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${refreshingText}`);
+            frameIndex = (frameIndex + 1) % frames.length;
+          }, 120);
+          
           const newToken = await this.refreshToken(baseUrl, authConfig.refreshToken);
+          clearInterval(refreshInterval);
+          process.stdout.write('\r' + ' '.repeat(50) + '\r');
 
           if (newToken) {
             // Save new token and persist
@@ -244,7 +257,6 @@ export class InteractiveSession {
         }
 
         if (!isValid) {
-          spinner.stop();
           console.log('');
           console.log(colors.warning('Your xAgent session has expired or is not configured'));
           console.log(colors.info('Please select an authentication method to continue.'));
@@ -271,11 +283,11 @@ export class InteractiveSession {
           this.rl.on('close', () => {
             // readline closed
           });
-          spinner.start();
         }
       } else if (!authConfig.apiKey) {
         // No API key configured, need to set up authentication
-        spinner.stop();
+        clearInterval(spinnerInterval);
+        process.stdout.write('\r' + ' '.repeat(50) + '\r');
         await this.setupAuthentication();
         authConfig = this.configManager.getAuthConfig();
         selectedAuthType = this.configManager.get('selectedAuthType');
@@ -290,7 +302,9 @@ export class InteractiveSession {
         this.rl.on('close', () => {
           // readline closed
         });
-        spinner.start();
+      } else {
+        clearInterval(spinnerInterval);
+        process.stdout.write('\r' + ' '.repeat(50) + '\r');
       }
       // For OPENAI_COMPATIBLE with API key, skip validation and proceed directly
 
@@ -328,7 +342,6 @@ export class InteractiveSession {
       this.slashCommandHandler.setConversationHistory(this.conversation);
 
       const mcpServers = this.configManager.getMcpServers();
-      console.log(`📋 Loading ${Object.keys(mcpServers).length} MCP servers from config`);
       Object.entries(mcpServers).forEach(([name, config]) => {
         console.log(`📝 Registering MCP server: ${name} (${config.transport})`);
         this.mcpManager.registerServer(name, config);
@@ -364,7 +377,7 @@ export class InteractiveSession {
 
       this.currentAgent = this.agentManager.getAgent('general-purpose');
 
-      spinner.succeed(colors.success('Initialization complete'));
+      console.log(colors.success('✔ Initialization complete'));
     } catch (error: any) {
       const spinner = ora({ text: '', spinner: 'dots', color: 'red' }).start();
       spinner.fail(colors.error(`Initialization failed: ${error.message}`));

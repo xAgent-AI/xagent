@@ -246,8 +246,8 @@ export class InteractiveSession {
         if (!isValid) {
           spinner.stop();
           console.log('');
-          console.log(colors.warning('⚠️  Authentication expired or invalid'));
-          console.log(colors.info('Please log in again to continue.'));
+          console.log(colors.warning('Your xAgent session has expired or is not configured'));
+          console.log(colors.info('Please select an authentication method to continue.'));
           console.log('');
 
           // Clear invalid credentials and persist
@@ -459,11 +459,14 @@ export class InteractiveSession {
 
     const authConfig = authService.getAuthConfig();
 
-    // VLM configuration is optional - skip for now, can be configured later with /vlm command
-    console.log('');
-    console.log(colors.info(`${icons.info} VLM configuration is optional.`));
-    console.log(colors.info(`You can configure it later using the /vlm command if needed.`));
-    console.log('');
+    // VLM configuration is optional - only show for non-OAuth (local) mode
+    // Remote mode uses backend VLM configuration
+    if (authType !== AuthType.OAUTH_XAGENT) {
+      console.log('');
+      console.log(colors.info(`${icons.info} VLM configuration is optional.`));
+      console.log(colors.info(`You can configure it later using the /vlm command if needed.`));
+      console.log('');
+    }
 
     // Save LLM config only, skip VLM for now
     await this.configManager.setAuthConfig(authConfig);

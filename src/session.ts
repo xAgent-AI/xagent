@@ -967,11 +967,7 @@ export class InteractiveSession {
 
       const messages: ChatMessage[] = [
         { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}`, timestamp: Date.now() },
-        ...this.conversation.map(msg => ({
-          role: msg.role,
-          content: msg.content,
-          timestamp: msg.timestamp
-        }))
+        ...this.conversation
       ];
 
       const operationId = `ai-response-${Date.now()}`;

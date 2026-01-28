@@ -1328,7 +1328,7 @@ export class InteractiveSession {
         parsedParams = params;
       }
 
-      return { name, params: parsedParams, index };
+      return { name, params: parsedParams, index, id: toolCall.id };
     });
 
     // Display all tool calls info
@@ -1371,6 +1371,7 @@ export class InteractiveSession {
         this.conversation.push({
           role: 'tool',
           content: JSON.stringify({ error }),
+          tool_call_id: toolCall.id,
           timestamp: Date.now()
         });
       } else {
@@ -1423,6 +1424,7 @@ export class InteractiveSession {
         this.conversation.push({
           role: 'tool',
           content: JSON.stringify(result),
+          tool_call_id: toolCall.id,
           timestamp: Date.now()
         });
       }
@@ -1494,7 +1496,7 @@ export class InteractiveSession {
     const showToolDetails = this.configManager.get('showToolDetails') || false;
     const indent = this.getIndent();
 
-    // Prepare all tool calls
+    // Prepare all tool calls (include id for tool result matching)
     const preparedToolCalls = toolCalls.map((toolCall, index) => {
       const { name, arguments: params } = toolCall.function;
 
@@ -1505,7 +1507,7 @@ export class InteractiveSession {
         parsedParams = params;
       }
 
-      return { name, params: parsedParams, index };
+      return { name, params: parsedParams, index, id: toolCall.id };
     });
 
     // Display all tool calls info
@@ -1551,6 +1553,7 @@ export class InteractiveSession {
         this.conversation.push({
           role: 'tool',
           content: JSON.stringify({ error }),
+          tool_call_id: toolCall.id,
           timestamp: Date.now()
         });
       } else {
@@ -1601,6 +1604,7 @@ export class InteractiveSession {
         this.conversation.push({
           role: 'tool',
           content: JSON.stringify(result),
+          tool_call_id: toolCall.id,
           timestamp: Date.now()
         });
       }

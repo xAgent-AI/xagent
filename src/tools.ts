@@ -1559,6 +1559,7 @@ export class TaskTool implements Tool {
 
       const choice = result.choices[0];
       const messageContent = choice.message?.content;
+      const reasoningContent = choice.message?.reasoning_content || '';
       const toolCalls = choice.message.tool_calls;
 
       let contentStr: string;
@@ -1590,6 +1591,14 @@ export class TaskTool implements Tool {
 
       // Add assistant message to conversation
       messages.push({ role: 'assistant', content: contentStr });
+
+      // Display reasoning content if present
+      if (reasoningContent) {
+        console.log(`\n${indent}${colors.textDim(`${icons.brain} Thinking Process:`)}`);
+        const truncatedReasoning = reasoningContent.length > 500 ? reasoningContent.substring(0, 500) + '...' : reasoningContent;
+        const indentedReasoning = indentMultiline(truncatedReasoning, indent);
+        console.log(`${indentedReasoning}\n`);
+      }
 
       // Display assistant response (if there's any text content) with proper indentation
       if (contentStr) {

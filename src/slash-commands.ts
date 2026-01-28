@@ -1,6 +1,8 @@
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
+import fs from 'fs/promises';
+import path from 'path';
 import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { getToolRegistry } from './tools.js';
@@ -185,10 +187,10 @@ export class SlashCommandHandler {
         example: '/init'
       },
       {
-        cmd: '/memory [show|add|refresh]',
+        cmd: '/memory [show|clear]',
         desc: 'Manage project memory',
-        detail: 'View, add or refresh project memory information',
-        example: '/memory show\n/memory add "Project uses TypeScript"'
+        detail: 'View or clear memory (global, current, all, or filename)',
+        example: '/memory show\n/memory clear\n/memory clear global\n/memory clear all'
       }
     ]);
 
@@ -940,18 +942,99 @@ export class SlashCommandHandler {
   private async handleMemory(args: string[]): Promise<void> {
     const action = args[0] || 'show';
 
+    // Load memory files before showing
+    try {
+      await this.memoryManager.loadMemory();
+    } catch (error) {
+      logger.error('Failed to load memory files', error instanceof Error ? error.message : String(error));
+      return;
+    }
+
     switch (action) {
       case 'show':
         await this.showMemory();
         break;
-      case 'add':
-        logger.warn('Memory addition not implemented yet', 'Use /memory add in interactive mode');
-        break;
-      case 'refresh':
-        logger.warn('Memory refresh not implemented yet', 'Check back later for updates');
+      case 'clear':
+        await this.clearMemory(args[1]);
         break;
       default:
         logger.warn(`Unknown memory action: ${action}`, 'Use /memory show to see available actions');
+    }
+  }
+
+  private async clearMemory(target?: string): Promise<void> {
+    const memoryFiles = this.memoryManager.getMemoryFiles();
+
+    // Handle different clear targets
+    if (!target || target === '.' || target === 'current') {
+      // Clear current project's memory
+      const currentProjectMemory = memoryFiles.find((m: MemoryFile) => m.level === 'project');
+      if (currentProjectMemory) {
+        await fs.unlink(currentProjectMemory.path);
+        logger.success('Project memory cleared');
+        logger.info('Use /init to initialize if needed');
+      } else {
+        logger.warn('No project memory found for current directory');
+      }
+      return;
+    }
+
+    if (target === 'all') {
+      // Clear all memories including global
+      let cleared = 0;
+      for (const file of memoryFiles) {
+        await fs.unlink(file.path);
+        cleared++;
+      }
+      logger.success(`Cleared ${cleared} memory file(s)`);
+
+      // Recreate global memory
+      await this.memoryManager.saveMemory('# Global Context\n\nGlobal preferences and settings will be added here.', 'global');
+      logger.info('Recreated global memory');
+      logger.info('Use /init to initialize project memory if needed');
+      return;
+    }
+
+    if (target === 'global') {
+      // Clear global memory
+      const globalMemory = memoryFiles.find((m: MemoryFile) => m.level === 'global');
+      if (globalMemory) {
+        await fs.unlink(globalMemory.path);
+        logger.success('Global memory cleared');
+
+        // Recreate global memory
+        await this.memoryManager.saveMemory('# Global Context\n\nGlobal preferences and settings will be added here.', 'global');
+        logger.info('Recreated with default content');
+      } else {
+        logger.warn('No global memory found');
+      }
+      return;
+    }
+
+    // Clear specific file by filename or path
+    const targetMemory = memoryFiles.find((m: MemoryFile) =>
+      path.basename(m.path) === target ||
+      m.path === target
+    );
+
+    if (targetMemory) {
+      try {
+        await fs.unlink(targetMemory.path);
+        const levelLabel = targetMemory.level === 'global' ? 'Global' : 'Project';
+        logger.success(`${levelLabel} memory cleared: ${path.basename(targetMemory.path)}`);
+
+        // Recreate global memory, not project memory
+        if (targetMemory.level === 'global') {
+          await this.memoryManager.saveMemory('# Global Context\n\nGlobal preferences and settings will be added here.', 'global');
+          logger.info('Recreated with default content');
+        } else {
+          logger.info('Use /init to initialize if needed');
+        }
+      } catch (error) {
+        logger.error('Failed to clear memory', error instanceof Error ? error.message : String(error));
+      }
+    } else {
+      logger.warn(`Memory file not found: ${target}`, 'Use /memory show to see available files');
     }
   }
 
@@ -963,14 +1046,20 @@ export class SlashCommandHandler {
       return;
     }
 
+    const memoriesDir = this.memoryManager.getMemoriesDir();
     logger.section('Memory Files');
+    logger.info(`Directory: ${memoriesDir}`);
+    console.log('');
 
     memoryFiles.forEach((file: MemoryFile) => {
       const level = file.level === 'global' ? chalk.blue('[global]') :
                      file.level === 'project' ? chalk.green('[project]') :
                      chalk.yellow('[subdirectory]');
-      logger.info(`  ${level} ${file.path}`);
+      logger.info(`  ${level} ${path.basename(file.path)}`);
     });
+
+    console.log('');
+    // logger.info('Usage: /memory clear [global|current|all|<filename>]');
   }
 
   private async addMemory(): Promise<void> {

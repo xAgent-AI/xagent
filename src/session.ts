@@ -169,8 +169,8 @@ export class InteractiveSession {
     console.log('');
     console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
     console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
-    console.log(' '.repeat(14) + '🤖 ' + colors.gradient('XAGENT CLI') + ' '.repeat(32) + colors.gradient('  ║'));
-    console.log(' '.repeat(17) + colors.textMuted(`v${packageJson.version}`) + ' '.repeat(36) + colors.gradient('  ║'));
+    console.log(colors.gradient('║') + ' '.repeat(13) + '🤖 ' + colors.gradient('XAGENT CLI') + ' '.repeat(32) + colors.gradient('  ║'));
+    console.log(colors.gradient('║') + ' '.repeat(16) + colors.textMuted(`v${packageJson.version}`) + ' '.repeat(36) + colors.gradient('  ║'));
     console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
     console.log(colors.gradient('╚════════════════════════════════════════════════════════════╝'));
     console.log(colors.textMuted('  AI-powered command-line assistant'));

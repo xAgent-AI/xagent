@@ -41,11 +41,11 @@ export class MemoryManager {
         combinedMemory += projectMemory.content + '\n\n';
       }
 
-      const subdirectoryMemories = await this.loadSubdirectoryMemories();
-      for (const memory of subdirectoryMemories) {
-        this.memoryFiles.push(memory);
-        combinedMemory += memory.content + '\n\n';
-      }
+      // const subdirectoryMemories = await this.loadSubdirectoryMemories();
+      // for (const memory of subdirectoryMemories) {
+      //   this.memoryFiles.push(memory);
+      //   combinedMemory += memory.content + '\n\n';
+      // }
     }
 
     return this.processImports(combinedMemory);
@@ -63,36 +63,36 @@ export class MemoryManager {
     }
   }
 
-  private async loadSubdirectoryMemories(): Promise<MemoryFile[]> {
-    const memories: MemoryFile[] = [];
+  // private async loadSubdirectoryMemories(): Promise<MemoryFile[]> {
+  //   const memories: MemoryFile[] = [];
     
-    if (!this.projectMemoryPath) {
-      return memories;
-    }
+  //   if (!this.projectMemoryPath) {
+  //     return memories;
+  //   }
 
-    const projectRoot = path.dirname(this.projectMemoryPath);
+  //   const projectRoot = path.dirname(this.projectMemoryPath);
     
-    try {
-      const files = await glob('**/XAGENT.md', {
-        cwd: projectRoot,
-        ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
-      });
+  //   try {
+  //     const files = await glob('**/XAGENT.md', {
+  //       cwd: projectRoot,
+  //       ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
+  //     });
 
-      for (const file of files) {
-        if (file !== 'XAGENT.md') {
-          const filePath = path.join(projectRoot, file);
-          const memory = await this.loadMemoryFile(filePath, 'subdirectory');
-          if (memory) {
-            memories.push(memory);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Failed to load subdirectory memories:', error);
-    }
+  //     for (const file of files) {
+  //       if (file !== 'XAGENT.md') {
+  //         const filePath = path.join(projectRoot, file);
+  //         const memory = await this.loadMemoryFile(filePath, 'subdirectory');
+  //         if (memory) {
+  //           memories.push(memory);
+  //         }
+  //       }
+  //     }
+  //   } catch (error) {
+  //     console.error('Failed to load subdirectory memories:', error);
+  //   }
 
-    return memories;
-  }
+  //   return memories;
+  // }
 
   private processImports(content: string): string {
     // Only match actual import statements: import ... from '@xxx' or import '@xxx'

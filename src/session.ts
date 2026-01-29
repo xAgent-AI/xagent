@@ -1392,6 +1392,15 @@ export class InteractiveSession {
         const isDeleteTool = tool === 'DeleteFile';
         const hasDeleteInfo = isDeleteTool && result?.filePath;
 
+        // Special handling for task tool (subagent)
+        const isTaskTool = tool === 'task' && params?.subagent_type;
+
+        // Check if tool is an MCP wrapper tool by looking up in tool registry
+        const { getToolRegistry } = await import('./tools.js');
+        const toolRegistry = getToolRegistry();
+        const toolDef = toolRegistry.get(tool);
+        const isMcpTool = toolDef && (toolDef as any)._isMcpTool === true;
+
         if (isTodoTool) {
           console.log('');
           console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
@@ -1417,6 +1426,86 @@ export class InteractiveSession {
           // Show DeleteFile result
           console.log('');
           console.log(`${displayIndent}${colors.success(`${icons.check} Deleted: ${result.filePath}`)}`);
+        } else if (isTaskTool) {
+          // Special handling for task tool (subagent) - show friendly summary
+          console.log('');
+          const subagentType = params.subagent_type;
+          const subagentName = params.description || (params.prompt ? params.prompt.substring(0, 50).replace(/\n/g, ' ') : 'Unknown task');
+
+          if (result?.success) {
+            console.log(`${displayIndent}${colors.success(`${icons.check} ${subagentType}: Completed`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+            if (result.message) {
+              console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+            }
+          } else if (result?.cancelled) {
+            console.log(`${displayIndent}${colors.warning(`${icons.cross} ${subagentType}: Cancelled`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+          } else {
+            console.log(`${displayIndent}${colors.error(`${icons.cross} ${subagentType}: Failed`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+            if (result?.message) {
+              console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+            }
+          }
+        } else if (isMcpTool) {
+          // Special handling for MCP tools - show friendly summary
+          console.log('');
+          // Extract server name and tool name from tool name (format: serverName__toolName)
+          let serverName = 'MCP';
+          let toolDisplayName = tool;
+          if (tool.includes('__')) {
+            const parts = tool.split('__');
+            serverName = parts[0];
+            toolDisplayName = parts.slice(1).join('__');
+          }
+
+          // Try to extract meaningful content from MCP result
+          let summary = '';
+          if (result?.content && Array.isArray(result.content) && result.content.length > 0) {
+            const firstBlock = result.content[0];
+            if (firstBlock?.type === 'text' && firstBlock?.text) {
+              const text = firstBlock.text;
+              if (typeof text === 'string') {
+                // Detect HTML content
+                if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+                  summary = '[HTML content fetched]';
+                } else {
+                  // Try to parse if it's JSON
+                  try {
+                    const parsed = JSON.parse(text);
+                    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.title) {
+                      // Search results format
+                      summary = `Found ${parsed.length} result(s)`;
+                    } else if (parsed?.message) {
+                      summary = parsed.message;
+                    } else if (typeof parsed === 'string') {
+                      summary = parsed.substring(0, 100);
+                    }
+                  } catch {
+                    // Not JSON, use as-is with truncation
+                    summary = text.substring(0, 100);
+                  }
+                }
+              }
+            }
+          } else if (result?.message) {
+            summary = result.message;
+          }
+
+          if (result?.success !== false) {
+            console.log(`${displayIndent}${colors.success(`${icons.check} ${serverName}: Success`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
+            if (summary) {
+              console.log(`${displayIndent}${colors.textDim(`  ${summary}`)}`);
+            }
+          } else {
+            console.log(`${displayIndent}${colors.error(`${icons.cross} ${serverName}: Failed`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
+            if (result?.message || result?.error) {
+              console.log(`${displayIndent}${colors.textDim(`  ${result?.message || result?.error}`)}`);
+            }
+          }
         } else if (showToolDetails) {
           console.log('');
           console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);

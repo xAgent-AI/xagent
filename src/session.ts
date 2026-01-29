@@ -1389,7 +1389,12 @@ export class InteractiveSession {
           // GUI task or other tool failed
           console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
         } else if (result) {
-          console.log(`${displayIndent}${colors.success(`${icons.check} Completed`)}`);
+          // Show brief preview by default (consistent with subagent behavior)
+          const resultPreview = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+          const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
+          // Indent the preview
+          const indentedPreview = truncatedPreview.split('\n').map(line => `${displayIndent}  ${line}`).join('\n');
+          console.log(`${indentedPreview}`);
         } else {
           console.log(`${displayIndent}${colors.textDim('(no result)')}`);
         }
@@ -1571,7 +1576,12 @@ export class InteractiveSession {
           // GUI task or other tool failed
           console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
         } else {
-          console.log(`${displayIndent}${colors.success(`${icons.check} Completed`)}`);
+          // Show brief preview by default (consistent with subagent behavior)
+          const resultPreview = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+          const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
+          // Indent the preview
+          const indentedPreview = truncatedPreview.split('\n').map(line => `${displayIndent}  ${line}`).join('\n');
+          console.log(`${indentedPreview}`);
         }
 
         const toolCallRecord: ToolCall = {

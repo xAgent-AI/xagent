@@ -1860,11 +1860,22 @@ export class TaskTool implements Tool {
               `subagent-${subagent_type}-${name}-${iteration}`
             );
 
-            // Display tool result with proper indentation for multi-line content
+            // Get showToolDetails config to control result display
+            const showToolDetails = config.get('showToolDetails') || false;
+
+            // Prepare result preview for both display and history
             const resultPreview = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
             const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
-            const indentedPreview = indentMultiline(truncatedPreview, indent);
-            console.log(`${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`);
+
+            // Display tool result based on showToolDetails setting
+            if (showToolDetails) {
+              const indentedPreview = indentMultiline(resultPreview, indent);
+              console.log(`${indent}${colors.success(`${icons.check} Tool Result:`)}\n${indentedPreview}\n`);
+            } else {
+              // Show brief preview by default
+              const indentedPreview = indentMultiline(truncatedPreview, indent);
+              console.log(`${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`);
+            }
 
             // Record successful tool execution in history (use truncated preview to save memory)
             executionHistory.push({

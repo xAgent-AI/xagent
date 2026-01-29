@@ -913,9 +913,10 @@ export class InteractiveSession {
     };
   }
 
-  private async generateResponse(thinkingTokens: number = 0, customAIClient?: AIClient): Promise<void> {
-    // Create taskId for this user interaction (for remote mode tracking)
-    const taskId = crypto.randomUUID();
+  private async generateResponse(thinkingTokens: number = 0, customAIClient?: AIClient, existingTaskId?: string): Promise<void> {
+    // Use existing taskId or create new one for this user interaction
+    // If taskId already exists (e.g., from tool calls), reuse it
+    const taskId = existingTaskId || this.currentTaskId || crypto.randomUUID();
     this.currentTaskId = taskId;
     this.isFirstApiCall = true;
 
@@ -1103,8 +1104,8 @@ export class InteractiveSession {
     }
 
     try {
-      // Reuse generateResponse with remote client
-      await this.generateResponse(thinkingTokens, this.remoteAIClient as any);
+      // Reuse generateResponse with remote client, pass taskId to avoid generating new one
+      await this.generateResponse(thinkingTokens, this.remoteAIClient as any, taskId);
 
       // Mark task as completed (发送 status: 'end')
       logger.debug(`[Session] Task completed: taskId=${this.currentTaskId}`);

@@ -126,7 +126,7 @@ export class RemoteAIClient extends EventEmitter {
           'Authorization': `Bearer ${this.authToken}`
         },
         httpsAgent,
-        timeout: 120000
+        timeout: 300000
       });
 
       // Check for 401 and throw TokenInvalidError
@@ -235,7 +235,7 @@ export class RemoteAIClient extends EventEmitter {
             'Authorization': `Bearer ${this.authToken}`
           },
           httpsAgent,
-          timeout: 120000
+          timeout: 300000
         });
 
         if (response.status === 401) {
@@ -599,15 +599,15 @@ export class RemoteAIClient extends EventEmitter {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.authToken}`
-        },
-        signal: abortSignal,
-        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+          },
+          signal: abortSignal,
+          httpsAgent: new https.Agent({ rejectUnauthorized: false }),
         timeout: 120000
-      });
+        });
 
-      if (this.showAIDebugInfo) {
-        console.log('[RemoteAIClient] VLM response status:', response.status);
-      }
+        if (this.showAIDebugInfo) {
+          console.log('[RemoteAIClient] VLM response status:', response.status);
+        }
 
       const data = response.data as RemoteVLMResponse;
       return data.content || '';

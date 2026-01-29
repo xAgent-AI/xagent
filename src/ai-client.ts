@@ -268,7 +268,7 @@ export class AIClient {
     this.client = axios.create({
       baseURL: authConfig.baseUrl,
       headers,
-      timeout: 240000,
+      timeout: 300000,
       httpsAgent: new https.Agent({ rejectUnauthorized: false })
     });
   }

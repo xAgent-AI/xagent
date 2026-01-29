@@ -1334,7 +1334,6 @@ export class InteractiveSession {
         console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
       } else {
         const toolDescription = this.getToolDescription(name, params);
-        console.log('');
         console.log(`${indent}${colors.textMuted(`${icons.loading} ${toolDescription}`)}`);
       }
     }

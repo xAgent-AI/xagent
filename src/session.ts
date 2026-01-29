@@ -25,7 +25,7 @@ import { getConversationManager, ConversationManager } from './conversation.js';
 import { getSessionManager, SessionManager } from './session-manager.js';
 import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
-import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
+import { theme, icons, colors, styleHelpers, renderMarkdown, renderDiff, renderLines, TERMINAL_BG } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
 import { Logger, LogLevel, getLogger } from './logger.js';
@@ -1379,6 +1379,19 @@ export class InteractiveSession {
 
         // Always show details for todo tools so users can see their task lists
         const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
+
+        // Special handling for edit tool with diff
+        const isEditTool = tool === 'edit';
+        const hasDiff = isEditTool && result?.diff;
+
+        // Special handling for Write tool with file preview
+        const isWriteTool = tool === 'Write';
+        const hasFilePreview = isWriteTool && result?.preview;
+
+        // Special handling for DeleteFile tool
+        const isDeleteTool = tool === 'DeleteFile';
+        const hasDeleteInfo = isDeleteTool && result?.filePath;
+
         if (isTodoTool) {
           console.log('');
           console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
@@ -1387,6 +1400,23 @@ export class InteractiveSession {
           if (result?.message) {
             console.log(`${displayIndent}${colors.textDim(result.message)}`);
           }
+        } else if (hasDiff) {
+          // Show edit result with diff
+          console.log('');
+          const diffOutput = renderDiff(result.diff);
+          const indentedDiff = diffOutput.split('\n').map(line => `${displayIndent}  ${line}`).join('\n');
+          console.log(`${indentedDiff}`);
+        } else if (hasFilePreview) {
+          // Show new file content in diff-like style
+          console.log('');
+          console.log(`${displayIndent}${colors.success(`${icons.file} ${result.filePath}`)}`);
+          console.log(`${displayIndent}${colors.textDim(`  ${result.lineCount} lines`)}`);
+          console.log('');
+          console.log(renderLines(result.preview, { maxLines: 10, indent: displayIndent + '  ' }));
+        } else if (hasDeleteInfo) {
+          // Show DeleteFile result
+          console.log('');
+          console.log(`${displayIndent}${colors.success(`${icons.check} Deleted: ${result.filePath}`)}`);
         } else if (showToolDetails) {
           console.log('');
           console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);

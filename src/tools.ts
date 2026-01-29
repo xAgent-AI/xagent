@@ -142,19 +142,26 @@ export class WriteTool implements Tool {
 - For partial edits, use Edit tool instead`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
-  async execute(params: { filePath: string; content: string }): Promise<{ success: boolean; message: string }> {
+  async execute(params: { filePath: string; content: string }): Promise<{ success: boolean; message: string; filePath: string; lineCount: number; preview?: string }> {
     const { filePath, content } = params;
-    
+
     try {
       const absolutePath = path.resolve(filePath);
       const dir = path.dirname(absolutePath);
-      
+
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(absolutePath, content, 'utf-8');
-      
+
+      const lineCount = content.split('\n').length;
+      const preview = content.split('\n').slice(0, 10).join('\n');
+      const isTruncated = lineCount > 10;
+
       return {
         success: true,
-        message: `Successfully wrote to ${filePath}`
+        message: `Successfully wrote to ${filePath}`,
+        filePath,
+        lineCount,
+        preview: isTruncated ? preview + '\n...' : preview
       };
     } catch (error: any) {
       throw new Error(`Failed to write file ${filePath}: ${error.message}`);
@@ -601,16 +608,17 @@ export class DeleteFileTool implements Tool {
 - This action is irreversible - be certain before executing`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
-  async execute(params: { filePath: string }): Promise<{ success: boolean; message: string }> {
+  async execute(params: { filePath: string }): Promise<{ success: boolean; message: string; filePath: string }> {
     const { filePath } = params;
-    
+
     try {
       const absolutePath = path.resolve(filePath);
       await fs.unlink(absolutePath);
-      
+
       return {
         success: true,
-        message: `Successfully deleted ${filePath}`
+        message: `Successfully deleted ${filePath}`,
+        filePath
       };
     } catch (error: any) {
       throw new Error(`Failed to delete file ${filePath}: ${error.message}`);

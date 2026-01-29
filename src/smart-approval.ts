@@ -70,6 +70,7 @@ export class WhitelistChecker {
     // File editing tools
     'edit',
     'Write',
+    'DeleteFile',
 
     // Other safe tools
     'web_fetch',

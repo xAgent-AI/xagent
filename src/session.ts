@@ -913,7 +913,7 @@ export class InteractiveSession {
     };
   }
 
-  private async generateResponse(thinkingTokens: number = 0): Promise<void> {
+  private async generateResponse(thinkingTokens: number = 0, customAIClient?: AIClient): Promise<void> {
     // Create taskId for this user interaction (for remote mode tracking)
     const taskId = crypto.randomUUID();
     this.currentTaskId = taskId;
@@ -922,10 +922,23 @@ export class InteractiveSession {
     // Determine status based on whether this is the first API call
     const status: 'begin' | 'continue' = this.isFirstApiCall ? 'begin' : 'continue';
 
-    // Use unified LLM Caller with taskId (automatically selects local or remote mode)
-    const { chatCompletion, isRemote } = this.createLLMCaller(taskId, status);
+    // Use custom AI client if provided, otherwise use default logic
+    let chatCompletion: (messages: ChatMessage[], options: any) => Promise<any>;
+    let isRemote = false;
 
-    if (!isRemote && !this.aiClient) {
+    if (customAIClient) {
+      // Custom client (used by remote mode) - pass taskId and status
+      chatCompletion = (messages: ChatMessage[], options: any) =>
+        customAIClient.chatCompletion(messages as any, { ...options, taskId, status });
+      isRemote = true;
+    } else {
+      // Use unified LLM Caller with taskId (automatically selects local or remote mode)
+      const caller = this.createLLMCaller(taskId, status);
+      chatCompletion = caller.chatCompletion;
+      isRemote = caller.isRemote;
+    }
+
+    if (!isRemote && !this.aiClient && !customAIClient) {
       console.log(colors.error('AI client not initialized'));
       return;
     }
@@ -1083,155 +1096,23 @@ export class InteractiveSession {
     const status: 'begin' | 'continue' = this.isFirstApiCall ? 'begin' : 'continue';
     logger.debug(`[Session] Status for this call: ${status}, isFirstApiCall=${this.isFirstApiCall}`);
 
-    // 使用统一的 LLM Caller
-    const { chatCompletion, isRemote } = this.createLLMCaller(taskId, status);
-
-    if (!isRemote) {
-      // 如果不是远程模式，回退到本地模式
-      return this.generateResponse(thinkingTokens);
+    // Check if remote client is available
+    if (!this.remoteAIClient) {
+      console.log(colors.error('Remote AI client not initialized'));
+      return;
     }
 
-    const indent = this.getIndent();
-    const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
-    const icon = colors.primary(icons.brain);
-    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    let frameIndex = 0;
-
-    // Mark that an operation is in progress
-    (this as any)._isOperationInProgress = true;
-
-    // Custom spinner: only icon rotates, text stays static
-    const spinnerInterval = setInterval(() => {
-      process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
-      frameIndex = (frameIndex + 1) % frames.length;
-    }, 120);
-
     try {
-      // Load memory (与本地模式一致)
-      const memory = await this.memoryManager.loadMemory();
-
-      // Get tool definitions
-      const toolRegistry = getToolRegistry();
-      const allowedToolNames = this.currentAgent
-        ? this.agentManager.getAvailableToolsForAgent(this.currentAgent, this.executionMode)
-        : [];
-
-      const allToolDefinitions = toolRegistry.getToolDefinitions();
-      
-      const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
-        ? allToolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
-        : allToolDefinitions;
-
-      // Convert to the format expected by backend (与本地模式一致使用 availableTools)
-      const tools = availableTools.map((tool: any) => ({
-        type: 'function' as const,
-        function: {
-          name: tool.function.name,
-          description: tool.function.description || '',
-          parameters: tool.function.parameters || {
-            type: 'object' as const,
-            properties: {}
-          }
-        }
-      }));
-
-      // Generate system prompt (与本地模式一致)
-      const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
-      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
-      const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
-
-      // Build messages with system prompt (与本地模式一致)
-      const messages: ChatMessage[] = [
-        { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}`, timestamp: Date.now() },
-        ...this.conversation
-      ];
-
-      // Call unified LLM API with cancellation support
-      const operationId = `remote-ai-response-${Date.now()}`;
-      const response = await this.cancellationManager.withCancellation(
-        chatCompletion(messages, {
-          tools,
-          toolChoice: tools.length > 0 ? 'auto' : 'none',
-          thinkingTokens
-        }),
-        operationId
-      );
-
-      // Mark that first API call is complete
-      this.isFirstApiCall = false;
-
-      clearInterval(spinnerInterval);
-      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
-      console.log('');
-
-      // 使用统一的响应格式（与本地模式一致）
-      const assistantMessage = response.choices[0].message;
-      const content = typeof assistantMessage.content === 'string'
-        ? assistantMessage.content
-        : '';
-      const reasoningContent = assistantMessage.reasoning_content || '';
-      const toolCalls = assistantMessage.tool_calls || [];
-
-      // Display reasoning content if available and thinking mode is enabled (与本地模式一致)
-      if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
-        this.displayThinkingContent(reasoningContent);
-      }
-
-      console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
-      console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
-      console.log('');
-      const renderedContent = renderMarkdown(content, (process.stdout.columns || 80) - indent.length * 2);
-      console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
-      console.log('');
-
-      // Add assistant message to conversation (consistent with local mode, including reasoningContent)
-      this.conversation.push({
-        role: 'assistant',
-        content,
-        timestamp: Date.now(),
-        reasoningContent,
-        toolCalls: toolCalls
-      });
-
-      // Record output to session manager (consistent with local mode, including reasoningContent and toolCalls)
-      await this.sessionManager.addOutput({
-        role: 'assistant',
-        content,
-        timestamp: Date.now(),
-        reasoningContent,
-        toolCalls
-      });
-
-      // Handle tool calls
-      if (toolCalls.length > 0) {
-        await this.handleToolCalls(toolCalls, async () => {
-          // Remote mode continuation: reuse existing taskId
-          await this.generateRemoteResponse(0, this.currentTaskId || undefined);
-        });
-      }
-
-      // Checkpoint support (consistent with local mode)
-      if (this.checkpointManager.isEnabled()) {
-        await this.checkpointManager.createCheckpoint(
-          `Response generated at ${new Date().toLocaleString()}`,
-          [...this.conversation],
-          [...this.toolCalls]
-        );
-      }
-
-      // Operation completed successfully
-      (this as any)._isOperationInProgress = false;
+      // Reuse generateResponse with remote client
+      await this.generateResponse(thinkingTokens, this.remoteAIClient as any);
 
       // Mark task as completed (发送 status: 'end')
       logger.debug(`[Session] Task completed: taskId=${this.currentTaskId}`);
-      if (this.remoteAIClient && this.currentTaskId) {
+      if (this.currentTaskId) {
         await this.remoteAIClient.completeTask(this.currentTaskId);
       }
 
     } catch (error: any) {
-      clearInterval(spinnerInterval);
-      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
-
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
 
@@ -1247,7 +1128,6 @@ export class InteractiveSession {
         console.log('');
 
         // Clear invalid credentials and persist
-        // Note: Do NOT overwrite selectedAuthType - preserve user's chosen auth method
         await this.configManager.set('apiKey', '');
         await this.configManager.set('refreshToken', '');
         await this.configManager.save('global');
@@ -1264,7 +1144,6 @@ export class InteractiveSession {
 
         logger.debug('[DEBUG generateRemoteResponse] After re-auth:');
         logger.debug('  - authConfig.apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
-        logger.debug('  - authConfig.apiKey prefix:', authConfig.apiKey ? authConfig.apiKey.substring(0, 20) + '...' : 'empty');
 
         // Recreate readline interface after inquirer
         this.rl.close();
@@ -1280,8 +1159,7 @@ export class InteractiveSession {
         if (authConfig.apiKey) {
           const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
           logger.debug('[DEBUG generateRemoteResponse] Reinitializing RemoteAIClient with new token');
-          const newWebBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-          this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, newWebBaseUrl, authConfig.showAIDebugInfo);
+          this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl, authConfig.showAIDebugInfo);
         } else {
           logger.debug('[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!');
         }

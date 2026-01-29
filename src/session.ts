@@ -231,7 +231,7 @@ export class InteractiveSession {
         clearInterval(spinnerInterval);
         process.stdout.write('\r' + ' '.repeat(50) + '\r'); // Clear the line
         
-        const baseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net';
+        const baseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
         let isValid = await this.validateToken(baseUrl, authConfig.apiKey);
 
         // Try refresh token if validation failed
@@ -315,7 +315,7 @@ export class InteractiveSession {
       logger.debug('[SESSION] Final selectedAuthType:', String(selectedAuthType));
       logger.debug('[SESSION] Creating RemoteAIClient?', String(selectedAuthType === AuthType.OAUTH_XAGENT));
       if (selectedAuthType === AuthType.OAUTH_XAGENT) {
-        const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net';
+        const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
         // In OAuth XAGENT mode, we still pass apiKey (can be empty or used for other purposes)
         this.remoteAIClient = new RemoteAIClient(authConfig.apiKey || '', webBaseUrl, authConfig.showAIDebugInfo);
         logger.debug('[DEBUG Initialize] RemoteAIClient created successfully');
@@ -1275,9 +1275,9 @@ export class InteractiveSession {
 
         // Reinitialize RemoteAIClient with new token
         if (authConfig.apiKey) {
-          const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net';
+          const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
           logger.debug('[DEBUG generateRemoteResponse] Reinitializing RemoteAIClient with new token');
-          const newWebBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net';
+          const newWebBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
           this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, newWebBaseUrl, authConfig.showAIDebugInfo);
         } else {
           logger.debug('[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!');

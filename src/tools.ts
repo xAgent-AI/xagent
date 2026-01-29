@@ -1647,12 +1647,12 @@ export class TaskTool implements Tool {
             const indentedPreview = indentMultiline(truncatedPreview, indent);
             console.log(`${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`);
 
-            // Record successful tool execution in history
+            // Record successful tool execution in history (use truncated preview to save memory)
             executionHistory.push({
               tool: name,
               status: 'success',
               params: parsedParams,
-              result: toolResult,
+              result: truncatedPreview,
               timestamp: new Date().toISOString()
             });
 

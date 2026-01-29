@@ -85,14 +85,14 @@ export class InteractiveSession {
 
       this.slashCommandHandler = new SlashCommandHandler();
 
-  
-
       // Register /clear callback, clear local conversation when clearing dialogue
-
       this.slashCommandHandler.setClearCallback(() => {
-
         this.conversation = [];
-
+        this.toolCalls = [];
+        this.currentTaskId = null;
+        this.taskCompleted = false;
+        this.isFirstApiCall = true;
+        this.slashCommandHandler.setConversationHistory([]);
       });
 
   

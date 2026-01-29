@@ -123,7 +123,7 @@ export class WriteTool implements Tool {
 - When user explicitly asks to "create", "write", or "generate" a file
 
 # When NOT to Use
-- For making small edits to existing files (use Replace instead)
+- For making small edits to existing files (use edit instead)
 - When you only need to append content (read file first, then write)
 - For creating directories (use CreateDirectory instead)
 
@@ -139,22 +139,29 @@ export class WriteTool implements Tool {
 - Parent directories are created automatically
 - Use appropriate file extensions
 - Ensure content is complete and syntactically correct
-- For partial edits, use Replace tool instead`;
+- For partial edits, use Edit tool instead`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
-  async execute(params: { filePath: string; content: string }): Promise<{ success: boolean; message: string }> {
+  async execute(params: { filePath: string; content: string }): Promise<{ success: boolean; message: string; filePath: string; lineCount: number; preview?: string }> {
     const { filePath, content } = params;
-    
+
     try {
       const absolutePath = path.resolve(filePath);
       const dir = path.dirname(absolutePath);
-      
+
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(absolutePath, content, 'utf-8');
-      
+
+      const lineCount = content.split('\n').length;
+      const preview = content.split('\n').slice(0, 10).join('\n');
+      const isTruncated = lineCount > 10;
+
       return {
         success: true,
-        message: `Successfully wrote to ${filePath}`
+        message: `Successfully wrote to ${filePath}`,
+        filePath,
+        lineCount,
+        preview: isTruncated ? preview + '\n...' : preview
       };
     } catch (error: any) {
       throw new Error(`Failed to write file ${filePath}: ${error.message}`);
@@ -174,9 +181,9 @@ export class GrepTool implements Tool {
 - When you need line-by-line results with context
 
 # When NOT to Use
-- When you only need to find files containing text (use SearchCodebase instead)
-- When searching by file pattern rather than content (use SearchCodebase)
-- For very large codebases where you only need file names (SearchCodebase is faster)
+- When you only need to find files containing text (use SearchFiles instead)
+- When searching by file pattern rather than content (use SearchFiles)
+- For very large codebases where you only need file names (SearchFiles is faster)
 
 # Parameters
 - \`pattern\`: Regex or literal string to search for
@@ -316,9 +323,9 @@ export class BashTool implements Tool {
 - Any command-line operations
 
 # When NOT to Use
-- For file operations (use Read/Write/Replace/CreateDirectory instead)
+- For file operations (use Read/Write/Edit/CreateDirectory instead)
 - For searching file content (use Grep instead)
-- For finding files (use SearchCodebase or ListDirectory instead)
+- For finding files (use SearchFiles or ListDirectory instead)
 - For commands that require user interaction (non-interactive only)
 - For dangerous commands without understanding the impact
 
@@ -458,7 +465,7 @@ export class ListDirectoryTool implements Tool {
 # When NOT to Use
 - When you need to read file contents (use Read instead)
 - For recursive exploration of entire codebase (use recursive=true)
-- When you need to search for specific files (use SearchCodebase instead)
+- When you need to search for specific files (use SearchFiles instead)
 
 # Parameters
 - \`path\`: (Optional) Directory path, default: "."
@@ -501,8 +508,17 @@ export class ListDirectoryTool implements Tool {
   }
 }
 
-export class SearchCodebaseTool implements Tool {
-  name = 'SearchCodebase';
+export interface SearchFilesResult {
+  /** Matching file paths relative to search directory */
+  files: string[];
+  /** Total number of matches found (before limiting) */
+  total: number;
+  /** Whether results were truncated due to limit */
+  truncated: boolean;
+}
+
+export class SearchFilesTool implements Tool {
+  name = 'SearchFiles';
   description = `Search for files matching a glob pattern. This is your PRIMARY tool for finding files by name or extension.
 
 # When to Use
@@ -519,11 +535,13 @@ export class SearchCodebaseTool implements Tool {
 # Parameters
 - \`pattern\`: Glob pattern (e.g., "**/*.ts", "src/**/*.test.ts")
 - \`path\`: (Optional) Directory to search in, default: "."
+- \`limit\`: (Optional) Maximum number of results to return, default: 1000
 
 # Examples
-- Find all TypeScript files: SearchCodebase(pattern="**/*.ts")
-- Find test files: SearchCodebase(pattern="**/*.test.ts")
-- Find config files: SearchCodebase(pattern="**/config.*")
+- Find all TypeScript files: SearchFiles(pattern="**/*.ts")
+- Find test files: SearchFiles(pattern="**/*.test.ts")
+- Find config files: SearchFiles(pattern="**/config.*")
+- Limit results: SearchFiles(pattern="**/*.ts", limit=100)
 
 # Glob Patterns
 - \`*\` matches any characters except /
@@ -534,19 +552,28 @@ export class SearchCodebaseTool implements Tool {
 # Best Practices
 - Use **/*.ts for recursive search in all directories
 - Combine with path parameter to search specific directories
+- Use limit parameter to avoid huge result sets
 - Results are file paths, not content (use Grep on results if needed)`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
-  async execute(params: { pattern: string; path?: string }): Promise<string[]> {
-    const { pattern, path: searchPath = '.' } = params;
-    
+  async execute(params: { pattern: string; path?: string; limit?: number }): Promise<SearchFilesResult> {
+    const { pattern, path: searchPath = '.', limit = 1000 } = params;
+
     try {
       const files = await glob(pattern, {
         cwd: searchPath,
         ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
       });
 
-      return files;
+      const total = files.length;
+      const truncated = total > limit;
+      const result = truncated ? files.slice(0, limit) : files;
+
+      return {
+        files: result,
+        total,
+        truncated
+      };
     } catch (error: any) {
       throw new Error(`Search failed: ${error.message}`);
     }
@@ -581,16 +608,17 @@ export class DeleteFileTool implements Tool {
 - This action is irreversible - be certain before executing`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
-  async execute(params: { filePath: string }): Promise<{ success: boolean; message: string }> {
+  async execute(params: { filePath: string }): Promise<{ success: boolean; message: string; filePath: string }> {
     const { filePath } = params;
-    
+
     try {
       const absolutePath = path.resolve(filePath);
       await fs.unlink(absolutePath);
-      
+
       return {
         success: true,
-        message: `Successfully deleted ${filePath}`
+        message: `Successfully deleted ${filePath}`,
+        filePath
       };
     } catch (error: any) {
       throw new Error(`Failed to delete file ${filePath}: ${error.message}`);
@@ -643,9 +671,171 @@ export class CreateDirectoryTool implements Tool {
   }
 }
 
-export class ReplaceTool implements Tool {
-  name = 'replace';
-  description = `Replace specific text within an existing file. This is your PRIMARY tool for making targeted edits to code.
+// 编辑工具辅助函数
+function detectLineEnding(content: string): "\r\n" | "\n" {
+	const crlfIdx = content.indexOf("\r\n");
+	const lfIdx = content.indexOf("\n");
+	if (lfIdx === -1) return "\n";
+	if (crlfIdx === -1) return "\n";
+	return crlfIdx < lfIdx ? "\r\n" : "\n";
+}
+
+function normalizeToLF(text: string): string {
+	return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function restoreLineEndings(text: string, ending: "\r\n" | "\n"): string {
+	return ending === "\r\n" ? text.replace(/\n/g, "\r\n") : text;
+}
+
+function normalizeForFuzzyMatch(text: string): string {
+	return (
+		text
+			.split("\n")
+			.map((line) => line.trimEnd())
+			.join("\n")
+			.replace(/['‘’""]/g, "'")
+			.replace(/["""]/g, '"')
+			.replace(/[—–‑−]/g, "-")
+			.replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, " ")
+	);
+}
+
+interface FuzzyMatchResult {
+	found: boolean;
+	index: number;
+	matchLength: number;
+	usedFuzzyMatch: boolean;
+	contentForReplacement: string;
+}
+
+function fuzzyFindText(content: string, oldText: string): FuzzyMatchResult {
+	const exactIndex = content.indexOf(oldText);
+	if (exactIndex !== -1) {
+		return {
+			found: true,
+			index: exactIndex,
+			matchLength: oldText.length,
+			usedFuzzyMatch: false,
+			contentForReplacement: content,
+		};
+	}
+
+	const fuzzyContent = normalizeForFuzzyMatch(content);
+	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
+	const fuzzyIndex = fuzzyContent.indexOf(fuzzyOldText);
+
+	if (fuzzyIndex === -1) {
+		return {
+			found: false,
+			index: -1,
+			matchLength: 0,
+			usedFuzzyMatch: false,
+			contentForReplacement: content,
+		};
+	}
+
+	return {
+		found: true,
+		index: fuzzyIndex,
+		matchLength: fuzzyOldText.length,
+		usedFuzzyMatch: true,
+		contentForReplacement: fuzzyContent,
+	};
+}
+
+function stripBom(content: string): { bom: string; text: string } {
+	return content.startsWith("\uFEFF") ? { bom: "\uFEFF", text: content.slice(1) } : { bom: "", text: content };
+}
+
+async function generateDiffString(oldContent: string, newContent: string, contextLines = 4): Promise<{ diff: string; firstChangedLine: number | undefined }> {
+	const diffModule = await import("diff");
+	const parts = diffModule.diffLines(oldContent, newContent);
+	const output: string[] = [];
+
+	const oldLines = oldContent.split("\n");
+	const newLines = newContent.split("\n");
+	const maxLineNum = Math.max(oldLines.length, newLines.length);
+	const lineNumWidth = String(maxLineNum).length;
+
+	let oldLineNum = 1;
+	let newLineNum = 1;
+	let lastWasChange = false;
+	let firstChangedLine: number | undefined;
+
+	for (let i = 0; i < parts.length; i++) {
+		const part = parts[i];
+		const raw = part.value.split("\n");
+		if (raw[raw.length - 1] === "") {
+			raw.pop();
+		}
+
+		if (part.added || part.removed) {
+			if (firstChangedLine === undefined) {
+				firstChangedLine = newLineNum;
+			}
+
+			for (const line of raw) {
+				if (part.added) {
+					const lineNum = String(newLineNum).padStart(lineNumWidth, " ");
+					output.push(`+${lineNum} ${line}`);
+					newLineNum++;
+				} else {
+					const lineNum = String(oldLineNum).padStart(lineNumWidth, " ");
+					output.push(`-${lineNum} ${line}`);
+					oldLineNum++;
+				}
+			}
+			lastWasChange = true;
+		} else {
+			const nextPartIsChange = i < parts.length - 1 && (parts[i + 1].added || parts[i + 1].removed);
+
+			if (lastWasChange || nextPartIsChange) {
+				let linesToShow = raw;
+				let skipStart = 0;
+				let skipEnd = 0;
+
+				if (!lastWasChange) {
+					skipStart = Math.max(0, raw.length - contextLines);
+					linesToShow = raw.slice(skipStart);
+				}
+
+				if (!nextPartIsChange && linesToShow.length > contextLines) {
+					skipEnd = linesToShow.length - contextLines;
+					linesToShow = linesToShow.slice(0, contextLines);
+				}
+
+				if (skipStart > 0) {
+					output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
+					oldLineNum += skipStart;
+					newLineNum += skipStart;
+				}
+
+				for (const line of linesToShow) {
+					const lineNum = String(oldLineNum).padStart(lineNumWidth, " ");
+					output.push(` ${lineNum} ${line}`);
+					oldLineNum++;
+					newLineNum++;
+				}
+
+				if (skipEnd > 0) {
+					output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
+				}
+			} else {
+				oldLineNum += raw.length;
+				newLineNum += raw.length;
+			}
+
+			lastWasChange = false;
+		}
+	}
+
+	return { diff: output.join("\n"), firstChangedLine };
+}
+
+export class EditTool implements Tool {
+  name = 'Edit';
+  description = `Edit a file by replacing exact text. This is your PRIMARY tool for making targeted edits to code.
 
 # When to Use
 - Modifying specific code sections without rewriting entire files
@@ -656,32 +846,39 @@ export class ReplaceTool implements Tool {
 # When NOT to Use
 - When you need to create a completely new file (use Write instead)
 - When you want to append content to a file (read first, then Write)
-- When making changes across multiple files (use Grep to find, then Replace individually)
+- When making changes across multiple files (use Grep to find, then edit individually)
 
 # Parameters
-- \`file_path\`: Path to the file to edit
+- \`file_path\`: Path to the file to edit (relative or absolute)
 - \`instruction\`: Description of what to change (for your own tracking)
 - \`old_string\`: The exact text to find and replace (must match exactly)
 - \`new_string\`: The new text to replace with
 
 # Critical Requirements
 - \`old_string\` MUST be an EXACT match, including whitespace and indentation
-- Include at least 3 lines of context before and after the target text
-- Ensure unique matching to avoid unintended replacements
+- Include sufficient context (at least 3 lines) before and after the target text to ensure unique matching
+- The file must exist before editing
+
+# Fuzzy Matching
+This tool supports fuzzy matching to handle minor formatting differences:
+- Trailing whitespace is ignored
+- Smart quotes (', ", , ) are normalized to ASCII
+- Unicode dashes/hyphens are normalized to ASCII hyphen
+- Special Unicode spaces are normalized to regular space
 
 # Examples
-replace(
+edit(
   file_path="src/app.ts",
   instruction="Update API endpoint",
-  old_string="const API_URL = 'https://api.old.com';",
-  new_string="const API_URL = 'https://api.new.com';"
+  old_string="const API_URL = 'https://api.old.com'\\nconst PORT = 8080;",
+  new_string="const API_URL = 'https://api.new.com'\\nconst PORT = 3000;"
 )
 
 # Best Practices
 - Read the file first to understand the exact content
 - Include sufficient context in old_string to ensure unique match
-- Be careful with special regex characters in old_string (they're escaped automatically)
-- If multiple occurrences exist, all will be replaced`;
+- If fuzzy matching is needed, the tool will automatically apply it
+- Check the diff output to verify the change is correct`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: {
@@ -689,38 +886,88 @@ replace(
     instruction: string;
     old_string: string;
     new_string: string;
-  }): Promise<{ success: boolean; message: string; changes: number }> {
+  }): Promise<{ success: boolean; message: string; diff?: string; firstChangedLine?: number }> {
     const { file_path, instruction, old_string, new_string } = params;
     
     try {
       const absolutePath = path.resolve(file_path);
-      const content = await fs.readFile(absolutePath, 'utf-8');
       
-      const occurrences = (content.match(new RegExp(this.escapeRegExp(old_string), 'g')) || []).length;
-      
-      if (occurrences === 0) {
+      // Check if file exists
+      try {
+        await fs.access(absolutePath);
+      } catch {
         return {
           success: false,
-          message: `No occurrences found to replace in ${file_path}`,
-          changes: 0
+          message: `File not found: ${file_path}`,
         };
       }
-      
-      const newContent = content.replace(new RegExp(this.escapeRegExp(old_string), 'g'), new_string);
-      await fs.writeFile(absolutePath, newContent, 'utf-8');
-      
+
+      // Read the file
+      const buffer = await fs.readFile(absolutePath);
+      const rawContent = buffer.toString("utf-8");
+
+      // Strip BOM before matching
+      const { bom, text: content } = stripBom(rawContent);
+
+      const originalEnding = detectLineEnding(content);
+      const normalizedContent = normalizeToLF(content);
+      const normalizedOldText = normalizeToLF(old_string);
+      const normalizedNewText = normalizeToLF(new_string);
+
+      // Find the old text using fuzzy matching
+      const matchResult = fuzzyFindText(normalizedContent, normalizedOldText);
+
+      if (!matchResult.found) {
+        return {
+          success: false,
+          message: `Could not find the exact text in ${file_path}. The old text must match exactly including all whitespace and newlines.`,
+        };
+      }
+
+      // Count occurrences using fuzzy-normalized content
+      const fuzzyContent = normalizeForFuzzyMatch(normalizedContent);
+      const fuzzyOldText = normalizeForFuzzyMatch(normalizedOldText);
+      const occurrences = fuzzyContent.split(fuzzyOldText).length - 1;
+
+      if (occurrences > 1) {
+        return {
+          success: false,
+          message: `Found ${occurrences} occurrences of the text in ${file_path}. The text must be unique. Please provide more context to make it unique.`,
+        };
+      }
+
+      // Perform replacement
+      const baseContent = matchResult.contentForReplacement;
+      const newContent =
+        baseContent.substring(0, matchResult.index) +
+        normalizedNewText +
+        baseContent.substring(matchResult.index + matchResult.matchLength);
+
+      // Verify the replacement actually changed something
+      if (baseContent === newContent) {
+        return {
+          success: false,
+          message: `No changes made to ${file_path}. The replacement produced identical content.`,
+        };
+      }
+
+      const finalContent = bom + restoreLineEndings(newContent, originalEnding);
+      await fs.writeFile(absolutePath, finalContent, "utf-8");
+
+      const diffResult = await generateDiffString(baseContent, newContent);
+
       return {
         success: true,
-        message: `Successfully replaced ${occurrences} occurrence(s) in ${file_path}`,
-        changes: occurrences
+        message: `Successfully replaced text in ${file_path}.`,
+        diff: diffResult.diff,
+        firstChangedLine: diffResult.firstChangedLine,
       };
     } catch (error: any) {
-      throw new Error(`Failed to replace in file ${file_path}: ${error.message}`);
+      return {
+        success: false,
+        message: `Failed to edit file ${file_path}: ${error.message}`,
+      };
     }
-  }
-
-  private escapeRegExp(string: string): string {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 }
 
@@ -1636,23 +1883,92 @@ export class TaskTool implements Tool {
             // Check cancellation before tool execution
             checkCancellation();
             
-            const toolResult = await cancellationManager.withCancellation(
+            const toolResult: any = await cancellationManager.withCancellation(
               toolRegistry.execute(name, parsedParams, mode, indent),
               `subagent-${subagent_type}-${name}-${iteration}`
             );
 
-            // Display tool result with proper indentation for multi-line content
+            // Get showToolDetails config to control result display
+            const showToolDetails = config.get('showToolDetails') || false;
+
+            // Prepare result preview for history
             const resultPreview = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
             const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
-            const indentedPreview = indentMultiline(truncatedPreview, indent);
-            console.log(`${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`);
 
-            // Record successful tool execution in history
+            // Special handling for different tools (consistent with session.ts display logic)
+            const isTodoTool = name === 'todo_write' || name === 'todo_read';
+            const isEditTool = name === 'Edit';
+            const isWriteTool = name === 'Write';
+            const isDeleteTool = name === 'DeleteFile';
+            const hasDiff = isEditTool && toolResult?.diff;
+            const hasFilePreview = isWriteTool && toolResult?.preview;
+            const hasDeleteInfo = isDeleteTool && toolResult?.filePath;
+
+            // Import render functions for consistent display
+            const { renderDiff, renderLines } = await import('./theme.js');
+
+            if (isTodoTool) {
+              // Display todo list
+              console.log(`${indent}${colors.success(`${icons.check} Todo List:`)}`);
+              const todos = toolResult?.todos || [];
+              if (todos.length === 0) {
+                console.log(`${indent}  ${colors.textMuted('No tasks')}`);
+              } else {
+                const statusConfig: Record<string, { icon: string; color: (text: string) => string; label: string }> = {
+                  'pending': { icon: icons.circle, color: colors.textMuted, label: 'Pending' },
+                  'in_progress': { icon: icons.loading, color: colors.warning, label: 'In Progress' },
+                  'completed': { icon: icons.success, color: colors.success, label: 'Completed' },
+                  'failed': { icon: icons.error, color: colors.error, label: 'Failed' }
+                };
+                for (const todo of todos) {
+                  const status = statusConfig[todo.status] || statusConfig['pending'];
+                  console.log(`${indent}  ${status.color(status.icon)} ${status.color(status.label)}: ${colors.text(todo.task)}`);
+                }
+              }
+              if (toolResult?.message) {
+                console.log(`${indent}${colors.textDim(toolResult.message)}`);
+              }
+              console.log('');
+            } else if (hasDiff) {
+              // Display edit result with diff
+              console.log('');
+              const diffOutput = renderDiff(toolResult.diff);
+              const indentedDiff = diffOutput.split('\n').map(line => `${indent}  ${line}`).join('\n');
+              console.log(`${indentedDiff}\n`);
+            } else if (hasFilePreview) {
+              // Display new file content in preview style
+              console.log('');
+              console.log(`${indent}${colors.success(`${icons.file} ${toolResult.filePath}`)}`);
+              console.log(`${indent}${colors.textDim(`  ${toolResult.lineCount} lines`)}`);
+              console.log('');
+              console.log(renderLines(toolResult.preview, { maxLines: 10, indent: indent + '  ' }));
+              console.log('');
+            } else if (hasDeleteInfo) {
+              // Display DeleteFile result
+              console.log('');
+              console.log(`${indent}${colors.success(`${icons.check} Deleted: ${toolResult.filePath}`)}`);
+              console.log('');
+            } else if (showToolDetails) {
+              // Show full result details
+              const indentedPreview = indentMultiline(resultPreview, indent);
+              console.log(`${indent}${colors.success(`${icons.check} Tool Result:`)}\n${indentedPreview}\n`);
+            } else if (toolResult && toolResult.success === false) {
+              // Tool failed
+              console.log(`${indent}${colors.error(`${icons.cross} ${toolResult.message || 'Failed'}`)}\n`);
+            } else if (toolResult) {
+              // Show brief preview by default
+              const indentedPreview = indentMultiline(truncatedPreview, indent);
+              console.log(`${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`);
+            } else {
+              console.log(`${indent}${colors.textDim('(no result)')}\n`);
+            }
+
+            // Record successful tool execution in history (use truncated preview to save memory)
             executionHistory.push({
               tool: name,
               status: 'success',
               params: parsedParams,
-              result: toolResult,
+              result: truncatedPreview,
               timestamp: new Date().toISOString()
             });
 
@@ -2469,7 +2785,7 @@ export class InvokeSkillTool implements Tool {
 
 # When NOT to Use
 - For simple file operations (use Read/Write instead)
-- For basic code changes (use Replace/Write instead)
+- For basic code changes (use Edit/Write instead)
 - When a regular tool can accomplish the task
 
 # Parameters
@@ -2673,10 +2989,10 @@ export class ToolRegistry {
     this.register(new GrepTool());
     this.register(new BashTool());
     this.register(new ListDirectoryTool());
-    this.register(new SearchCodebaseTool());
+    this.register(new SearchFilesTool());    
     this.register(new DeleteFileTool());
     this.register(new CreateDirectoryTool());
-    this.register(new ReplaceTool());
+    this.register(new EditTool());
     this.register(new WebSearchTool());
     this.register(this.todoWriteTool);
     this.register(new TodoReadTool(this.todoWriteTool));
@@ -2937,7 +3253,7 @@ export class ToolRegistry {
           };
           break;
 
-        case 'SearchCodebase':
+        case 'SearchFiles':
           parameters = {
             type: 'object',
             properties: {
@@ -2948,6 +3264,10 @@ export class ToolRegistry {
               path: {
                 type: 'string',
                 description: 'Optional: The path to search in (default: current directory)'
+              },
+              limit: {
+                type: 'integer',
+                description: 'Optional: Maximum number of results to return (default: 1000)'
               }
             },
             required: ['pattern']
@@ -2984,13 +3304,13 @@ export class ToolRegistry {
           };
           break;
 
-        case 'replace':
+        case 'Edit':
           parameters = {
             type: 'object',
             properties: {
               file_path: {
                 type: 'string',
-                description: 'The absolute path to the file'
+                description: 'The absolute path to the file to edit'
               },
               instruction: {
                 type: 'string',
@@ -2998,11 +3318,11 @@ export class ToolRegistry {
               },
               old_string: {
                 type: 'string',
-                description: 'The exact text to replace'
+                description: 'The exact text to replace (supports fuzzy matching)'
               },
               new_string: {
                 type: 'string',
-                description: 'The exact text to replace with'
+                description: 'The new text to replace with'
               }
             },
             required: ['file_path', 'instruction', 'old_string', 'new_string']

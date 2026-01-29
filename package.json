@@ -1,6 +1,6 @@
 {
   "name": "@xagent-ai/cli",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "xAgent CLI - AI-powered command-line assistant for autonomous living",
   "type": "module",
   "main": "dist/index.js",

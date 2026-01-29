@@ -139,7 +139,7 @@ export class WriteTool implements Tool {
 - Parent directories are created automatically
 - Use appropriate file extensions
 - Ensure content is complete and syntactically correct
-- For partial edits, use Replace tool instead`;
+- For partial edits, use Edit tool instead`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: { filePath: string; content: string }): Promise<{ success: boolean; message: string }> {
@@ -316,7 +316,7 @@ export class BashTool implements Tool {
 - Any command-line operations
 
 # When NOT to Use
-- For file operations (use Read/Write/Replace/CreateDirectory instead)
+- For file operations (use Read/Write/Edit/CreateDirectory instead)
 - For searching file content (use Grep instead)
 - For finding files (use SearchCodebase or ListDirectory instead)
 - For commands that require user interaction (non-interactive only)
@@ -2688,7 +2688,7 @@ export class InvokeSkillTool implements Tool {
 
 # When NOT to Use
 - For simple file operations (use Read/Write instead)
-- For basic code changes (use Replace/Write instead)
+- For basic code changes (use Edit/Write instead)
 - When a regular tool can accomplish the task
 
 # Parameters
@@ -3203,13 +3203,13 @@ export class ToolRegistry {
           };
           break;
 
-        case 'replace':
+        case 'edit':
           parameters = {
             type: 'object',
             properties: {
               file_path: {
                 type: 'string',
-                description: 'The absolute path to the file'
+                description: 'The absolute path to the file to edit'
               },
               instruction: {
                 type: 'string',
@@ -3217,11 +3217,11 @@ export class ToolRegistry {
               },
               old_string: {
                 type: 'string',
-                description: 'The exact text to replace'
+                description: 'The exact text to replace (supports fuzzy matching)'
               },
               new_string: {
                 type: 'string',
-                description: 'The exact text to replace with'
+                description: 'The new text to replace with'
               }
             },
             required: ['file_path', 'instruction', 'old_string', 'new_string']

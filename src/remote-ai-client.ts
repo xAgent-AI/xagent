@@ -426,7 +426,7 @@ export class RemoteAIClient extends EventEmitter {
       context: undefined,
       model: options.model,
       taskId: (options as any).taskId,
-      status: 'begin'  // Mark as beginning of task
+      status: (options as any).status || 'begin'  // Use status from options, default to 'begin'
     });
 
     // Debug output for response

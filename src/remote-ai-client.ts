@@ -155,8 +155,16 @@ export class RemoteAIClient extends EventEmitter {
       }
 
       // Provide user-friendly error messages based on status code
+      let shouldRetry = false;
+      let retryMessage = '';
+
       if (error.response) {
         const status = error.response.status;
+
+        // Determine if error is retryable (5xx and 429 are retryable)
+        const isRetryableStatus = (status >= 500 && status < 600) || status === 429;
+        
+        // Build error message
         let errorMessage: string;
         let userFriendlyMessage: string;
 
@@ -171,10 +179,6 @@ export class RemoteAIClient extends EventEmitter {
             errorMessage = 'Payload Too Large';
             userFriendlyMessage = 'Request data is too large. Please reduce input content or screenshot size and try again.';
             break;
-          case 429:
-            errorMessage = 'Too Many Requests';
-            userFriendlyMessage = 'XAgent service rate limit exceeded. Please wait a moment and try again.';
-            break;
           case 500:
             // Try to parse server's detailed error message
             try {
@@ -183,24 +187,24 @@ export class RemoteAIClient extends EventEmitter {
               if (errorData?.error && errorData?.errorType === 'AI_SERVICE_ERROR') {
                 userFriendlyMessage = `${errorData.error}\n\nSuggestion: ${errorData.suggestion}`;
               } else {
-                userFriendlyMessage = errorData?.error || 'Server error. Please try again later. If the problem persists, contact the administrator.';
+                userFriendlyMessage = errorData?.error || 'Server error. Please try again later.';
               }
             } catch {
               errorMessage = 'Internal Server Error';
-              userFriendlyMessage = 'Server error. Please try again later. If the problem persists, contact the administrator.';
+              userFriendlyMessage = 'Server error. Please try again later.';
             }
             break;
           case 502:
             errorMessage = 'Bad Gateway';
-            userFriendlyMessage = 'Gateway error. Service temporarily unavailable. Please try again later.';
+            userFriendlyMessage = 'Service temporarily unavailable. Retrying...';
             break;
           case 503:
             errorMessage = 'Service Unavailable';
-            userFriendlyMessage = 'AI service request timed out. Please try again.';
+            userFriendlyMessage = 'AI service busy. Retrying...';
             break;
           case 504:
             errorMessage = 'Gateway Timeout';
-            userFriendlyMessage = 'Gateway timeout. Please try again later.';
+            userFriendlyMessage = 'Gateway timeout. Retrying...';
             break;
           default:
             try {
@@ -211,55 +215,79 @@ export class RemoteAIClient extends EventEmitter {
             userFriendlyMessage = `Request failed with status code: ${status}`;
         }
 
-        // Print user-friendly error message
-        console.error(`\n❌ Request failed (${status})`);
-        console.error(`   ${userFriendlyMessage}`);
-        if (this.showAIDebugInfo) {
-          console.error(`   Original error: ${errorMessage}`);
+        // For retryable errors (5xx, 429), set flag and continue to retry logic
+        // For non-retryable errors (4xx except 429), throw immediately
+        if (isRetryableStatus) {
+          shouldRetry = true;
+          retryMessage = userFriendlyMessage;
+          console.log(`\n⚠️  ${status}: ${userFriendlyMessage}`);
+          if (this.showAIDebugInfo) {
+            console.log(`   Original error: ${errorMessage}`);
+          }
+        } else {
+          console.error(`\n❌ Request failed (${status}): ${userFriendlyMessage}`);
+          throw new Error(userFriendlyMessage);
         }
-        throw new Error(userFriendlyMessage);
+      } else {
+        // Network error or other error (no response)
+        const isRetryable = this.isRetryableError(error);
+        if (isRetryable) {
+          shouldRetry = true;
+          retryMessage = 'Network error. Retrying...';
+          console.log(`\n⚠️  ${retryMessage}`);
+        } else {
+          throw error;
+        }
       }
 
-      // Network error or other error
-      // Check if error is retryable
-      const isRetryable = this.isRetryableError(error);
-      if (!isRetryable) {
-        throw error;
-      }
+      // Retry with exponential backoff (infinite retries until success)
+      if (shouldRetry) {
+        const retryResult = await withRetry(async () => {
+          const response = await axios.post(url, requestBody, {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${this.authToken}`
+            },
+            httpsAgent,
+            timeout: 300000
+          });
 
-      // Retry with exponential backoff
-      const retryResult = await withRetry(async () => {
-        const response = await axios.post(url, requestBody, {
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.authToken}`
-          },
-          httpsAgent,
-          timeout: 300000
+          if (response.status === 401) {
+            throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
+          }
+
+          return {
+            role: 'assistant' as const,
+            content: response.data.content || '',
+            reasoningContent: response.data.reasoningContent || '',
+            toolCalls: response.data.toolCalls,
+            timestamp: Date.now()
+          };
+        }, { 
+          maxRetries: Infinity,    // 无限重试，直到成功
+          maxTotalTime: 0,         // 不限制总时间
+          baseDelay: 2000,         // 基础延迟 2 秒
+          maxDelay: 30000,         // 最大延迟 30 秒
+          jitter: true,
+          retryOnTimeout: true,
+          retryOn5xx: true,
+          retryOn429: true,
+          backoffMultiplier: 2
         });
 
-        if (response.status === 401) {
-          throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
+        if (!retryResult.success) {
+          throw retryResult.error || new Error('Retry failed');
         }
 
-        return {
-          role: 'assistant' as const,
-          content: response.data.content || '',
-          reasoningContent: response.data.reasoningContent || '',
-          toolCalls: response.data.toolCalls,
-          timestamp: Date.now()
-        };
-      }, { maxRetries: 3, baseDelay: 1000, maxDelay: 10000, jitter: true });
+        if (!retryResult.data) {
+          throw new Error('Retry returned empty response');
+        }
 
-      if (!retryResult.success) {
-        throw retryResult.error || new Error('Retry failed');
+        return retryResult.data;
       }
 
-      if (!retryResult.data) {
-        throw new Error('Retry returned empty response');
-      }
-
-      return retryResult.data;
+      // This should never be reached, but TypeScript requires a return
+      throw new Error('Unexpected error state: retry was not triggered and no error was thrown');
     }
   }
 
@@ -519,20 +547,36 @@ export class RemoteAIClient extends EventEmitter {
       remoteChatOptions.signal.addEventListener?.('abort', () => controller?.abort());
     }
 
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+
+    // Retry on network errors, timeouts, 5xx, and 429
+    const isRetryable = (error: any): boolean => {
+      if (error.code === 'ECONNABORTED' || !error.response) {
+        return true;
+      }
+      if (error.response?.status && error.response.status >= 500) {
+        return true;
+      }
+      if (error.response?.status === 429) {
+        return true;
+      }
+      return false;
+    };
+
     try {
       const response = await axios.post(this.vlmApi, requestBody, {
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.authToken}`
-          },
-          signal: abortSignal,
-          httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        },
+        signal: abortSignal,
+        httpsAgent,
         timeout: 120000
-        });
+      });
 
-        if (this.showAIDebugInfo) {
-          console.log('[RemoteAIClient] VLM response status:', response.status);
-        }
+      if (this.showAIDebugInfo) {
+        console.log('[RemoteAIClient] VLM response status:', response.status);
+      }
 
       const data = response.data as RemoteVLMResponse;
       return data.content || '';
@@ -541,7 +585,47 @@ export class RemoteAIClient extends EventEmitter {
       if (this.showAIDebugInfo) {
         console.log('[RemoteAIClient] VLM request exception:', error.message);
       }
-      throw error;
+
+      // Check if error is retryable
+      if (!isRetryable(error)) {
+        throw error;
+      }
+
+      // Retry with exponential backoff (infinite retries until success)
+      console.log('[RemoteAIClient] VLM network error, retrying with exponential backoff...');
+      const retryResult = await withRetry(async () => {
+        const response = await axios.post(this.vlmApi, requestBody, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.authToken}`
+          },
+          signal: abortSignal,
+          httpsAgent,
+          timeout: 120000
+        });
+        const data = response.data as RemoteVLMResponse;
+        return data.content || '';
+      }, { 
+        maxRetries: Infinity,    // 无限重试，直到成功
+        maxTotalTime: 0,         // 不限制总时间
+        baseDelay: 2000,         // 基础延迟 2 秒
+        maxDelay: 30000,         // 最大延迟 30 秒
+        jitter: true,
+        retryOnTimeout: true,
+        retryOn5xx: true,
+        retryOn429: true,
+        backoffMultiplier: 2
+      });
+
+      if (!retryResult.success) {
+        throw retryResult.error || new Error('VLM retry failed');
+      }
+
+      if (retryResult.data === undefined) {
+        throw new Error('VLM retry returned empty response');
+      }
+
+      return retryResult.data;
     }
   }
 

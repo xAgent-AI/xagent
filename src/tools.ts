@@ -834,7 +834,7 @@ async function generateDiffString(oldContent: string, newContent: string, contex
 }
 
 export class EditTool implements Tool {
-  name = 'edit';
+  name = 'Edit';
   description = `Edit a file by replacing exact text. This is your PRIMARY tool for making targeted edits to code.
 
 # When to Use
@@ -1897,7 +1897,7 @@ export class TaskTool implements Tool {
 
             // Special handling for different tools (consistent with session.ts display logic)
             const isTodoTool = name === 'todo_write' || name === 'todo_read';
-            const isEditTool = name === 'edit';
+            const isEditTool = name === 'Edit';
             const isWriteTool = name === 'Write';
             const isDeleteTool = name === 'DeleteFile';
             const hasDiff = isEditTool && toolResult?.diff;
@@ -3304,7 +3304,7 @@ export class ToolRegistry {
           };
           break;
 
-        case 'edit':
+        case 'Edit':
           parameters = {
             type: 'object',
             properties: {

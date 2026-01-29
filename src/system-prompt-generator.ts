@@ -404,7 +404,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
         ]
       },
       edit: {
-        name: 'edit',
+        name: 'Edit',
         description: 'Edit a file by replacing exact text',
         parameters: {
           file_path: {
@@ -430,7 +430,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
         },
         usage: 'Make targeted edits to files without rewriting entire content',
         examples: [
-          'Edit text: edit(file_path="config.json", instruction="Update API endpoint", old_string="old value", new_string="new value")'
+          'Edit text: Edit(file_path="config.json", instruction="Update API endpoint", old_string="old value", new_string="new value")'
         ],
         bestPractices: [
           'Use unique old_string to avoid multiple replacements',
@@ -693,7 +693,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       'Bash': 'When running tests, installing dependencies, building projects, or executing terminal commands',
       'SearchFiles': 'When finding files by name or extension pattern',
       'ListDirectory': 'When exploring project structure or finding files',
-      'edit': 'When making targeted edits without rewriting entire files',
+      'Edit': 'When making targeted edits without rewriting entire files',
       'web_search': 'When you need current information from the internet',
       'web_fetch': 'When retrieving content from specific URLs',
       'todo_write': 'When planning and tracking complex multi-step tasks',
@@ -765,7 +765,7 @@ When a user asks you to:
 ### Common Patterns
 - **Code exploration**: ListDirectory → Read → Grep/SearchFiles
 - **Feature implementation**: Read (existing code) → Write (new files) → Bash (test)
-- **Bug fixing**: Grep (find issue) → Read (understand) → edit/Write (fix) → Bash (verify)
+- **Bug fixing**: Grep (find issue) → Read (understand) → Edit/Write (fix) → Bash (verify)
 - **Project setup**: WebSearch (research) → Write (create files) → Bash (install/build)
 - **Documentation**: Read (code) → Write (docs)
 

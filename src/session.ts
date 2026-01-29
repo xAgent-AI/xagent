@@ -1259,7 +1259,7 @@ export class InteractiveSession {
         const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
 
         // Special handling for edit tool with diff
-        const isEditTool = tool === 'edit';
+        const isEditTool = tool === 'Edit';
         const hasDiff = isEditTool && result?.diff;
 
         // Special handling for Write tool with file preview
@@ -1498,7 +1498,7 @@ export class InteractiveSession {
       'SearchFiles': (p) => `Search files: ${p.pattern}`,
       'DeleteFile': (p) => `Delete file: ${this.truncatePath(p.filePath)}`,
       'CreateDirectory': (p) => `Create directory: ${this.truncatePath(p.dirPath)}`,
-      'edit': (p) => `Edit text: ${this.truncatePath(p.file_path)}`,
+      'Edit': (p) => `Edit text: ${this.truncatePath(p.file_path)}`,
       'web_search': (p) => `Web search: "${p.query}"`,
       'todo_write': () => `Update todo list`,
       'todo_read': () => `Read todo list`,

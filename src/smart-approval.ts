@@ -68,7 +68,7 @@ export class WhitelistChecker {
     'web_search',
 
     // File editing tools
-    'edit',
+    'Edit',
     'Write',
     'DeleteFile',
 
@@ -253,7 +253,7 @@ export class BlacklistChecker {
     }
 
     // For file operation tools, check path
-    if (['Write', 'DeleteFile', 'edit'].includes(toolName)) {
+    if (['Write', 'DeleteFile', 'Edit'].includes(toolName)) {
       const filePath = params.filePath || params.file_path || '';
       if (this.isSystemPath(filePath)) {
         return {
@@ -444,7 +444,7 @@ Please return results in JSON format:
     // Add specific analysis guidance based on tool type
     if (toolName === 'Bash') {
       prompt += `This is a Shell command execution request. Please check if the command contains:\n- Dangerous system operations (such as deletion, formatting)\n- Privilege escalation operations\n- Data theft operations\n- Remote code execution\n- Resource exhaustion attacks`;
-    } else if (['Write', 'edit', 'DeleteFile'].includes(toolName)) {
+    } else if (['Write', 'Edit', 'DeleteFile'].includes(toolName)) {
       prompt += `This is a file operation request. Please check:\n- Whether the target path is a system path\n- Whether the operation may damage system files\n- Whether it involves sensitive configuration files`;
     } else if (toolName === 'web_fetch' || toolName === 'web_search') {
       prompt += `This is a network request. Please check:\n- Whether the URL is a malicious website\n- Whether it may leak sensitive information\n- Whether it may execute remote code`;

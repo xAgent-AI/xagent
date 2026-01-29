@@ -123,7 +123,7 @@ export class WriteTool implements Tool {
 - When user explicitly asks to "create", "write", or "generate" a file
 
 # When NOT to Use
-- For making small edits to existing files (use Replace instead)
+- For making small edits to existing files (use edit instead)
 - When you only need to append content (read file first, then write)
 - For creating directories (use CreateDirectory instead)
 

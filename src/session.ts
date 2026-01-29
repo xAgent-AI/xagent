@@ -1459,7 +1459,7 @@ export class InteractiveSession {
       'SearchCodebase': (p) => `Search files: ${p.pattern}`,
       'DeleteFile': (p) => `Delete file: ${this.truncatePath(p.filePath)}`,
       'CreateDirectory': (p) => `Create directory: ${this.truncatePath(p.dirPath)}`,
-      'replace': (p) => `Replace text: ${this.truncatePath(p.file_path)}`,
+      'edit': (p) => `Edit text: ${this.truncatePath(p.file_path)}`,
       'web_search': (p) => `Web search: "${p.query}"`,
       'todo_write': () => `Update todo list`,
       'todo_read': () => `Read todo list`,

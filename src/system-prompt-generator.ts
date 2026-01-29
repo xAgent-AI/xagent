@@ -399,21 +399,26 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
           'Create necessary parent directories automatically'
         ]
       },
-      Replace: {
-        name: 'Replace',
-        description: 'Replace text in a file using search and replace',
+      edit: {
+        name: 'edit',
+        description: 'Edit a file by replacing exact text',
         parameters: {
-          filePath: {
+          file_path: {
             type: 'string',
             description: 'Path to the file to modify',
             required: true
           },
-          old_str: {
+          instruction: {
             type: 'string',
-            description: 'Text to search for',
+            description: 'Description of what to change',
             required: true
           },
-          new_str: {
+          old_string: {
+            type: 'string',
+            description: 'The exact text to find and replace',
+            required: true
+          },
+          new_string: {
             type: 'string',
             description: 'Text to replace with',
             required: true
@@ -421,10 +426,10 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
         },
         usage: 'Make targeted edits to files without rewriting entire content',
         examples: [
-          'Replace text: Replace(filePath="config.json", old_str="old value", new_str="new value")'
+          'Edit text: edit(file_path="config.json", instruction="Update API endpoint", old_string="old value", new_string="new value")'
         ],
         bestPractices: [
-          'Use unique old_str to avoid multiple replacements',
+          'Use unique old_string to avoid multiple replacements',
           'Read file first to verify content',
           'Use Write for large changes'
         ]
@@ -684,7 +689,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       'Bash': 'When running tests, installing dependencies, building projects, or executing terminal commands',
       'SearchCodebase': 'When finding code by meaning rather than exact text matches',
       'ListDirectory': 'When exploring project structure or finding files',
-      'Replace': 'When making targeted edits without rewriting entire files',
+      'edit': 'When making targeted edits without rewriting entire files',
       'web_search': 'When you need current information from the internet',
       'web_fetch': 'When retrieving content from specific URLs',
       'todo_write': 'When planning and tracking complex multi-step tasks',
@@ -755,7 +760,7 @@ When a user asks you to:
 ### Common Patterns
 - **Code exploration**: ListDirectory → Read → Grep/SearchCodebase
 - **Feature implementation**: Read (existing code) → Write (new files) → Bash (test)
-- **Bug fixing**: Grep/SearchCodebase (find issue) → Read (understand) → Replace/Write (fix) → Bash (verify)
+- **Bug fixing**: Grep/SearchCodebase (find issue) → Read (understand) → edit/Write (fix) → Bash (verify)
 - **Project setup**: WebSearch (research) → Write (create files) → Bash (install/build)
 - **Documentation**: Read (code) → Write (docs)
 

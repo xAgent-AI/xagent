@@ -1883,7 +1883,7 @@ export class TaskTool implements Tool {
             // Check cancellation before tool execution
             checkCancellation();
             
-            const toolResult = await cancellationManager.withCancellation(
+            const toolResult: any = await cancellationManager.withCancellation(
               toolRegistry.execute(name, parsedParams, mode, indent),
               `subagent-${subagent_type}-${name}-${iteration}`
             );
@@ -1891,18 +1891,76 @@ export class TaskTool implements Tool {
             // Get showToolDetails config to control result display
             const showToolDetails = config.get('showToolDetails') || false;
 
-            // Prepare result preview for both display and history
+            // Prepare result preview for history
             const resultPreview = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
             const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
 
-            // Display tool result based on showToolDetails setting
-            if (showToolDetails) {
+            // Special handling for different tools (consistent with session.ts display logic)
+            const isTodoTool = name === 'todo_write' || name === 'todo_read';
+            const isEditTool = name === 'edit';
+            const isWriteTool = name === 'Write';
+            const isDeleteTool = name === 'DeleteFile';
+            const hasDiff = isEditTool && toolResult?.diff;
+            const hasFilePreview = isWriteTool && toolResult?.preview;
+            const hasDeleteInfo = isDeleteTool && toolResult?.filePath;
+
+            // Import render functions for consistent display
+            const { renderDiff, renderLines } = await import('./theme.js');
+
+            if (isTodoTool) {
+              // Display todo list
+              console.log(`${indent}${colors.success(`${icons.check} Todo List:`)}`);
+              const todos = toolResult?.todos || [];
+              if (todos.length === 0) {
+                console.log(`${indent}  ${colors.textMuted('No tasks')}`);
+              } else {
+                const statusConfig: Record<string, { icon: string; color: (text: string) => string; label: string }> = {
+                  'pending': { icon: icons.circle, color: colors.textMuted, label: 'Pending' },
+                  'in_progress': { icon: icons.loading, color: colors.warning, label: 'In Progress' },
+                  'completed': { icon: icons.success, color: colors.success, label: 'Completed' },
+                  'failed': { icon: icons.error, color: colors.error, label: 'Failed' }
+                };
+                for (const todo of todos) {
+                  const status = statusConfig[todo.status] || statusConfig['pending'];
+                  console.log(`${indent}  ${status.color(status.icon)} ${status.color(status.label)}: ${colors.text(todo.task)}`);
+                }
+              }
+              if (toolResult?.message) {
+                console.log(`${indent}${colors.textDim(toolResult.message)}`);
+              }
+              console.log('');
+            } else if (hasDiff) {
+              // Display edit result with diff
+              console.log('');
+              const diffOutput = renderDiff(toolResult.diff);
+              const indentedDiff = diffOutput.split('\n').map(line => `${indent}  ${line}`).join('\n');
+              console.log(`${indentedDiff}\n`);
+            } else if (hasFilePreview) {
+              // Display new file content in preview style
+              console.log('');
+              console.log(`${indent}${colors.success(`${icons.file} ${toolResult.filePath}`)}`);
+              console.log(`${indent}${colors.textDim(`  ${toolResult.lineCount} lines`)}`);
+              console.log('');
+              console.log(renderLines(toolResult.preview, { maxLines: 10, indent: indent + '  ' }));
+              console.log('');
+            } else if (hasDeleteInfo) {
+              // Display DeleteFile result
+              console.log('');
+              console.log(`${indent}${colors.success(`${icons.check} Deleted: ${toolResult.filePath}`)}`);
+              console.log('');
+            } else if (showToolDetails) {
+              // Show full result details
               const indentedPreview = indentMultiline(resultPreview, indent);
               console.log(`${indent}${colors.success(`${icons.check} Tool Result:`)}\n${indentedPreview}\n`);
-            } else {
+            } else if (toolResult && toolResult.success === false) {
+              // Tool failed
+              console.log(`${indent}${colors.error(`${icons.cross} ${toolResult.message || 'Failed'}`)}\n`);
+            } else if (toolResult) {
               // Show brief preview by default
               const indentedPreview = indentMultiline(truncatedPreview, indent);
               console.log(`${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`);
+            } else {
+              console.log(`${indent}${colors.textDim('(no result)')}\n`);
             }
 
             // Record successful tool execution in history (use truncated preview to save memory)

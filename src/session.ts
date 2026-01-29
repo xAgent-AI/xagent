@@ -1204,7 +1204,10 @@ export class InteractiveSession {
 
       // Handle tool calls
       if (toolCalls.length > 0) {
-        await this.handleRemoteToolCalls(toolCalls);
+        await this.handleToolCalls(toolCalls, async () => {
+          // Remote mode continuation: reuse existing taskId
+          await this.generateRemoteResponse(0, this.currentTaskId || undefined);
+        });
       }
 
       // Checkpoint support (consistent with local mode)
@@ -1301,7 +1304,7 @@ export class InteractiveSession {
     }
   }
 
-  private async handleToolCalls(toolCalls: any[]): Promise<void> {
+  private async handleToolCalls(toolCalls: any[], onComplete?: () => Promise<void>): Promise<void> {
     // Mark that tool execution is in progress
     (this as any)._isOperationInProgress = true;
 
@@ -1343,6 +1346,7 @@ export class InteractiveSession {
     );
 
     // Process results and maintain order
+    let hasError = false;
     for (const { tool, result, error } of results) {
       const toolCall = preparedToolCalls.find(tc => tc.name === tool);
       if (!toolCall) continue;
@@ -1356,6 +1360,8 @@ export class InteractiveSession {
         if (error === 'Operation cancelled by user') {
           return;
         }
+
+        hasError = true;
 
         console.log('');
         console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
@@ -1429,7 +1435,6 @@ export class InteractiveSession {
 
     // Logic: Only skip returning results to main agent when user explicitly cancelled (ESC)
     // For all other cases (success, failure, errors), always return results for further processing
-    const guiSubagentFailed = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent');
     const guiSubagentCancelled = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent' && results.some(r => r.tool === 'task' && (r.result as any)?.cancelled === true));
 
     // If GUI agent was cancelled by user, don't continue generating response
@@ -1441,9 +1446,26 @@ export class InteractiveSession {
       return;
     }
 
-    // For all other cases (GUI success/failure, other tool errors), return results to main agent
-    // This allows main agent to decide how to handle failures (retry, fallback, user notification, etc.)
-    await this.generateResponse();
+    // Handle errors and completion based on whether onComplete callback is provided
+    if (hasError) {
+      (this as any)._isOperationInProgress = false;
+      if (onComplete) {
+        // Remote mode: callback handles error state (throws to mark task cancelled)
+        throw new Error('Tool execution failed');
+      } else {
+        // Local mode: throw error to mark task as cancelled
+        throw new Error('Tool execution failed');
+      }
+    }
+
+    // Continue based on mode
+    if (onComplete) {
+      // Remote mode: use provided callback
+      await onComplete();
+    } else {
+      // Local mode: default behavior
+      await this.generateResponse();
+    }
   }
 
   /**
@@ -1479,162 +1501,6 @@ export class InteractiveSession {
 
     const getDescription = descriptions[toolName];
     return getDescription ? getDescription(params) : `Execute tool: ${toolName}`;
-  }
-
-  /**
-   * Handle tool calls for remote AI mode
-   * Executes tools and then continues the conversation with results
-   */
-  private async handleRemoteToolCalls(toolCalls: any[]): Promise<void> {
-    // Mark that tool execution is in progress
-    (this as any)._isOperationInProgress = true;
-
-    const toolRegistry = getToolRegistry();
-    const showToolDetails = this.configManager.get('showToolDetails') || false;
-    const indent = this.getIndent();
-
-    // Prepare all tool calls (include id for tool result matching)
-    const preparedToolCalls = toolCalls.map((toolCall, index) => {
-      const { name, arguments: params } = toolCall.function;
-
-      let parsedParams: any;
-      try {
-        parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
-      } catch (e) {
-        parsedParams = params;
-      }
-
-      return { name, params: parsedParams, index, id: toolCall.id };
-    });
-
-    // Display all tool calls info
-    for (const { name, params } of preparedToolCalls) {
-      if (showToolDetails) {
-        console.log('');
-        console.log(`${indent}${colors.warning(`${icons.tool} Tool Call: ${name}`)}`);
-        console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
-      } else {
-        const toolDescription = this.getToolDescription(name, params);
-        console.log('');
-        console.log(`${indent}${colors.textMuted(`${icons.loading} ${toolDescription}`)}`);
-      }
-    }
-
-    // Execute all tools in parallel
-    const results = await toolRegistry.executeAll(
-      preparedToolCalls.map(tc => ({ name: tc.name, params: tc.params })),
-      this.executionMode
-    );
-
-    // Process results and maintain order
-    let hasError = false;
-    for (const { tool, result, error } of results) {
-      const toolCall = preparedToolCalls.find(tc => tc.name === tool);
-      if (!toolCall) continue;
-
-      const { params } = toolCall;
-
-      if (error) {
-        // Clear the operation flag
-        (this as any)._isOperationInProgress = false;
-
-        if (error === 'Operation cancelled by user') {
-          return;
-        }
-
-        hasError = true;
-
-        console.log('');
-        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
-
-        this.conversation.push({
-          role: 'tool',
-          content: JSON.stringify({ error }),
-          tool_call_id: toolCall.id,
-          timestamp: Date.now()
-        });
-      } else {
-        // Use correct indent for gui-subagent tasks
-        const isGuiSubagent = tool === 'task' && params?.subagent_type === 'gui-subagent';
-        const displayIndent = isGuiSubagent ? indent + '  ' : indent;
-
-        // Always show details for todo tools so users can see their task lists
-        const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
-        if (isTodoTool) {
-          console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
-          console.log(this.renderTodoList(result.todos || result.todos, displayIndent));
-          // Show summary if available
-          if (result.message) {
-            console.log(`${displayIndent}${colors.textDim(result.message)}`);
-          }
-        } else if (showToolDetails) {
-          console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
-          console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
-        } else if (result.success === false) {
-          // GUI task or other tool failed
-          console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
-        } else {
-          // Show brief preview by default (consistent with subagent behavior)
-          const resultPreview = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-          const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
-          // Indent the preview
-          const indentedPreview = truncatedPreview.split('\n').map(line => `${displayIndent}  ${line}`).join('\n');
-          console.log(`${indentedPreview}`);
-        }
-
-        const toolCallRecord: ToolCall = {
-          tool,
-          params,
-          result,
-          timestamp: Date.now()
-        };
-
-        this.toolCalls.push(toolCallRecord);
-
-        // Record tool output to session manager
-        await this.sessionManager.addOutput({
-          role: 'tool',
-          content: JSON.stringify(result),
-          toolName: tool,
-          toolParams: params,
-          toolResult: result,
-          timestamp: Date.now()
-        });
-
-        this.conversation.push({
-          role: 'tool',
-          content: JSON.stringify(result),
-          tool_call_id: toolCall.id,
-          timestamp: Date.now()
-        });
-      }
-    }
-
-    // Logic: Only skip returning results to main agent when user explicitly cancelled (ESC)
-    // For all other cases (success, failure, errors), always return results for further processing
-    const guiSubagentFailed = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent');
-    const guiSubagentCancelled = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent' && results.some(r => r.tool === 'task' && (r.result as any)?.cancelled === true));
-
-    // If GUI agent was cancelled by user, don't continue generating response
-    // This avoids wasting API calls and tokens on cancelled tasks
-    if (guiSubagentCancelled) {
-      console.log('');
-      console.log(`${indent}${colors.textMuted('GUI task cancelled by user')}`);
-      (this as any)._isOperationInProgress = false;
-      return;
-    }
-
-    // If any tool call failed, throw error to mark task as cancelled
-    if (hasError) {
-      throw new Error('Tool execution failed');
-    }
-
-    // For all other cases (GUI success/failure, other tool errors), return results to main agent
-    // This allows main agent to decide how to handle failures (retry, fallback, user notification, etc.)
-    // Reuse existing taskId instead of generating new one
-    await this.generateRemoteResponse(0, this.currentTaskId || undefined);
   }
 
   /**

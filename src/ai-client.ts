@@ -16,7 +16,7 @@ export interface AnthropicContentBlock {
 }
 
 // Markdown rendering helper function
-function renderMarkdown(text: string): string {
+export function renderMarkdown(text: string): string {
   // Code block rendering
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     return `\n┌─[${lang || 'code'}]\n${code.trim().split('\n').map((l: string) => '│ ' + l).join('\n')}\n└─\n`;
@@ -80,7 +80,7 @@ function formatMessageContent(content: string | Array<any>): string {
 }
 
 // Display messages by category
-function displayMessages(messages: any[], systemPrompt?: string): void {
+export function displayMessages(messages: any[], systemPrompt?: string): void {
   const roleColors: Record<string, string> = {
     system: '🟫 SYSTEM',
     user: '👤 USER',

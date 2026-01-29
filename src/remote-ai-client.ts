@@ -2,7 +2,7 @@ import { EventEmitter } from 'events';
 import https from 'https';
 import axios from 'axios';
 import { ChatMessage, SessionOutput, ToolCall } from './types.js';
-import { ChatCompletionResponse, ChatCompletionOptions, Message } from './ai-client.js';
+import { ChatCompletionResponse, ChatCompletionOptions, Message, renderMarkdown, displayMessages } from './ai-client.js';
 import { getLogger } from './logger.js';
 import { withRetry, RetryConfig } from './retry.js';
 
@@ -380,12 +380,12 @@ export class RemoteAIClient extends EventEmitter {
         console.log('\n┌─────────────────────────────────────────────────────────────┐');
         console.log('│ 🟫 SYSTEM                                                     │');
         console.log('├─────────────────────────────────────────────────────────────┤');
-        console.log(this.renderMarkdown(systemContent).split('\n').map(l => '│ ' + l).join('\n'));
+        console.log(renderMarkdown(systemContent).split('\n').map(l => '│ ' + l).join('\n'));
         console.log('└─────────────────────────────────────────────────────────────┘');
       }
 
       // Display other messages
-      this.displayMessages(otherMsgs);
+      displayMessages(otherMsgs);
 
       console.log('\n📤 Sending request to Remote API...\n');
     }
@@ -418,7 +418,7 @@ export class RemoteAIClient extends EventEmitter {
       if (response.reasoningContent) {
         console.log('│ 🧠 REASONING:');
         console.log('│ ───────────────────────────────────────────────────────────');
-        const reasoningLines = this.renderMarkdown(response.reasoningContent).split('\n');
+        const reasoningLines = renderMarkdown(response.reasoningContent).split('\n');
         for (const line of reasoningLines.slice(0, 15)) {
           console.log('│ ' + line.slice(0, 62));
         }
@@ -429,7 +429,7 @@ export class RemoteAIClient extends EventEmitter {
       // Display content
       console.log('│ 💬 CONTENT:');
       console.log('│ ───────────────────────────────────────────────────────────');
-      const lines = this.renderMarkdown(response.content).split('\n');
+      const lines = renderMarkdown(response.content).split('\n');
       for (const line of lines.slice(0, 40)) {
         console.log('│ ' + line.slice(0, 62));
       }
@@ -482,81 +482,6 @@ export class RemoteAIClient extends EventEmitter {
       ],
       usage: undefined
     };
-  }
-
-  /**
-   * Render markdown text (helper method for debug output)
-   */
-  private renderMarkdown(text: string): string {
-    let result = text;
-    // Code block rendering
-    result = result.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-      return `\n┌─[${lang || 'code'}]\n${code.trim().split('\n').map((l: string) => '│ ' + l).join('\n')}\n└─\n`;
-    });
-    // Inline code rendering
-    result = result.replace(/`([^`]+)`/g, '`$1`');
-    // Bold rendering
-    result = result.replace(/\*\*([^*]+)\*\*/g, '●$1○');
-    // Italic rendering
-    result = result.replace(/\*([^*]+)\*/g, '/$1/');
-    // List rendering
-    result = result.replace(/^- (.*$)/gm, '○ $1');
-    result = result.replace(/^\d+\. (.*$)/gm, '• $1');
-    // Heading rendering
-    result = result.replace(/^### (.*$)/gm, '\n━━━ $1 ━━━\n');
-    result = result.replace(/^## (.*$)/gm, '\n━━━━━ $1 ━━━━━\n');
-    result = result.replace(/^# (.*$)/gm, '\n━━━━━━━ $1 ━━━━━━━\n');
-    // Quote rendering
-    result = result.replace(/^> (.*$)/gm, '│ │ $1');
-    return result;
-  }
-
-  /**
-   * Display messages by category (helper method for debug output)
-   */
-  private displayMessages(messages: ChatMessage[]): void {
-    const roleColors: Record<string, string> = {
-      system: '🟫 SYSTEM',
-      user: '👤 USER',
-      assistant: '🤖 ASSISTANT',
-      tool: '🔧 TOOL'
-    };
-
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      const role = msg.role as string;
-      const roleLabel = roleColors[role] || `● ${role.toUpperCase()}`;
-
-      console.log(`\n┌─────────────────────────────────────────────────────────────┐`);
-      console.log(`│ ${roleLabel} (${i + 1}/${messages.length})                                          │`);
-      console.log('├─────────────────────────────────────────────────────────────┤');
-
-      // Display reasoning_content (if present) - check both camelCase and snake_case
-      const reasoningContent = (msg as any).reasoningContent || (msg as any).reasoning_content;
-      if (reasoningContent) {
-        console.log('│ 🧠 REASONING:');
-        console.log('│ ───────────────────────────────────────────────────────────');
-        const reasoningLines = this.renderMarkdown(reasoningContent).split('\n');
-        for (const line of reasoningLines.slice(0, 20)) {
-          console.log('│ ' + line.slice(0, 62));
-        }
-        if (reasoningContent.length > 1000) console.log('│ ... (truncated)');
-        console.log('│ ───────────────────────────────────────────────────────────');
-      }
-
-      // Display main content
-      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-
-      const lines = this.renderMarkdown(content).split('\n');
-      for (const line of lines.slice(0, 50)) {
-        console.log('│ ' + line.slice(0, 62));
-      }
-      if (lines.length > 50) {
-        console.log('│ ... (' + (lines.length - 50) + ' more lines)');
-      }
-
-      console.log('└─────────────────────────────────────────────────────────────┘');
-    }
   }
 
   /**

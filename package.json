@@ -68,6 +68,7 @@
   },
   "devDependencies": {
     "@types/archiver": "^7.0.0",
+    "@types/diff": "^7.0.2",
     "@types/inquirer": "^9.0.0",
     "@types/lodash.isnumber": "^3.0.9",
     "@types/mime-types": "^2.1.4",

@@ -1060,7 +1060,7 @@ export class InteractiveSession {
       if (error.message === 'Operation cancelled by user') {
         // Mark task as cancelled
         if (this.remoteAIClient && this.currentTaskId) {
-          await this.remoteAIClient.cancelTask(this.currentTaskId);
+          await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
         }
         return;
       }
@@ -1068,7 +1068,7 @@ export class InteractiveSession {
       // Mark task as cancelled when error occurs (发送 status: 'cancel')
       logger.debug(`[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}`);
       if (this.remoteAIClient && this.currentTaskId) {
-        await this.remoteAIClient.cancelTask(this.currentTaskId);
+        await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
       }
 
       console.log(colors.error(`Error: ${error.message}`));
@@ -1175,7 +1175,7 @@ export class InteractiveSession {
       // Mark task as cancelled when error occurs (发送 status: 'cancel')
       logger.debug(`[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}`);
       if (this.remoteAIClient && this.currentTaskId) {
-        await this.remoteAIClient.cancelTask(this.currentTaskId);
+        await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
       }
 
       console.log(colors.error(`Error: ${error.message}`));
@@ -1232,21 +1232,24 @@ export class InteractiveSession {
       const { params } = toolCall;
 
       if (error) {
-        // Clear the operation flag
-        (this as any)._isOperationInProgress = false;
-
         if (error === 'Operation cancelled by user') {
+          (this as any)._isOperationInProgress = false;
           return;
         }
 
         hasError = true;
 
         console.log('');
-        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
+        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${tool} - ${error}`)}`);
 
+        // 添加详细的错误信息，包含工具名称和参数，便于 AI 理解和修正
         this.conversation.push({
           role: 'tool',
-          content: JSON.stringify({ error }),
+          content: JSON.stringify({
+            name: tool,
+            parameters: params,
+            error: error
+          }),
           tool_call_id: toolCall.id,
           timestamp: Date.now()
         });
@@ -1441,9 +1444,14 @@ export class InteractiveSession {
           timestamp: Date.now()
         });
 
+        // 统一消息格式，包含工具名称和参数
         this.conversation.push({
           role: 'tool',
-          content: JSON.stringify(result),
+          content: JSON.stringify({
+            name: tool,
+            parameters: params,
+            result: result
+          }),
           tool_call_id: toolCall.id,
           timestamp: Date.now()
         });
@@ -1466,21 +1474,16 @@ export class InteractiveSession {
     // Handle errors and completion based on whether onComplete callback is provided
     if (hasError) {
       (this as any)._isOperationInProgress = false;
-      if (onComplete) {
-        // Remote mode: callback handles error state (throws to mark task cancelled)
-        throw new Error('Tool execution failed');
-      } else {
-        // Local mode: throw error to mark task as cancelled
-        throw new Error('Tool execution failed');
-      }
+      // 不再抛出异常，而是将错误结果返回给 AI，让 AI 决定如何处理
+      // 这样可以避免工具错误导致程序退出
     }
 
-    // Continue based on mode
+    // Continue based on mode - 统一处理，无论是否有错误
     if (onComplete) {
       // Remote mode: use provided callback
       await onComplete();
     } else {
-      // Local mode: default behavior
+      // Local mode: default behavior - continue with generateResponse
       await this.generateResponse();
     }
   }

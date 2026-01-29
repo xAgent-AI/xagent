@@ -56,7 +56,7 @@ export class WhitelistChecker {
     // Information reading tools
     'Read',
     'ListDirectory',
-    'SearchCodebase',
+    'SearchFiles',
     'Grep',
     'image_read',
 

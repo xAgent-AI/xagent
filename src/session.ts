@@ -1456,7 +1456,7 @@ export class InteractiveSession {
       'Grep': (p) => `Search text: "${p.pattern}"`,
       'Bash': (p) => `Execute command: ${this.truncateCommand(p.command)}`,
       'ListDirectory': (p) => `List directory: ${this.truncatePath(p.path || '.')}`,
-      'SearchCodebase': (p) => `Search files: ${p.pattern}`,
+      'SearchFiles': (p) => `Search files: ${p.pattern}`,
       'DeleteFile': (p) => `Delete file: ${this.truncatePath(p.filePath)}`,
       'CreateDirectory': (p) => `Create directory: ${this.truncatePath(p.dirPath)}`,
       'edit': (p) => `Edit text: ${this.truncatePath(p.file_path)}`,

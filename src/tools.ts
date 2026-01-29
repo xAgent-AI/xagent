@@ -174,9 +174,9 @@ export class GrepTool implements Tool {
 - When you need line-by-line results with context
 
 # When NOT to Use
-- When you only need to find files containing text (use SearchCodebase instead)
-- When searching by file pattern rather than content (use SearchCodebase)
-- For very large codebases where you only need file names (SearchCodebase is faster)
+- When you only need to find files containing text (use SearchFiles instead)
+- When searching by file pattern rather than content (use SearchFiles)
+- For very large codebases where you only need file names (SearchFiles is faster)
 
 # Parameters
 - \`pattern\`: Regex or literal string to search for
@@ -318,7 +318,7 @@ export class BashTool implements Tool {
 # When NOT to Use
 - For file operations (use Read/Write/Edit/CreateDirectory instead)
 - For searching file content (use Grep instead)
-- For finding files (use SearchCodebase or ListDirectory instead)
+- For finding files (use SearchFiles or ListDirectory instead)
 - For commands that require user interaction (non-interactive only)
 - For dangerous commands without understanding the impact
 
@@ -458,7 +458,7 @@ export class ListDirectoryTool implements Tool {
 # When NOT to Use
 - When you need to read file contents (use Read instead)
 - For recursive exploration of entire codebase (use recursive=true)
-- When you need to search for specific files (use SearchCodebase instead)
+- When you need to search for specific files (use SearchFiles instead)
 
 # Parameters
 - \`path\`: (Optional) Directory path, default: "."
@@ -501,8 +501,17 @@ export class ListDirectoryTool implements Tool {
   }
 }
 
-export class SearchCodebaseTool implements Tool {
-  name = 'SearchCodebase';
+export interface SearchFilesResult {
+  /** Matching file paths relative to search directory */
+  files: string[];
+  /** Total number of matches found (before limiting) */
+  total: number;
+  /** Whether results were truncated due to limit */
+  truncated: boolean;
+}
+
+export class SearchFilesTool implements Tool {
+  name = 'SearchFiles';
   description = `Search for files matching a glob pattern. This is your PRIMARY tool for finding files by name or extension.
 
 # When to Use
@@ -519,11 +528,13 @@ export class SearchCodebaseTool implements Tool {
 # Parameters
 - \`pattern\`: Glob pattern (e.g., "**/*.ts", "src/**/*.test.ts")
 - \`path\`: (Optional) Directory to search in, default: "."
+- \`limit\`: (Optional) Maximum number of results to return, default: 1000
 
 # Examples
-- Find all TypeScript files: SearchCodebase(pattern="**/*.ts")
-- Find test files: SearchCodebase(pattern="**/*.test.ts")
-- Find config files: SearchCodebase(pattern="**/config.*")
+- Find all TypeScript files: SearchFiles(pattern="**/*.ts")
+- Find test files: SearchFiles(pattern="**/*.test.ts")
+- Find config files: SearchFiles(pattern="**/config.*")
+- Limit results: SearchFiles(pattern="**/*.ts", limit=100)
 
 # Glob Patterns
 - \`*\` matches any characters except /
@@ -534,19 +545,28 @@ export class SearchCodebaseTool implements Tool {
 # Best Practices
 - Use **/*.ts for recursive search in all directories
 - Combine with path parameter to search specific directories
+- Use limit parameter to avoid huge result sets
 - Results are file paths, not content (use Grep on results if needed)`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
-  async execute(params: { pattern: string; path?: string }): Promise<string[]> {
-    const { pattern, path: searchPath = '.' } = params;
-    
+  async execute(params: { pattern: string; path?: string; limit?: number }): Promise<SearchFilesResult> {
+    const { pattern, path: searchPath = '.', limit = 1000 } = params;
+
     try {
       const files = await glob(pattern, {
         cwd: searchPath,
         ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
       });
 
-      return files;
+      const total = files.length;
+      const truncated = total > limit;
+      const result = truncated ? files.slice(0, limit) : files;
+
+      return {
+        files: result,
+        total,
+        truncated
+      };
     } catch (error: any) {
       throw new Error(`Search failed: ${error.message}`);
     }
@@ -2903,7 +2923,7 @@ export class ToolRegistry {
     this.register(new GrepTool());
     this.register(new BashTool());
     this.register(new ListDirectoryTool());
-    this.register(new SearchCodebaseTool());
+    this.register(new SearchFilesTool());    
     this.register(new DeleteFileTool());
     this.register(new CreateDirectoryTool());
     this.register(new EditTool());
@@ -3167,7 +3187,7 @@ export class ToolRegistry {
           };
           break;
 
-        case 'SearchCodebase':
+        case 'SearchFiles':
           parameters = {
             type: 'object',
             properties: {
@@ -3178,6 +3198,10 @@ export class ToolRegistry {
               path: {
                 type: 'string',
                 description: 'Optional: The path to search in (default: current directory)'
+              },
+              limit: {
+                type: 'integer',
+                description: 'Optional: Maximum number of results to return (default: 1000)'
               }
             },
             required: ['pattern']

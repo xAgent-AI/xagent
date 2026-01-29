@@ -1384,6 +1384,26 @@ export class InteractiveSession {
               console.log(`${displayIndent}${colors.textDim(`  ${result?.message || result?.error}`)}`);
             }
           }
+        } else if (tool === 'InvokeSkill') {
+          // Special handling for InvokeSkill - show friendly summary
+          console.log('');
+          const skillName = params?.skillId || 'Unknown skill';
+          const taskDesc = params?.taskDescription || '';
+
+          if (result?.success) {
+            console.log(`${displayIndent}${colors.success(`${icons.check} Skill: Completed`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
+            if (taskDesc) {
+              const truncatedTask = taskDesc.length > 60 ? taskDesc.substring(0, 60) + '...' : taskDesc;
+              console.log(`${displayIndent}${colors.textDim(`  Task: ${truncatedTask}`)}`);
+            }
+          } else {
+            console.log(`${displayIndent}${colors.error(`${icons.cross} Skill: Failed`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
+            if (result?.message) {
+              console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+            }
+          }
         } else if (showToolDetails) {
           console.log('');
           console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);

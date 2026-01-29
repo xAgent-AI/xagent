@@ -106,15 +106,16 @@ function displayMessages(messages: any[], systemPrompt?: string): void {
     console.log(`│ ${roleLabel} (${i + 1}/${messages.length})                                          │`);
     console.log('├─────────────────────────────────────────────────────────────┤');
 
-    // Display reasoning_content (if present)
-    if ((msg as any).reasoning_content) {
+    // Display reasoning_content (if present) - check both camelCase and snake_case
+    const reasoningContent = (msg as any).reasoningContent || (msg as any).reasoning_content;
+    if (reasoningContent) {
       console.log('│ 🧠 REASONING:');
       console.log('│ ───────────────────────────────────────────────────────────');
-      const reasoningLines = renderMarkdown((msg as any).reasoning_content).split('\n');
+      const reasoningLines = renderMarkdown(reasoningContent).split('\n');
       for (const line of reasoningLines.slice(0, 20)) {
         console.log('│ ' + line.slice(0, 62));
       }
-      if ((msg as any).reasoning_content.length > 1000) console.log('│ ... (truncated)');
+      if (reasoningContent.length > 1000) console.log('│ ... (truncated)');
       console.log('│ ───────────────────────────────────────────────────────────');
     }
 

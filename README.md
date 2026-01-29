@@ -14,7 +14,7 @@
 
 ![xAgent CLI Screenshot](./assets/xagent-cli.png)
 
-**[Official Website](http://154.8.140.52)** | **[English](README.md)** | **[中文](README_CN.md)**
+**[Official Website](http://xagent-colife.net)** | **[English](README.md)** | **[中文](README_CN.md)**
 
 </div>
 

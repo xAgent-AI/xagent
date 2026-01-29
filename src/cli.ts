@@ -10,9 +10,11 @@ import { getMCPManager } from './mcp.js';
 import { getLogger, setConfigProvider } from './logger.js';
 import { theme, icons, colors } from './theme.js';
 import { getCancellationManager } from './cancellation.js';
-import { readFileSync } from 'fs';
+import { readFileSync, promises as fs } from 'fs';
+import path from 'path';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { glob } from 'glob';
 
 // Get current directory
 const __filename = fileURLToPath(import.meta.url);
@@ -513,6 +515,198 @@ program
       console.log('');
       console.log(colors.error(`Failed to start GUI Subagent: ${message}`));
       console.log(colors.textMuted(suggestion));
+      console.log('');
+    }
+  });
+
+program
+  .command('memory')
+  .description('Manage memory files (list or clean)')
+  .option('-l, --list', 'List all memory files')
+  .option('--clean', 'Clean all project memories (keep global memory)')
+  .option('--clean-project', 'Clean the current project\'s memory only')
+  .option('--clean-all', 'Clean all memories (including global memory)')
+  .action(async (options) => {
+    const separator = icons.separator.repeat(40);
+    console.log('');
+    console.log(colors.primaryBright(`${icons.folder} Memory Management`));
+    console.log(colors.border(separator));
+    console.log('');
+
+    const { getMemoryManager } = await import('./memory.js');
+    const memoryManager = getMemoryManager(process.cwd());
+    const memoriesDir = memoryManager.getMemoriesDir();
+
+    // Helper to get memory info
+    const getMemoryInfo = (fileName: string) => {
+      if (fileName === 'global.md') {
+        return { type: 'global', description: 'Global memory (shared across all projects)' };
+      }
+      const match = fileName.match(/^project_(.+)_\w{16}\.md$/);
+      if (match) {
+        return { type: 'project', description: `Project: ${match[1]}` };
+      }
+      return { type: 'unknown', description: fileName };
+    };
+
+    if (options.list) {
+      // List all memory files
+      console.log(colors.textMuted(`Memory directory: ${memoriesDir}`));
+      console.log('');
+
+      try {
+        const files = await fs.readdir(memoriesDir).catch(() => []);
+        if (files.length === 0) {
+          console.log(colors.textMuted('No memory files found.'));
+          console.log('');
+          return;
+        }
+
+        const globalFile = files.find(f => f === 'global.md');
+        const projectFiles = files.filter(f => f.startsWith('project_'));
+
+        if (globalFile) {
+          const info = getMemoryInfo(globalFile);
+          console.log(`  ${colors.success(icons.success)} ${colors.primaryBright('global.md')}`);
+          console.log(`    ${colors.textDim(`  ${info.description}`)}`);
+          console.log('');
+        }
+
+        if (projectFiles.length > 0) {
+          console.log(colors.primaryBright(`  Project Memories (${projectFiles.length})`));
+          console.log('');
+
+          for (const file of projectFiles) {
+            const info = getMemoryInfo(file);
+            const filePath = join(memoriesDir, file);
+            try {
+              const stat = await fs.stat(filePath);
+              const size = stat.size;
+              const sizeStr = size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`;
+              console.log(`  ${colors.success(icons.success)} ${colors.primaryBright(file)}`);
+              console.log(`    ${colors.textDim(`  ${info.description} | Size: ${sizeStr}`)}`);
+            } catch {
+              console.log(`  ${colors.success(icons.success)} ${colors.primaryBright(file)}`);
+              console.log(`    ${colors.textDim(`  ${info.description}`)}`);
+            }
+            console.log('');
+          }
+        }
+
+        console.log(colors.textMuted(`Total: ${files.length} memory file(s)`));
+        console.log('');
+      } catch (error) {
+        console.log(colors.textMuted('No memory files found.'));
+        console.log('');
+      }
+    } else if (options.clean) {
+      // Clean all project memories (keep global.md)
+      console.log(colors.textMuted('Cleaning all project memories...'));
+      console.log(colors.textMuted(`Keeping: ${colors.primaryBright('global.md')}`));
+      console.log('');
+
+      try {
+        const files = await fs.readdir(memoriesDir).catch(() => []);
+        const projectFiles = files.filter(f => f.startsWith('project_'));
+
+        if (projectFiles.length === 0) {
+          console.log(colors.textMuted('No project memories to clean.'));
+          console.log('');
+          return;
+        }
+
+        let cleaned = 0;
+        for (const file of projectFiles) {
+          await fs.unlink(join(memoriesDir, file));
+          cleaned++;
+        }
+
+        console.log(colors.success(`✅ Cleaned ${cleaned} project memory file(s)`));
+        // TODO: 如果需要自动重建 project memory，取消下面注释
+        // await memoryManager.saveMemory('# Project Context\n\nProject-specific context will be added here.', 'project');
+        // console.log(colors.textMuted('  Recreated current project memory'));
+        console.log(colors.textMuted('  Use /init to initialize if needed'));
+        console.log('');
+      } catch (error: any) {
+        const { message, suggestion } = formatError(error);
+        console.log(colors.error(`Failed to clean project memories: ${message}`));
+        console.log(colors.textMuted(suggestion));
+        console.log('');
+      }
+    } else if (options.cleanProject) {
+      // Clean only the current project's memory
+      console.log(colors.textMuted(`Cleaning current project memory...`));
+      console.log(colors.textMuted(`Project: ${colors.primaryBright(process.cwd())}`));
+      console.log('');
+
+      try {
+        // Find and delete the current project's memory file
+        const memoryFiles = memoryManager.getMemoryFiles();
+        const currentProjectMemory = memoryFiles.find(m => m.level === 'project');
+
+        if (currentProjectMemory) {
+          await fs.unlink(currentProjectMemory.path);
+          console.log(colors.success(`✅ Cleaned current project memory`));
+          console.log(colors.textMuted(`  File: ${path.basename(currentProjectMemory.path)}`));
+        } else {
+          console.log(colors.textMuted('No memory found for the current project.'));
+        }
+        // TODO: 如果需要自动重建 project memory，取消下面注释
+        // await memoryManager.saveMemory('# Project Context\n\nProject-specific context will be added here.', 'project');
+        // console.log(colors.textMuted('  Recreated current project memory'));
+        console.log(colors.textMuted('  Use /init to initialize if needed'));
+        console.log('');
+      } catch (error: any) {
+        const { message, suggestion } = formatError(error);
+        console.log(colors.error(`Failed to clean project memory: ${message}`));
+        console.log(colors.textMuted(suggestion));
+        console.log('');
+      }
+    } else if (options.cleanAll) {
+      // Clean all memories including global
+      console.log(colors.warning(`${icons.warning} This will delete ALL memory files including global memory.`));
+      console.log('');
+      console.log(colors.textMuted('Files to be deleted:'));
+      console.log(colors.textMuted(`  - global.md (global memory)`));
+      console.log(colors.textMuted(`  - all project memories`));
+      console.log('');
+
+      try {
+        const files = await fs.readdir(memoriesDir).catch(() => []);
+        if (files.length === 0) {
+          console.log(colors.textMuted('No memory files to clean.'));
+          console.log('');
+          return;
+        }
+
+        let cleaned = 0;
+        for (const file of files) {
+          await fs.unlink(join(memoriesDir, file));
+          cleaned++;
+        }
+
+        // Recreate global memory (always keep global memory available)
+        await memoryManager.saveMemory('# Global Context\n\nGlobal preferences and settings will be added here.', 'global');
+        // TODO: 如果需要同时重建 project memory，取消下面注释
+        // await memoryManager.saveMemory('# Project Context\n\nProject-specific context will be added here.', 'project');
+
+        console.log(colors.success(`✅ Cleaned ${cleaned} memory file(s)`));
+        console.log(colors.textMuted('  Recreated global memory'));
+        console.log(colors.textMuted('  Use /init to initialize project memory if needed'));
+        console.log('');
+      } catch (error: any) {
+        const { message, suggestion } = formatError(error);
+        console.log(colors.error(`Failed to clean memories: ${message}`));
+        console.log(colors.textMuted(suggestion));
+        console.log('');
+      }
+    } else {
+      // No option specified, show help
+      console.log(colors.textMuted('Usage:'));
+      console.log(`  ${colors.primaryBright('xagent memory -l')}               ${colors.textDim('| List all memory files')}`);
+      console.log(`  ${colors.primaryBright('xagent memory --clean')}          ${colors.textDim('| Clean all project memories (keep global)')}`);
+      console.log(`  ${colors.primaryBright('xagent memory --clean-project')}  ${colors.textDim('| Clean current project memory only')}`);
+      console.log(`  ${colors.primaryBright('xagent memory --clean-all')}      ${colors.textDim('| Clean ALL memories (including global)')}`);
       console.log('');
     }
   });

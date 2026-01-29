@@ -983,6 +983,7 @@ export class TaskTool implements Tool {
   async execute(params: {
     description: string;
     prompt?: string;
+    query?: string;  // Support both prompt and query (tool definition uses query)
     subagent_type?: 'general-purpose' | 'plan-agent' | 'explore-agent' | 'frontend-tester' | 'code-reviewer' | 'frontend-developer' | 'backend-developer' | 'gui-subagent';
     agents?: SubAgentTask[];
     useContext?: boolean;
@@ -1021,13 +1022,25 @@ export class TaskTool implements Tool {
         );
       }
       
-      if (!params.subagent_type || !params.prompt) {
-        throw new Error('Either subagent_type and prompt, or agents array must be provided');
+      if (!params.subagent_type) {
+        throw new Error('subagent_type is required for Task tool');
       }
-      
+
+      // Support both 'prompt' and 'query' parameter names (tool definition uses 'query')
+      const prompt = params.prompt || params.query;
+      if (!prompt) {
+        throw new Error('Task query/prompt is required. Received params: ' + JSON.stringify({
+          subagent_type: params.subagent_type,
+          prompt: params.prompt,
+          query: params.query,
+          description: params.description,
+          agents: params.agents?.length
+        }));
+      }
+
       const result = await this.executeSingleAgent(
         params.subagent_type,
-        params.prompt,
+        prompt,
         params.description,
         params.useContext ?? true,
         params.constraints || [],
@@ -1420,6 +1433,16 @@ export class TaskTool implements Tool {
     const indentNext = '  '.repeat(indentLevel + 1);
     const agentName = agent.name || subagent_type;
 
+    // Track execution history for better reporting to main agent
+    const executionHistory: Array<{
+      tool: string;
+      status: 'success' | 'error';
+      params: any;              // 工具调用参数
+      result?: any;             // 工具执行结果（成功时）
+      error?: string;           // 错误信息（失败时）
+      timestamp: string;
+    }> = [];
+
     // Helper function to indent multi-line content
     const indentMultiline = (content: string, baseIndent: string): string => {
       return content.split('\n').map(line => `${baseIndent}  ${line}`).join('\n');
@@ -1546,6 +1569,7 @@ export class TaskTool implements Tool {
 
       const choice = result.choices[0];
       const messageContent = choice.message?.content;
+      const reasoningContent = choice.message?.reasoning_content || '';
       const toolCalls = choice.message.tool_calls;
 
       let contentStr: string;
@@ -1577,6 +1601,14 @@ export class TaskTool implements Tool {
 
       // Add assistant message to conversation
       messages.push({ role: 'assistant', content: contentStr });
+
+      // Display reasoning content if present
+      if (reasoningContent) {
+        console.log(`\n${indent}${colors.textDim(`${icons.brain} Thinking Process:`)}`);
+        const truncatedReasoning = reasoningContent.length > 500 ? reasoningContent.substring(0, 500) + '...' : reasoningContent;
+        const indentedReasoning = indentMultiline(truncatedReasoning, indent);
+        console.log(`${indentedReasoning}\n`);
+      }
 
       // Display assistant response (if there's any text content) with proper indentation
       if (contentStr) {
@@ -1615,6 +1647,15 @@ export class TaskTool implements Tool {
             const indentedPreview = indentMultiline(truncatedPreview, indent);
             console.log(`${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`);
 
+            // Record successful tool execution in history
+            executionHistory.push({
+              tool: name,
+              status: 'success',
+              params: parsedParams,
+              result: toolResult,
+              timestamp: new Date().toISOString()
+            });
+
             messages.push({
               role: 'tool',
               content: JSON.stringify(toolResult),
@@ -1625,13 +1666,33 @@ export class TaskTool implements Tool {
               console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
               cancellationManager.off('cancelled', cancelHandler);
               cleanupStdinPolling();
+              const summaryPreview = contentStr.length > 300 ? contentStr.substring(0, 300) + '...' : contentStr;
               return {
                 success: false,
                 message: `Task "${description}" cancelled by user`,
-                result: contentStr
+                result: {
+                  summary: summaryPreview,
+                  executionHistory: {
+                    totalIterations: iteration,
+                    toolsExecuted: executionHistory.length,
+                    successfulTools: executionHistory.filter(t => t.status === 'success').length,
+                    failedTools: executionHistory.filter(t => t.status === 'error').length,
+                    history: executionHistory,
+                    cancelled: true
+                  }
+                }
               };
             }
             console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error.message}\n`);
+
+            // Record failed tool execution in history
+            executionHistory.push({
+              tool: name,
+              status: 'error',
+              params: parsedParams,
+              error: error.message,
+              timestamp: new Date().toISOString()
+            });
 
             messages.push({
               role: 'tool',
@@ -1644,27 +1705,52 @@ export class TaskTool implements Tool {
         continue; // Continue to next iteration to get final response
       }
 
-      // No more tool calls, return the result
+      // No more tool calls, return the result with execution history
       cancellationManager.off('cancelled', cancelHandler);
       cleanupStdinPolling();
+
+      const summaryPreview = contentStr.length > 300 ? contentStr.substring(0, 300) + '...' : contentStr;
       return {
         success: true,
         message: `Task "${description}" completed by ${subagent_type}`,
-        result: contentStr
+        result: {
+          summary: summaryPreview,
+          executionHistory: {
+            totalIterations: iteration,
+            toolsExecuted: executionHistory.length,
+            successfulTools: executionHistory.filter(t => t.status === 'success').length,
+            failedTools: executionHistory.filter(t => t.status === 'error').length,
+            history: executionHistory
+          }
+        }
       };
     }
 
     // Max iterations reached - return accumulated results instead of throwing error
     // Get the last assistant message content
     const lastAssistantMsg = messages.filter(m => m.role === 'assistant').pop();
-    const lastContent = lastAssistantMsg?.content || '';
+    const lastContentStr = typeof lastAssistantMsg?.content === 'string'
+      ? lastAssistantMsg.content
+      : JSON.stringify(lastAssistantMsg?.content || '');
 
     cancellationManager.off('cancelled', cancelHandler);
     cleanupStdinPolling();
+
+    const summaryPreview = lastContentStr.length > 300 ? lastContentStr.substring(0, 300) + '...' : lastContentStr;
     return {
       success: true,
       message: `Task "${description}" completed (max iterations reached) by ${subagent_type}`,
-      result: lastContent
+      result: {
+        summary: summaryPreview,
+        executionHistory: {
+          totalIterations: iteration,
+          toolsExecuted: executionHistory.length,
+          successfulTools: executionHistory.filter(t => t.status === 'success').length,
+          failedTools: executionHistory.filter(t => t.status === 'error').length,
+          history: executionHistory,
+          maxIterationsReached: true
+        }
+      }
     };
   }
   

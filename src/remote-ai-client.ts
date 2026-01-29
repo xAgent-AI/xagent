@@ -4,6 +4,7 @@ import axios from 'axios';
 import { ChatMessage, SessionOutput, ToolCall } from './types.js';
 import { ChatCompletionResponse, ChatCompletionOptions, Message } from './ai-client.js';
 import { getLogger } from './logger.js';
+import { withRetry, RetryConfig } from './retry.js';
 
 const logger = getLogger();
 
@@ -220,8 +221,62 @@ export class RemoteAIClient extends EventEmitter {
       }
 
       // Network error or other error
-      throw error;
+      // Check if error is retryable
+      const isRetryable = this.isRetryableError(error);
+      if (!isRetryable) {
+        throw error;
+      }
+
+      // Retry with exponential backoff
+      const retryResult = await withRetry(async () => {
+        const response = await axios.post(url, requestBody, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.authToken}`
+          },
+          httpsAgent,
+          timeout: 120000
+        });
+
+        if (response.status === 401) {
+          throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
+        }
+
+        return {
+          role: 'assistant' as const,
+          content: response.data.content || '',
+          reasoningContent: response.data.reasoningContent || '',
+          toolCalls: response.data.toolCalls,
+          timestamp: Date.now()
+        };
+      }, { maxRetries: 3, baseDelay: 1000, maxDelay: 10000, jitter: true });
+
+      if (!retryResult.success) {
+        throw retryResult.error || new Error('Retry failed');
+      }
+
+      if (!retryResult.data) {
+        throw new Error('Retry returned empty response');
+      }
+
+      return retryResult.data;
     }
+  }
+
+  private isRetryableError(error: any): boolean {
+    // Timeout or network error (no response received)
+    if (error.code === 'ECONNABORTED' || !error.response) {
+      return true;
+    }
+    // 5xx server errors
+    if (error.response?.status && error.response.status >= 500) {
+      return true;
+    }
+    // 429 rate limit
+    if (error.response?.status === 429) {
+      return true;
+    }
+    return false;
   }
 
   /**

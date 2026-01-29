@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 import https from 'https';
 import { AuthConfig } from './types.js';
+import { withRetry, RetryConfig } from './retry.js';
 
 // Message content block type for Anthropic format
 export interface AnthropicContentBlock {
@@ -464,16 +465,66 @@ export class AIClient {
       
       return response.data;
     } catch (error: any) {
-      if (error.response) {
-        throw new Error(
-          `API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`
-        );
-      } else if (error.request) {
-        throw new Error('Network error: No response received from server');
-      } else {
-        throw new Error(`Request error: ${error.message}`);
+      // Check if error is retryable (timeout, network error, or 5xx)
+      const isRetryable = this.isRetryableError(error);
+      if (!isRetryable) {
+        if (error.response) {
+          throw new Error(
+            `API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`
+          );
+        } else if (error.request) {
+          throw new Error('Network error: No response received from server');
+        } else {
+          throw new Error(`Request error: ${error.message}`);
+        }
       }
+
+      // Retry with exponential backoff
+      const retryResult = await withRetry(async () => {
+        const response = await this.client.post('/chat/completions', requestBody);
+        if (showDebug) {
+          console.log('\n╔══════════════════════════════════════════════════════════╗');
+          console.log('║                   AI RESPONSE DEBUG (RETRY)              ║');
+          console.log('╚══════════════════════════════════════════════════════════╝');
+          console.log(`🆔 ID: ${response.data.id}`);
+          console.log(`🤖 Model: ${response.data.model}`);
+          const usage = response.data.usage;
+          if (usage) {
+            console.log(`📊 Tokens: ${usage.prompt_tokens} (prompt) + ${usage.completion_tokens} (completion) = ${usage.total_tokens} (total)`);
+          }
+          console.log('╔══════════════════════════════════════════════════════════╗');
+          console.log('║                    RESPONSE ENDED                        ║');
+          console.log('╚══════════════════════════════════════════════════════════╝\n');
+        }
+        return response.data;
+      }, { maxRetries: 3, baseDelay: 1000, maxDelay: 10000, jitter: true });
+
+      if (!retryResult.success) {
+        throw retryResult.error || new Error('Retry failed');
+      }
+
+      if (!retryResult.data) {
+        throw new Error('Retry returned empty response');
+      }
+
+      return retryResult.data;
     }
+  }
+
+  private isRetryableError(error: any): boolean {
+    // Timeout or network error (no response received)
+    if (error.code === 'ECONNABORTED' || !error.response) {
+      return true;
+    }
+    // 5xx server errors
+    if (error.response?.status && error.response.status >= 500) {
+      return true;
+    }
+    // 429 rate limit
+    if (error.response?.status === 429) {
+      return true;
+    }
+    return false;
   }
 
   // Anthropic official原生 API（使用 /v1/messages 端点）
@@ -609,15 +660,38 @@ export class AIClient {
       
       return this.convertFromAnthropicNativeResponse(response.data);
     } catch (error: any) {
-      if (error.response) {
-        throw new Error(
-          `API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`
-        );
-      } else if (error.request) {
-        throw new Error('Network error: No response received from server');
-      } else {
-        throw new Error(`Request error: ${error.message}`);
+      const isRetryable = this.isRetryableError(error);
+      if (!isRetryable) {
+        if (error.response) {
+          throw new Error(
+            `API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`
+          );
+        } else if (error.request) {
+          throw new Error('Network error: No response received from server');
+        } else {
+          throw new Error(`Request error: ${error.message}`);
+        }
       }
+
+      const retryResult = await withRetry(async () => {
+        const response = await this.client.post('/v1/messages', requestBody);
+        if (showDebug) {
+          console.log('\n╔══════════════════════════════════════════════════════════╗');
+          console.log('║             AI RESPONSE DEBUG (ANTHROPIC RETRY)          ║');
+          console.log('╚══════════════════════════════════════════════════════════╝\n');
+        }
+        return this.convertFromAnthropicNativeResponse(response.data);
+      }, { maxRetries: 3, baseDelay: 1000, maxDelay: 10000, jitter: true });
+
+      if (!retryResult.success) {
+        throw retryResult.error || new Error('Retry failed');
+      }
+
+      if (!retryResult.data) {
+        throw new Error('Retry returned empty response');
+      }
+
+      return retryResult.data;
     }
   }
 
@@ -747,15 +821,42 @@ export class AIClient {
         return this.convertFromMiniMaxResponse(response.data);
       }
     } catch (error: any) {
-      if (error.response) {
-        throw new Error(
-          `API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`
-        );
-      } else if (error.request) {
-        throw new Error('Network error: No response received from server');
-      } else {
-        throw new Error(`Request error: ${error.message}`);
+      const isRetryable = this.isRetryableError(error);
+      if (!isRetryable) {
+        if (error.response) {
+          throw new Error(
+            `API Error: ${error.response.status} - ${JSON.stringify(error.response.data)}`
+          );
+        } else if (error.request) {
+          throw new Error('Network error: No response received from server');
+        } else {
+          throw new Error(`Request error: ${error.message}`);
+        }
       }
+
+      const retryResult = await withRetry(async () => {
+        const response = await this.client.post(endpoint, requestBody);
+        if (showDebug) {
+          console.log('\n╔══════════════════════════════════════════════════════════╗');
+          console.log('║              AI RESPONSE DEBUG (MINIMAX RETRY)           ║');
+          console.log('╚══════════════════════════════════════════════════════════╝\n');
+        }
+        if (format === 'anthropic') {
+          return this.convertFromAnthropicNativeResponse(response.data);
+        } else {
+          return this.convertFromMiniMaxResponse(response.data);
+        }
+      }, { maxRetries: 3, baseDelay: 1000, maxDelay: 10000, jitter: true });
+
+      if (!retryResult.success) {
+        throw retryResult.error || new Error('Retry failed');
+      }
+
+      if (!retryResult.data) {
+        throw new Error('Retry returned empty response');
+      }
+
+      return retryResult.data;
     }
   }
 

@@ -2,8 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'readline';
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
+import { spawn, ChildProcess } from 'child_process';
 import { glob } from 'glob';
 import axios from 'axios';
 import inquirer from 'inquirer';
@@ -15,8 +14,8 @@ import { getCancellationManager } from './cancellation.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { InteractiveSession } from './session.js';
 import { ripgrep, fdFind } from './ripgrep.js';
-
-const execAsync = promisify(exec);
+import { getShellConfig, killProcessTree, quoteShellCommand } from './shell.js';
+import { truncateTail, buildTruncationNotice } from './truncate.js';
 
 //
 // Tool Description Pattern
@@ -301,14 +300,14 @@ export class BashTool implements Tool {
     description?: string;
     timeout?: number;
     run_in_bg?: boolean;
-  }): Promise<{ stdout: string; stderr: string; exitCode: number; taskId?: string }> {
+  }): Promise<{ stdout: string; stderr: string; exitCode: number; taskId?: string; truncated?: boolean; truncationNotice?: string }> {
     const { command, cwd, description, timeout = 120, run_in_bg = false } = params;
-    
+
     // Determine effective working directory
     // Only use cwd if the command doesn't contain 'cd' (let LLM control directory)
     let effectiveCwd: string | undefined;
     const hasCdCommand = /cd\s+["']?[^"&|;]+["']?/.test(command);
-    
+
     if (cwd && !hasCdCommand) {
       // Command doesn't control its own directory, use provided cwd
       effectiveCwd = cwd;
@@ -319,54 +318,52 @@ export class BashTool implements Tool {
       // No cwd provided, use default
       effectiveCwd = undefined;
     }
-    
-    // Set up environment with NODE_PATH only for node commands
+
+    // Set up environment
     const nodeModulesPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules');
     const env = {
       ...process.env,
       NODE_PATH: nodeModulesPath
     };
-    
-    // Only add NODE_PATH prefix for node commands
-    const isNodeCommand = /\bnode\b/.test(command);
-    const finalCommand = isNodeCommand 
-      ? `set NODE_PATH=${nodeModulesPath} && ${command}`
-      : command;
-    
+
+    // Get shell configuration (Windows Git Bash detection, etc.)
+    const { shell, args } = getShellConfig();
+    const shellArgs = [...args, quoteShellCommand(command)];
+
     try {
       if (run_in_bg) {
         const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        const childProcess = spawn(finalCommand, {
+
+        const childProcess = spawn(shell, shellArgs, {
           cwd: effectiveCwd || process.cwd(),
-          shell: true,
           detached: true,
-          env
+          env,
+          stdio: ['ignore', 'pipe', 'pipe']
         });
-        
+
         const output: string[] = [];
-        
+
         childProcess.stdout?.on('data', (data: Buffer) => {
           const text = data.toString();
           output.push(text);
         });
-        
+
         childProcess.stderr?.on('data', (data: Buffer) => {
           const text = data.toString();
           output.push(text);
         });
-        
+
         childProcess.on('close', (code: number) => {
           console.log(`Background task ${taskId} exited with code ${code}`);
         });
-        
+
         const toolRegistry = getToolRegistry();
         (toolRegistry as any).addBackgroundTask(taskId, {
           process: childProcess,
           startTime: Date.now(),
           output
         });
-        
+
         return {
           stdout: '',
           stderr: '',
@@ -374,26 +371,119 @@ export class BashTool implements Tool {
           taskId
         };
       } else {
-        const { stdout, stderr } = await execAsync(finalCommand, {
+        // Execute command with spawn for better control
+        const result = await this.spawnWithTimeout(shell, shellArgs, {
           cwd: effectiveCwd || process.cwd(),
-          maxBuffer: 1024 * 1024 * 10,
-          timeout: timeout * 1000,
-          env
+          env,
+          timeout
         });
+
+        // Apply truncation to stdout and stderr separately
+        const stdoutResult = truncateTail(result.stdout);
+        const stderrResult = truncateTail(result.stderr);
+
+        let stdout = stdoutResult.content;
+        let stderr = stderrResult.content;
+        let truncationNotice = '';
+
+        if (stdoutResult.truncated) {
+          truncationNotice += buildTruncationNotice(stdoutResult) + '\n';
+        }
+        if (stderrResult.truncated) {
+          truncationNotice += buildTruncationNotice(stderrResult) + '\n';
+        }
 
         return {
           stdout,
           stderr,
-          exitCode: 0
+          exitCode: result.exitCode,
+          truncated: stdoutResult.truncated || stderrResult.truncated,
+          truncationNotice: truncationNotice || undefined
         };
       }
     } catch (error: any) {
+      // Check if this was a timeout
+      if (error.message === 'timeout') {
+        return {
+          stdout: '',
+          stderr: 'Command timed out',
+          exitCode: -1,
+          truncated: false
+        };
+      }
       return {
         stdout: error.stdout || '',
         stderr: error.stderr || error.message,
         exitCode: error.code || 1
       };
     }
+  }
+
+  /**
+   * Execute a command with timeout support and proper process termination.
+   */
+  private spawnWithTimeout(
+    shell: string,
+    args: string[],
+    options: { cwd: string; env: NodeJS.ProcessEnv; timeout: number }
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    return new Promise((resolve, reject) => {
+      const { cwd, env, timeout } = options;
+      let timedOut = false;
+      let timeoutHandle: NodeJS.Timeout | undefined;
+
+      const child = spawn(shell, args, {
+        cwd,
+        env,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+
+      // Set timeout if provided
+      if (timeout > 0) {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          if (child.pid) {
+            killProcessTree(child.pid);
+          }
+        }, timeout * 1000);
+      }
+
+      // Stream stdout
+      child.stdout?.on('data', (data: Buffer) => {
+        stdoutChunks.push(data);
+      });
+
+      // Stream stderr
+      child.stderr?.on('data', (data: Buffer) => {
+        stderrChunks.push(data);
+      });
+
+      // Handle process exit
+      child.on('close', (code: number) => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+
+        if (timedOut) {
+          reject(new Error('timeout'));
+          return;
+        }
+
+        resolve({
+          stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
+          stderr: Buffer.concat(stderrChunks).toString('utf-8'),
+          exitCode: code ?? -1
+        });
+      });
+
+      // Handle spawn errors
+      child.on('error', (err) => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        reject(err);
+      });
+    });
   }
 }
 

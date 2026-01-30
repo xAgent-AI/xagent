@@ -2,8 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'readline';
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
+import { spawn, ChildProcess } from 'child_process';
 import { glob } from 'glob';
 import axios from 'axios';
 import inquirer from 'inquirer';
@@ -14,8 +13,9 @@ import { getLogger } from './logger.js';
 import { getCancellationManager } from './cancellation.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { InteractiveSession } from './session.js';
-
-const execAsync = promisify(exec);
+import { ripgrep, fdFind } from './ripgrep.js';
+import { getShellConfig, killProcessTree, quoteShellCommand } from './shell.js';
+import { truncateTail, buildTruncationNotice } from './truncate.js';
 
 //
 // Tool Description Pattern
@@ -73,6 +73,9 @@ export class ReadTool implements Tool {
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { filePath: string; offset?: number; limit?: number }): Promise<string> {
+    if (!params || typeof params.filePath !== 'string') {
+      throw new Error('filePath is required and must be a string');
+    }
     const { filePath, offset = 0, limit } = params;
 
     try {
@@ -89,13 +92,22 @@ export class ReadTool implements Tool {
       }
       const absolutePath = path.resolve(resolvedPath);
       const content = await fs.readFile(absolutePath, 'utf-8');
-      
+
       const lines = content.split('\n');
+      const totalLines = lines.length;
       const startLine = Math.max(0, offset);
-      const endLine = limit !== undefined ? Math.min(lines.length, startLine + limit) : lines.length;
+      const endLine = limit !== undefined ? Math.min(totalLines, startLine + limit) : totalLines;
       const selectedLines = lines.slice(startLine, endLine);
-      
-      return selectedLines.join('\n');
+      const result = selectedLines.join('\n');
+
+      // Add truncation notice if content is limited
+      if (limit !== undefined && endLine < totalLines) {
+        const remaining = totalLines - endLine;
+        const nextOffset = endLine;
+        return result + `\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue]`;
+      }
+
+      return result;
     } catch (error: any) {
       // Show user-friendly path in error message
       let displayPath = filePath;
@@ -171,7 +183,7 @@ export class WriteTool implements Tool {
 
 export class GrepTool implements Tool {
   name = 'Grep';
-  description = `Search for text patterns within files using regex or literal string matching. This is your PRIMARY tool for finding specific code, functions, or content.
+  description = `Search for text patterns within files using ripgrep. This is your PRIMARY tool for finding specific code, functions, or content.
 
 # When to Use
 - Finding specific function definitions or calls
@@ -188,122 +200,55 @@ export class GrepTool implements Tool {
 # Parameters
 - \`pattern\`: Regex or literal string to search for
 - \`path\`: (Optional) Directory to search in, default: "."
-- \`include\`: (Optional) File glob pattern to include
-- \`exclude\`: (Optional) File glob pattern to exclude
-- \`case_sensitive\`: (Optional) Case-sensitive search, default: false
-- \`fixed_strings\`: (Optional) Treat pattern as literal string, default: false
+- \`glob\`: (Optional) File glob pattern to include (e.g., "*.ts", "**/*.js")
+- \`ignoreCase\`: (Optional) Case-insensitive search, default: false
+- \`literal\`: (Optional) Treat pattern as literal string, default: false
 - \`context\`: (Optional) Lines of context before/after matches
-- \`no_ignore\`: (Optional) Don't ignore node_modules/.git, default: false
 
 # Examples
 - Find function: Grep(pattern="function myFunction")
 - Find with context: Grep(pattern="TODO", context=3)
-- TypeScript only: Grep(pattern="interface", include="*.ts")
+- TypeScript only: Grep(pattern="interface", glob="*.ts")
+- Case-insensitive: Grep(pattern="error", ignoreCase=true)
 
 # Best Practices
-- Use case_sensitive=true for short patterns to reduce false positives
-- Use fixed_strings=true if your pattern has special regex characters
+- Use ignoreCase=true for short patterns to reduce false positives
+- Use literal=true if your pattern has special regex characters
 - Use context to see the surrounding code for each match
-- Combine with include/exclude to narrow down file types`;
+- Combine with glob to narrow down file types`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
     pattern: string;
     path?: string;
-    include?: string;
-    exclude?: string;
-    case_sensitive?: boolean;
-    fixed_strings?: boolean;
+    glob?: string;
+    ignoreCase?: boolean;
+    literal?: boolean;
     context?: number;
-    after?: number;
-    before?: number;
-    no_ignore?: boolean;
+    limit?: number;
   }): Promise<string[]> {
     const {
       pattern,
       path: searchPath = '.',
-      include,
-      exclude,
-      case_sensitive = false,
-      fixed_strings = false,
+      glob: includeGlob,
+      ignoreCase = false,
+      literal = false,
       context,
-      after,
-      before,
-      no_ignore = false
+      limit
     } = params;
-    
+
     try {
-      const ignorePatterns = no_ignore ? [] : ['node_modules/**', '.git/**', 'dist/**', 'build/**'];
-      if (exclude) {
-        ignorePatterns.push(exclude);
-      }
-      
-      const absolutePath = path.resolve(searchPath);
-      const files = await glob('**/*', {
-        cwd: absolutePath,
-        nodir: true,
-        ignore: ignorePatterns
+      const result = await ripgrep({
+        pattern,
+        path: searchPath,
+        glob: includeGlob,
+        ignoreCase,
+        literal,
+        context,
+        limit
       });
 
-      const results: string[] = [];
-      
-      for (const file of files) {
-        const fullPath = path.join(absolutePath, file);
-        if (include && !file.match(include)) {
-          continue;
-        }
-        
-        try {
-          const content = await fs.readFile(fullPath, 'utf-8');
-          const lines = content.split('\n');
-          
-          lines.forEach((line, index) => {
-            let matches = false;
-            
-            if (fixed_strings) {
-              matches = case_sensitive 
-                ? line.includes(pattern)
-                : line.toLowerCase().includes(pattern.toLowerCase());
-            } else {
-              try {
-                const flags = case_sensitive ? 'g' : 'gi';
-                const regex = new RegExp(pattern, flags);
-                matches = regex.test(line);
-              } catch (e) {
-                matches = case_sensitive 
-                  ? line.includes(pattern)
-                  : line.toLowerCase().includes(pattern.toLowerCase());
-              }
-            }
-            
-            if (matches) {
-              const contextLines: string[] = [];
-              
-              if (before || context) {
-                const beforeCount = before || context || 0;
-                for (let i = Math.max(0, index - beforeCount); i < index; i++) {
-                  contextLines.push(`${fullPath}:${i + 1}:${lines[i].trim()}`);
-                }
-              }
-              
-              contextLines.push(`${fullPath}:${index + 1}:${line.trim()}`);
-              
-              if (after || context) {
-                const afterCount = after || context || 0;
-                for (let i = index + 1; i < Math.min(lines.length, index + 1 + afterCount); i++) {
-                  contextLines.push(`${fullPath}:${i + 1}:${lines[i].trim()}`);
-                }
-              }
-              
-              results.push(...contextLines);
-            }
-          });
-        } catch (error) {
-          continue;
-        }
-      }
-      
-      return results;
+      return result.split('\n').filter(line => line.trim());
     } catch (error: any) {
       throw new Error(`Grep failed: ${error.message}`);
     }
@@ -355,14 +300,14 @@ export class BashTool implements Tool {
     description?: string;
     timeout?: number;
     run_in_bg?: boolean;
-  }): Promise<{ stdout: string; stderr: string; exitCode: number; taskId?: string }> {
+  }): Promise<{ stdout: string; stderr: string; exitCode: number; taskId?: string; truncated?: boolean; truncationNotice?: string }> {
     const { command, cwd, description, timeout = 120, run_in_bg = false } = params;
-    
+
     // Determine effective working directory
     // Only use cwd if the command doesn't contain 'cd' (let LLM control directory)
     let effectiveCwd: string | undefined;
     const hasCdCommand = /cd\s+["']?[^"&|;]+["']?/.test(command);
-    
+
     if (cwd && !hasCdCommand) {
       // Command doesn't control its own directory, use provided cwd
       effectiveCwd = cwd;
@@ -373,54 +318,52 @@ export class BashTool implements Tool {
       // No cwd provided, use default
       effectiveCwd = undefined;
     }
-    
-    // Set up environment with NODE_PATH only for node commands
+
+    // Set up environment
     const nodeModulesPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules');
     const env = {
       ...process.env,
       NODE_PATH: nodeModulesPath
     };
-    
-    // Only add NODE_PATH prefix for node commands
-    const isNodeCommand = /\bnode\b/.test(command);
-    const finalCommand = isNodeCommand 
-      ? `set NODE_PATH=${nodeModulesPath} && ${command}`
-      : command;
-    
+
+    // Get shell configuration (Windows Git Bash detection, etc.)
+    const { shell, args } = getShellConfig();
+    const shellArgs = [...args, quoteShellCommand(command)];
+
     try {
       if (run_in_bg) {
         const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        const childProcess = spawn(finalCommand, {
+
+        const childProcess = spawn(shell, shellArgs, {
           cwd: effectiveCwd || process.cwd(),
-          shell: true,
           detached: true,
-          env
+          env,
+          stdio: ['ignore', 'pipe', 'pipe']
         });
-        
+
         const output: string[] = [];
-        
+
         childProcess.stdout?.on('data', (data: Buffer) => {
           const text = data.toString();
           output.push(text);
         });
-        
+
         childProcess.stderr?.on('data', (data: Buffer) => {
           const text = data.toString();
           output.push(text);
         });
-        
+
         childProcess.on('close', (code: number) => {
           console.log(`Background task ${taskId} exited with code ${code}`);
         });
-        
+
         const toolRegistry = getToolRegistry();
         (toolRegistry as any).addBackgroundTask(taskId, {
           process: childProcess,
           startTime: Date.now(),
           output
         });
-        
+
         return {
           stdout: '',
           stderr: '',
@@ -428,26 +371,119 @@ export class BashTool implements Tool {
           taskId
         };
       } else {
-        const { stdout, stderr } = await execAsync(finalCommand, {
+        // Execute command with spawn for better control
+        const result = await this.spawnWithTimeout(shell, shellArgs, {
           cwd: effectiveCwd || process.cwd(),
-          maxBuffer: 1024 * 1024 * 10,
-          timeout: timeout * 1000,
-          env
+          env,
+          timeout
         });
+
+        // Apply truncation to stdout and stderr separately
+        const stdoutResult = truncateTail(result.stdout);
+        const stderrResult = truncateTail(result.stderr);
+
+        let stdout = stdoutResult.content;
+        let stderr = stderrResult.content;
+        let truncationNotice = '';
+
+        if (stdoutResult.truncated) {
+          truncationNotice += buildTruncationNotice(stdoutResult) + '\n';
+        }
+        if (stderrResult.truncated) {
+          truncationNotice += buildTruncationNotice(stderrResult) + '\n';
+        }
 
         return {
           stdout,
           stderr,
-          exitCode: 0
+          exitCode: result.exitCode,
+          truncated: stdoutResult.truncated || stderrResult.truncated,
+          truncationNotice: truncationNotice || undefined
         };
       }
     } catch (error: any) {
+      // Check if this was a timeout
+      if (error.message === 'timeout') {
+        return {
+          stdout: '',
+          stderr: 'Command timed out',
+          exitCode: -1,
+          truncated: false
+        };
+      }
       return {
         stdout: error.stdout || '',
         stderr: error.stderr || error.message,
         exitCode: error.code || 1
       };
     }
+  }
+
+  /**
+   * Execute a command with timeout support and proper process termination.
+   */
+  private spawnWithTimeout(
+    shell: string,
+    args: string[],
+    options: { cwd: string; env: NodeJS.ProcessEnv; timeout: number }
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    return new Promise((resolve, reject) => {
+      const { cwd, env, timeout } = options;
+      let timedOut = false;
+      let timeoutHandle: NodeJS.Timeout | undefined;
+
+      const child = spawn(shell, args, {
+        cwd,
+        env,
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+
+      // Set timeout if provided
+      if (timeout > 0) {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          if (child.pid) {
+            killProcessTree(child.pid);
+          }
+        }, timeout * 1000);
+      }
+
+      // Stream stdout
+      child.stdout?.on('data', (data: Buffer) => {
+        stdoutChunks.push(data);
+      });
+
+      // Stream stderr
+      child.stderr?.on('data', (data: Buffer) => {
+        stderrChunks.push(data);
+      });
+
+      // Handle process exit
+      child.on('close', (code: number) => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+
+        if (timedOut) {
+          reject(new Error('timeout'));
+          return;
+        }
+
+        resolve({
+          stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
+          stderr: Buffer.concat(stderrChunks).toString('utf-8'),
+          exitCode: code ?? -1
+        });
+      });
+
+      // Handle spawn errors
+      child.on('error', (err) => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        reject(err);
+      });
+    });
   }
 }
 
@@ -519,7 +555,7 @@ export interface SearchFilesResult {
 
 export class SearchFilesTool implements Tool {
   name = 'SearchFiles';
-  description = `Search for files matching a glob pattern. This is your PRIMARY tool for finding files by name or extension.
+  description = `Search for files matching a glob pattern using fd. This is your PRIMARY tool for finding files by name or extension.
 
 # When to Use
 - Finding all files of a certain type (*.ts, *.json, *.md)
@@ -560,10 +596,21 @@ export class SearchFilesTool implements Tool {
     const { pattern, path: searchPath = '.', limit = 1000 } = params;
 
     try {
-      const files = await glob(pattern, {
-        cwd: searchPath,
-        ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
+      const output = await fdFind({
+        pattern,
+        path: searchPath,
+        limit
       });
+
+      if (output === 'No files found') {
+        return {
+          files: [],
+          total: 0,
+          truncated: false
+        };
+      }
+
+      const files = output.split('\n').filter(line => line.trim());
 
       const total = files.length;
       const truncated = total > limit;
@@ -3184,23 +3231,31 @@ export class ToolRegistry {
             properties: {
               pattern: {
                 type: 'string',
-                description: 'The regex pattern to search for'
+                description: 'The regex pattern or literal string to search for'
               },
               path: {
                 type: 'string',
                 description: 'Optional: The path to search in (default: current directory)'
               },
-              include: {
+              glob: {
                 type: 'string',
-                description: 'Optional: Glob pattern to filter files'
+                description: 'Optional: Glob pattern to filter files (e.g., "*.ts", "**/*.js")'
               },
-              case_sensitive: {
+              ignoreCase: {
                 type: 'boolean',
-                description: 'Optional: Case-sensitive search (default: false)'
+                description: 'Optional: Case-insensitive search (default: false)'
+              },
+              literal: {
+                type: 'boolean',
+                description: 'Optional: Treat pattern as literal string (default: false)'
               },
               context: {
                 type: 'number',
-                description: 'Optional: Number of context lines to show'
+                description: 'Optional: Number of context lines to show before and after'
+              },
+              limit: {
+                type: 'number',
+                description: 'Optional: Maximum number of matches to return'
               }
             },
             required: ['pattern']

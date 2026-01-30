@@ -1475,13 +1475,6 @@ export class InteractiveSession {
       return;
     }
 
-    // Handle errors and completion based on whether onComplete callback is provided
-    if (hasError) {
-      (this as any)._isOperationInProgress = false;
-      // 不再抛出异常，而是将错误结果返回给 AI，让 AI 决定如何处理
-      // 这样可以避免工具错误导致程序退出
-    }
-
     // Continue based on mode - 统一处理，无论是否有错误
     if (onComplete) {
       // Remote mode: use provided callback

@@ -14,6 +14,7 @@ import { getLogger } from './logger.js';
 import { getCancellationManager } from './cancellation.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { InteractiveSession } from './session.js';
+import { ripgrep } from './ripgrep.js';
 
 const execAsync = promisify(exec);
 
@@ -171,7 +172,7 @@ export class WriteTool implements Tool {
 
 export class GrepTool implements Tool {
   name = 'Grep';
-  description = `Search for text patterns within files using regex or literal string matching. This is your PRIMARY tool for finding specific code, functions, or content.
+  description = `Search for text patterns within files using ripgrep. This is your PRIMARY tool for finding specific code, functions, or content.
 
 # When to Use
 - Finding specific function definitions or calls
@@ -188,122 +189,55 @@ export class GrepTool implements Tool {
 # Parameters
 - \`pattern\`: Regex or literal string to search for
 - \`path\`: (Optional) Directory to search in, default: "."
-- \`include\`: (Optional) File glob pattern to include
-- \`exclude\`: (Optional) File glob pattern to exclude
-- \`case_sensitive\`: (Optional) Case-sensitive search, default: false
-- \`fixed_strings\`: (Optional) Treat pattern as literal string, default: false
+- \`glob\`: (Optional) File glob pattern to include (e.g., "*.ts", "**/*.js")
+- \`ignoreCase\`: (Optional) Case-insensitive search, default: false
+- \`literal\`: (Optional) Treat pattern as literal string, default: false
 - \`context\`: (Optional) Lines of context before/after matches
-- \`no_ignore\`: (Optional) Don't ignore node_modules/.git, default: false
 
 # Examples
 - Find function: Grep(pattern="function myFunction")
 - Find with context: Grep(pattern="TODO", context=3)
-- TypeScript only: Grep(pattern="interface", include="*.ts")
+- TypeScript only: Grep(pattern="interface", glob="*.ts")
+- Case-insensitive: Grep(pattern="error", ignoreCase=true)
 
 # Best Practices
-- Use case_sensitive=true for short patterns to reduce false positives
-- Use fixed_strings=true if your pattern has special regex characters
+- Use ignoreCase=true for short patterns to reduce false positives
+- Use literal=true if your pattern has special regex characters
 - Use context to see the surrounding code for each match
-- Combine with include/exclude to narrow down file types`;
+- Combine with glob to narrow down file types`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: {
     pattern: string;
     path?: string;
-    include?: string;
-    exclude?: string;
-    case_sensitive?: boolean;
-    fixed_strings?: boolean;
+    glob?: string;
+    ignoreCase?: boolean;
+    literal?: boolean;
     context?: number;
-    after?: number;
-    before?: number;
-    no_ignore?: boolean;
+    limit?: number;
   }): Promise<string[]> {
     const {
       pattern,
       path: searchPath = '.',
-      include,
-      exclude,
-      case_sensitive = false,
-      fixed_strings = false,
+      glob: includeGlob,
+      ignoreCase = false,
+      literal = false,
       context,
-      after,
-      before,
-      no_ignore = false
+      limit
     } = params;
-    
+
     try {
-      const ignorePatterns = no_ignore ? [] : ['node_modules/**', '.git/**', 'dist/**', 'build/**'];
-      if (exclude) {
-        ignorePatterns.push(exclude);
-      }
-      
-      const absolutePath = path.resolve(searchPath);
-      const files = await glob('**/*', {
-        cwd: absolutePath,
-        nodir: true,
-        ignore: ignorePatterns
+      const result = await ripgrep({
+        pattern,
+        path: searchPath,
+        glob: includeGlob,
+        ignoreCase,
+        literal,
+        context,
+        limit
       });
 
-      const results: string[] = [];
-      
-      for (const file of files) {
-        const fullPath = path.join(absolutePath, file);
-        if (include && !file.match(include)) {
-          continue;
-        }
-        
-        try {
-          const content = await fs.readFile(fullPath, 'utf-8');
-          const lines = content.split('\n');
-          
-          lines.forEach((line, index) => {
-            let matches = false;
-            
-            if (fixed_strings) {
-              matches = case_sensitive 
-                ? line.includes(pattern)
-                : line.toLowerCase().includes(pattern.toLowerCase());
-            } else {
-              try {
-                const flags = case_sensitive ? 'g' : 'gi';
-                const regex = new RegExp(pattern, flags);
-                matches = regex.test(line);
-              } catch (e) {
-                matches = case_sensitive 
-                  ? line.includes(pattern)
-                  : line.toLowerCase().includes(pattern.toLowerCase());
-              }
-            }
-            
-            if (matches) {
-              const contextLines: string[] = [];
-              
-              if (before || context) {
-                const beforeCount = before || context || 0;
-                for (let i = Math.max(0, index - beforeCount); i < index; i++) {
-                  contextLines.push(`${fullPath}:${i + 1}:${lines[i].trim()}`);
-                }
-              }
-              
-              contextLines.push(`${fullPath}:${index + 1}:${line.trim()}`);
-              
-              if (after || context) {
-                const afterCount = after || context || 0;
-                for (let i = index + 1; i < Math.min(lines.length, index + 1 + afterCount); i++) {
-                  contextLines.push(`${fullPath}:${i + 1}:${lines[i].trim()}`);
-                }
-              }
-              
-              results.push(...contextLines);
-            }
-          });
-        } catch (error) {
-          continue;
-        }
-      }
-      
-      return results;
+      return result.split('\n').filter(line => line.trim());
     } catch (error: any) {
       throw new Error(`Grep failed: ${error.message}`);
     }
@@ -3184,23 +3118,31 @@ export class ToolRegistry {
             properties: {
               pattern: {
                 type: 'string',
-                description: 'The regex pattern to search for'
+                description: 'The regex pattern or literal string to search for'
               },
               path: {
                 type: 'string',
                 description: 'Optional: The path to search in (default: current directory)'
               },
-              include: {
+              glob: {
                 type: 'string',
-                description: 'Optional: Glob pattern to filter files'
+                description: 'Optional: Glob pattern to filter files (e.g., "*.ts", "**/*.js")'
               },
-              case_sensitive: {
+              ignoreCase: {
                 type: 'boolean',
-                description: 'Optional: Case-sensitive search (default: false)'
+                description: 'Optional: Case-insensitive search (default: false)'
+              },
+              literal: {
+                type: 'boolean',
+                description: 'Optional: Treat pattern as literal string (default: false)'
               },
               context: {
                 type: 'number',
-                description: 'Optional: Number of context lines to show'
+                description: 'Optional: Number of context lines to show before and after'
+              },
+              limit: {
+                type: 'number',
+                description: 'Optional: Maximum number of matches to return'
               }
             },
             required: ['pattern']

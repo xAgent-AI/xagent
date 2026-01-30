@@ -21,7 +21,9 @@
     "start": "node dist/cli.js",
     "test": "vitest",
     "lint": "eslint src --ext .ts",
-    "format": "prettier --write \"src/**/*.ts\""
+    "format": "prettier --write \"src/**/*.ts\"",
+    "postinstall": "node scripts/install-ripgrep.js",
+    "install-ripgrep": "node scripts/install-ripgrep.js"
   },
   "keywords": [
     "ai",

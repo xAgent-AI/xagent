@@ -190,7 +190,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       },
       Grep: {
         name: 'Grep',
-        description: 'Search for text patterns across multiple files',
+        description: 'Search for text patterns across multiple files using ripgrep',
         parameters: {
           pattern: {
             type: 'string',
@@ -203,23 +203,18 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
             required: false,
             default: '.'
           },
-          include: {
+          glob: {
             type: 'string',
             description: 'File pattern to include (glob)',
             required: false
           },
-          exclude: {
-            type: 'string',
-            description: 'File pattern to exclude (glob)',
-            required: false
-          },
-          case_sensitive: {
+          ignoreCase: {
             type: 'boolean',
-            description: 'Whether search is case-sensitive',
+            description: 'Case-insensitive search',
             required: false,
             default: false
           },
-          fixed_strings: {
+          literal: {
             type: 'boolean',
             description: 'Treat pattern as literal string, not regex',
             required: false,
@@ -230,34 +225,24 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
             description: 'Number of context lines before and after match',
             required: false
           },
-          before: {
+          limit: {
             type: 'number',
-            description: 'Number of context lines before match',
+            description: 'Maximum number of matches to return',
             required: false
-          },
-          after: {
-            type: 'number',
-            description: 'Number of context lines after match',
-            required: false
-          },
-          no_ignore: {
-            type: 'boolean',
-            description: 'Ignore .gitignore patterns',
-            required: false,
-            default: false
           }
         },
         usage: 'Search for code patterns, function definitions, or text across the codebase',
         examples: [
           'Search for function: Grep(pattern="function.*\\(.*\\)")',
-          'Find specific text: Grep(pattern="TODO", case_sensitive=true)',
-          'Search in specific files: Grep(pattern="import", include="*.ts")'
+          'Find specific text: Grep(pattern="TODO", ignoreCase=true)',
+          'Search in specific files: Grep(pattern="import", glob="*.ts")',
+          'Literal search: Grep(pattern="*.ts", literal=true)'
         ],
         bestPractices: [
-          'Use fixed_strings for simple text searches',
+          'Use literal=true for simple text searches',
           'Use context to see surrounding code',
-          'Narrow search with include/exclude patterns',
-          'Use case_sensitive for exact matches'
+          'Narrow search with glob pattern',
+          'Use ignoreCase=true for case-insensitive matching'
         ]
       },
       Bash: {

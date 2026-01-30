@@ -21,7 +21,9 @@
     "start": "node dist/cli.js",
     "test": "vitest",
     "lint": "eslint src --ext .ts",
-    "format": "prettier --write \"src/**/*.ts\""
+    "format": "prettier --write \"src/**/*.ts\"",
+    "postinstall": "node scripts/install-ripgrep.js",
+    "install-ripgrep": "node scripts/install-ripgrep.js"
   },
   "keywords": [
     "ai",
@@ -34,7 +36,6 @@
   "license": "MIT",
   "dependencies": {
     "@computer-use/nut-js": "^4.2.0",
-    "@nut-tree-fork/nut-js": "^4.2.6",
     "ansi-escapes": "^6.2.0",
     "archiver": "^7.0.0",
     "axios": "^1.6.0",
@@ -54,9 +55,6 @@
     "node-pty": "^1.0.0",
     "open": "^10.0.0",
     "ora": "^8.0.0",
-    "playwright": "^1.57.0",
-    "pptxgenjs": "^4.0.1",
-    "puppeteer": "^24.0.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-icons": "^5.5.0",

@@ -454,11 +454,15 @@ export class InteractiveSession {
     const authType = await selectAuthType();
     this.configManager.set('selectedAuthType', authType);
 
+    // Get xagentApiBaseUrl from config (respects XAGENT_BASE_URL env var)
+    const config = this.configManager.getAuthConfig();
+    
     const authService = new AuthService({
       type: authType,
       apiKey: '',
       baseUrl: '',
-      modelName: ''
+      modelName: '',
+      xagentApiBaseUrl: config.xagentApiBaseUrl
     });
 
     const success = await authService.authenticate();
@@ -1469,13 +1473,6 @@ export class InteractiveSession {
       console.log(`${indent}${colors.textMuted('GUI task cancelled by user')}`);
       (this as any)._isOperationInProgress = false;
       return;
-    }
-
-    // Handle errors and completion based on whether onComplete callback is provided
-    if (hasError) {
-      (this as any)._isOperationInProgress = false;
-      // 不再抛出异常，而是将错误结果返回给 AI，让 AI 决定如何处理
-      // 这样可以避免工具错误导致程序退出
     }
 
     // Continue based on mode - 统一处理，无论是否有错误

@@ -454,11 +454,15 @@ export class InteractiveSession {
     const authType = await selectAuthType();
     this.configManager.set('selectedAuthType', authType);
 
+    // Get xagentApiBaseUrl from config (respects XAGENT_BASE_URL env var)
+    const config = this.configManager.getAuthConfig();
+    
     const authService = new AuthService({
       type: authType,
       apiKey: '',
       baseUrl: '',
-      modelName: ''
+      modelName: '',
+      xagentApiBaseUrl: config.xagentApiBaseUrl
     });
 
     const success = await authService.authenticate();

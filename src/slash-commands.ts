@@ -444,11 +444,15 @@ export class SlashCommandHandler {
     console.log(chalk.gray('   A browser will open for you to complete authentication.\n'));
 
     try {
+      // Get xagentApiBaseUrl from config (respects XAGENT_BASE_URL env var)
+      const config = this.configManager.getAuthConfig();
+
       const authService = new AuthService({
         type: AuthType.OAUTH_XAGENT,
         apiKey: '',
         baseUrl: '',
-        refreshToken: ''
+        refreshToken: '',
+        xagentApiBaseUrl: config.xagentApiBaseUrl
       });
 
       const success = await authService.authenticate();
@@ -521,11 +525,15 @@ export class SlashCommandHandler {
 
     if (action === 'configure') {
       // Use AuthService to configure VLM
+      // Get xagentApiBaseUrl from config (respects XAGENT_BASE_URL env var)
+      const config = this.configManager.getAuthConfig();
+
       const authService = new AuthService({
         type: 'openai_compatible' as any,
         apiKey: '',
         baseUrl: '',
-        modelName: ''
+        modelName: '',
+        xagentApiBaseUrl: config.xagentApiBaseUrl
       });
 
       const vlmConfig = await authService.configureAndValidateVLM();
@@ -1175,6 +1183,8 @@ export class SlashCommandHandler {
 
   private async handleStats(): Promise<void> {
     logger.section('Session Statistics');
+    const authConfig = this.configManager.getAuthConfig();
+    logger.info(`  Base URL: ${authConfig.baseUrl}`);
     logger.info(`  Execution Mode: ${this.configManager.getExecutionMode()}`);
     logger.info(`  Language: ${this.configManager.getLanguage()}`);
     logger.info(`  Checkpointing: ${this.checkpointManager.isEnabled() ? 'Enabled' : 'Disabled'}`);

@@ -333,30 +333,34 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
           'Check directory existence first'
         ]
       },
-      SearchCodebase: {
-        name: 'SearchCodebase',
-        description: 'Semantic search through the codebase using embeddings',
+      SearchFiles: {
+        name: 'SearchFiles',
+        description: 'Search for files matching a glob pattern by name or extension',
         parameters: {
-          query: {
+          pattern: {
             type: 'string',
-            description: 'Natural language query describing what to search for',
+            description: 'Glob pattern to match files (e.g., "**/*.ts")',
             required: true
           },
-          target_directories: {
-            type: 'array',
-            description: 'Specific directories to search in',
+          path: {
+            type: 'string',
+            description: 'Directory to search in',
+            required: false
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of results to return',
             required: false
           }
         },
-        usage: 'Find code by meaning rather than exact text matches',
+        usage: 'Find files by name or extension pattern',
         examples: [
-          'Find authentication logic: SearchCodebase(query="how do we check authentication headers?")',
-          'Find error handling: SearchCodebase(query="where do we do error handling in the file watcher?")'
+          'Find all TypeScript files: SearchFiles(pattern="**/*.ts")',
+          'Find config files: SearchFiles(pattern="**/config.*")'
         ],
         bestPractices: [
-          'Use natural language queries',
-          'Be specific about what you are looking for',
-          'Combine with Read to examine found code'
+          'Use **/*.ts for recursive search',
+          'Combine with Read to examine found files'
         ]
       },
       DeleteFile: {
@@ -399,21 +403,26 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
           'Create necessary parent directories automatically'
         ]
       },
-      Replace: {
-        name: 'Replace',
-        description: 'Replace text in a file using search and replace',
+      edit: {
+        name: 'Edit',
+        description: 'Edit a file by replacing exact text',
         parameters: {
-          filePath: {
+          file_path: {
             type: 'string',
             description: 'Path to the file to modify',
             required: true
           },
-          old_str: {
+          instruction: {
             type: 'string',
-            description: 'Text to search for',
+            description: 'Description of what to change',
             required: true
           },
-          new_str: {
+          old_string: {
+            type: 'string',
+            description: 'The exact text to find and replace',
+            required: true
+          },
+          new_string: {
             type: 'string',
             description: 'Text to replace with',
             required: true
@@ -421,10 +430,10 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
         },
         usage: 'Make targeted edits to files without rewriting entire content',
         examples: [
-          'Replace text: Replace(filePath="config.json", old_str="old value", new_str="new value")'
+          'Edit text: Edit(file_path="config.json", instruction="Update API endpoint", old_string="old value", new_string="new value")'
         ],
         bestPractices: [
-          'Use unique old_str to avoid multiple replacements',
+          'Use unique old_string to avoid multiple replacements',
           'Read file first to verify content',
           'Use Write for large changes'
         ]
@@ -682,9 +691,9 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       'Write': 'When creating new files or completely replacing existing content',
       'Grep': 'When searching for specific patterns, function names, or text across files',
       'Bash': 'When running tests, installing dependencies, building projects, or executing terminal commands',
-      'SearchCodebase': 'When finding code by meaning rather than exact text matches',
+      'SearchFiles': 'When finding files by name or extension pattern',
       'ListDirectory': 'When exploring project structure or finding files',
-      'Replace': 'When making targeted edits without rewriting entire files',
+      'Edit': 'When making targeted edits without rewriting entire files',
       'web_search': 'When you need current information from the internet',
       'web_fetch': 'When retrieving content from specific URLs',
       'todo_write': 'When planning and tracking complex multi-step tasks',
@@ -721,7 +730,8 @@ ${toolsSection}
 When a user asks you to:
 - Read files → IMMEDIATELY call Read tool with the file path
 - List directory → IMMEDIATELY call ListDirectory tool
-- Search code → IMMEDIATELY call Grep or SearchCodebase tool
+- Search files → IMMEDIATELY call SearchFiles tool
+- Search code → IMMEDIATELY call Grep tool
 - Run commands → IMMEDIATELY call Bash tool
 - Introduce the codebase → IMMEDIATELY call ListDirectory and Read tools
 - Analyze the project → IMMEDIATELY call ListDirectory and Read tools
@@ -753,9 +763,9 @@ When a user asks you to:
 6. **EXECUTE IMMEDIATELY** - Make the tool call right away without delay
 
 ### Common Patterns
-- **Code exploration**: ListDirectory → Read → Grep/SearchCodebase
+- **Code exploration**: ListDirectory → Read → Grep/SearchFiles
 - **Feature implementation**: Read (existing code) → Write (new files) → Bash (test)
-- **Bug fixing**: Grep/SearchCodebase (find issue) → Read (understand) → Replace/Write (fix) → Bash (verify)
+- **Bug fixing**: Grep (find issue) → Read (understand) → Edit/Write (fix) → Bash (verify)
 - **Project setup**: WebSearch (research) → Write (create files) → Bash (install/build)
 - **Documentation**: Read (code) → Write (docs)
 

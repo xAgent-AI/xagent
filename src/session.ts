@@ -25,7 +25,7 @@ import { getConversationManager, ConversationManager } from './conversation.js';
 import { getSessionManager, SessionManager } from './session-manager.js';
 import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
-import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
+import { theme, icons, colors, styleHelpers, renderMarkdown, renderDiff, renderLines, TERMINAL_BG } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
 import { Logger, LogLevel, getLogger } from './logger.js';
@@ -85,14 +85,14 @@ export class InteractiveSession {
 
       this.slashCommandHandler = new SlashCommandHandler();
 
-  
-
       // Register /clear callback, clear local conversation when clearing dialogue
-
       this.slashCommandHandler.setClearCallback(() => {
-
         this.conversation = [];
-
+        this.toolCalls = [];
+        this.currentTaskId = null;
+        this.taskCompleted = false;
+        this.isFirstApiCall = true;
+        this.slashCommandHandler.setConversationHistory([]);
       });
 
   
@@ -231,7 +231,7 @@ export class InteractiveSession {
         clearInterval(spinnerInterval);
         process.stdout.write('\r' + ' '.repeat(50) + '\r'); // Clear the line
         
-        const baseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net';
+        const baseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
         let isValid = await this.validateToken(baseUrl, authConfig.apiKey);
 
         // Try refresh token if validation failed
@@ -315,7 +315,7 @@ export class InteractiveSession {
       logger.debug('[SESSION] Final selectedAuthType:', String(selectedAuthType));
       logger.debug('[SESSION] Creating RemoteAIClient?', String(selectedAuthType === AuthType.OAUTH_XAGENT));
       if (selectedAuthType === AuthType.OAUTH_XAGENT) {
-        const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net';
+        const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
         // In OAuth XAGENT mode, we still pass apiKey (can be empty or used for other purposes)
         this.remoteAIClient = new RemoteAIClient(authConfig.apiKey || '', webBaseUrl, authConfig.showAIDebugInfo);
         logger.debug('[DEBUG Initialize] RemoteAIClient created successfully');
@@ -913,19 +913,33 @@ export class InteractiveSession {
     };
   }
 
-  private async generateResponse(thinkingTokens: number = 0): Promise<void> {
-    // Create taskId for this user interaction (for remote mode tracking)
-    const taskId = crypto.randomUUID();
+  private async generateResponse(thinkingTokens: number = 0, customAIClient?: AIClient, existingTaskId?: string): Promise<void> {
+    // Use existing taskId or create new one for this user interaction
+    // If taskId already exists (e.g., from tool calls), reuse it
+    const taskId = existingTaskId || this.currentTaskId || crypto.randomUUID();
     this.currentTaskId = taskId;
     this.isFirstApiCall = true;
 
     // Determine status based on whether this is the first API call
     const status: 'begin' | 'continue' = this.isFirstApiCall ? 'begin' : 'continue';
 
-    // Use unified LLM Caller with taskId (automatically selects local or remote mode)
-    const { chatCompletion, isRemote } = this.createLLMCaller(taskId, status);
+    // Use custom AI client if provided, otherwise use default logic
+    let chatCompletion: (messages: ChatMessage[], options: any) => Promise<any>;
+    let isRemote = false;
 
-    if (!isRemote && !this.aiClient) {
+    if (customAIClient) {
+      // Custom client (used by remote mode) - pass taskId and status
+      chatCompletion = (messages: ChatMessage[], options: any) =>
+        customAIClient.chatCompletion(messages as any, { ...options, taskId, status });
+      isRemote = true;
+    } else {
+      // Use unified LLM Caller with taskId (automatically selects local or remote mode)
+      const caller = this.createLLMCaller(taskId, status);
+      chatCompletion = caller.chatCompletion;
+      isRemote = caller.isRemote;
+    }
+
+    if (!isRemote && !this.aiClient && !customAIClient) {
       console.log(colors.error('AI client not initialized'));
       return;
     }
@@ -1046,7 +1060,7 @@ export class InteractiveSession {
       if (error.message === 'Operation cancelled by user') {
         // Mark task as cancelled
         if (this.remoteAIClient && this.currentTaskId) {
-          await this.remoteAIClient.cancelTask(this.currentTaskId);
+          await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
         }
         return;
       }
@@ -1054,7 +1068,7 @@ export class InteractiveSession {
       // Mark task as cancelled when error occurs (发送 status: 'cancel')
       logger.debug(`[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}`);
       if (this.remoteAIClient && this.currentTaskId) {
-        await this.remoteAIClient.cancelTask(this.currentTaskId);
+        await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
       }
 
       console.log(colors.error(`Error: ${error.message}`));
@@ -1083,152 +1097,23 @@ export class InteractiveSession {
     const status: 'begin' | 'continue' = this.isFirstApiCall ? 'begin' : 'continue';
     logger.debug(`[Session] Status for this call: ${status}, isFirstApiCall=${this.isFirstApiCall}`);
 
-    // 使用统一的 LLM Caller
-    const { chatCompletion, isRemote } = this.createLLMCaller(taskId, status);
-
-    if (!isRemote) {
-      // 如果不是远程模式，回退到本地模式
-      return this.generateResponse(thinkingTokens);
+    // Check if remote client is available
+    if (!this.remoteAIClient) {
+      console.log(colors.error('Remote AI client not initialized'));
+      return;
     }
 
-    const indent = this.getIndent();
-    const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
-    const icon = colors.primary(icons.brain);
-    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    let frameIndex = 0;
-
-    // Mark that an operation is in progress
-    (this as any)._isOperationInProgress = true;
-
-    // Custom spinner: only icon rotates, text stays static
-    const spinnerInterval = setInterval(() => {
-      process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
-      frameIndex = (frameIndex + 1) % frames.length;
-    }, 120);
-
     try {
-      // Load memory (与本地模式一致)
-      const memory = await this.memoryManager.loadMemory();
-
-      // Get tool definitions
-      const toolRegistry = getToolRegistry();
-      const allowedToolNames = this.currentAgent
-        ? this.agentManager.getAvailableToolsForAgent(this.currentAgent, this.executionMode)
-        : [];
-
-      const allToolDefinitions = toolRegistry.getToolDefinitions();
-      
-      const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
-        ? allToolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
-        : allToolDefinitions;
-
-      // Convert to the format expected by backend (与本地模式一致使用 availableTools)
-      const tools = availableTools.map((tool: any) => ({
-        type: 'function' as const,
-        function: {
-          name: tool.function.name,
-          description: tool.function.description || '',
-          parameters: tool.function.parameters || {
-            type: 'object' as const,
-            properties: {}
-          }
-        }
-      }));
-
-      // Generate system prompt (与本地模式一致)
-      const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
-      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
-      const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
-
-      // Build messages with system prompt (与本地模式一致)
-      const messages: ChatMessage[] = [
-        { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}`, timestamp: Date.now() },
-        ...this.conversation
-      ];
-
-      // Call unified LLM API with cancellation support
-      const operationId = `remote-ai-response-${Date.now()}`;
-      const response = await this.cancellationManager.withCancellation(
-        chatCompletion(messages, {
-          tools,
-          toolChoice: tools.length > 0 ? 'auto' : 'none',
-          thinkingTokens
-        }),
-        operationId
-      );
-
-      // Mark that first API call is complete
-      this.isFirstApiCall = false;
-
-      clearInterval(spinnerInterval);
-      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
-      console.log('');
-
-      // 使用统一的响应格式（与本地模式一致）
-      const assistantMessage = response.choices[0].message;
-      const content = typeof assistantMessage.content === 'string'
-        ? assistantMessage.content
-        : '';
-      const reasoningContent = assistantMessage.reasoning_content || '';
-      const toolCalls = assistantMessage.tool_calls || [];
-
-      // Display reasoning content if available and thinking mode is enabled (与本地模式一致)
-      if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
-        this.displayThinkingContent(reasoningContent);
-      }
-
-      console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
-      console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
-      console.log('');
-      const renderedContent = renderMarkdown(content, (process.stdout.columns || 80) - indent.length * 2);
-      console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
-      console.log('');
-
-      // Add assistant message to conversation (consistent with local mode, including reasoningContent)
-      this.conversation.push({
-        role: 'assistant',
-        content,
-        timestamp: Date.now(),
-        reasoningContent,
-        toolCalls: toolCalls
-      });
-
-      // Record output to session manager (consistent with local mode, including reasoningContent and toolCalls)
-      await this.sessionManager.addOutput({
-        role: 'assistant',
-        content,
-        timestamp: Date.now(),
-        reasoningContent,
-        toolCalls
-      });
-
-      // Handle tool calls
-      if (toolCalls.length > 0) {
-        await this.handleRemoteToolCalls(toolCalls);
-      }
-
-      // Checkpoint support (consistent with local mode)
-      if (this.checkpointManager.isEnabled()) {
-        await this.checkpointManager.createCheckpoint(
-          `Response generated at ${new Date().toLocaleString()}`,
-          [...this.conversation],
-          [...this.toolCalls]
-        );
-      }
-
-      // Operation completed successfully
-      (this as any)._isOperationInProgress = false;
+      // Reuse generateResponse with remote client, pass taskId to avoid generating new one
+      await this.generateResponse(thinkingTokens, this.remoteAIClient as any, taskId);
 
       // Mark task as completed (发送 status: 'end')
       logger.debug(`[Session] Task completed: taskId=${this.currentTaskId}`);
-      if (this.remoteAIClient && this.currentTaskId) {
+      if (this.currentTaskId) {
         await this.remoteAIClient.completeTask(this.currentTaskId);
       }
 
     } catch (error: any) {
-      clearInterval(spinnerInterval);
-      process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
-
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
 
@@ -1244,7 +1129,6 @@ export class InteractiveSession {
         console.log('');
 
         // Clear invalid credentials and persist
-        // Note: Do NOT overwrite selectedAuthType - preserve user's chosen auth method
         await this.configManager.set('apiKey', '');
         await this.configManager.set('refreshToken', '');
         await this.configManager.save('global');
@@ -1261,7 +1145,6 @@ export class InteractiveSession {
 
         logger.debug('[DEBUG generateRemoteResponse] After re-auth:');
         logger.debug('  - authConfig.apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
-        logger.debug('  - authConfig.apiKey prefix:', authConfig.apiKey ? authConfig.apiKey.substring(0, 20) + '...' : 'empty');
 
         // Recreate readline interface after inquirer
         this.rl.close();
@@ -1275,10 +1158,9 @@ export class InteractiveSession {
 
         // Reinitialize RemoteAIClient with new token
         if (authConfig.apiKey) {
-          const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net';
+          const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
           logger.debug('[DEBUG generateRemoteResponse] Reinitializing RemoteAIClient with new token');
-          const newWebBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net';
-          this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, newWebBaseUrl, authConfig.showAIDebugInfo);
+          this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl, authConfig.showAIDebugInfo);
         } else {
           logger.debug('[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!');
         }
@@ -1293,7 +1175,7 @@ export class InteractiveSession {
       // Mark task as cancelled when error occurs (发送 status: 'cancel')
       logger.debug(`[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}`);
       if (this.remoteAIClient && this.currentTaskId) {
-        await this.remoteAIClient.cancelTask(this.currentTaskId);
+        await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
       }
 
       console.log(colors.error(`Error: ${error.message}`));
@@ -1301,7 +1183,7 @@ export class InteractiveSession {
     }
   }
 
-  private async handleToolCalls(toolCalls: any[]): Promise<void> {
+  private async handleToolCalls(toolCalls: any[], onComplete?: () => Promise<void>): Promise<void> {
     // Mark that tool execution is in progress
     (this as any)._isOperationInProgress = true;
 
@@ -1331,7 +1213,6 @@ export class InteractiveSession {
         console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
       } else {
         const toolDescription = this.getToolDescription(name, params);
-        console.log('');
         console.log(`${indent}${colors.textMuted(`${icons.loading} ${toolDescription}`)}`);
       }
     }
@@ -1343,6 +1224,7 @@ export class InteractiveSession {
     );
 
     // Process results and maintain order
+    let hasError = false;
     for (const { tool, result, error } of results) {
       const toolCall = preparedToolCalls.find(tc => tc.name === tool);
       if (!toolCall) continue;
@@ -1350,19 +1232,24 @@ export class InteractiveSession {
       const { params } = toolCall;
 
       if (error) {
-        // Clear the operation flag
-        (this as any)._isOperationInProgress = false;
-
         if (error === 'Operation cancelled by user') {
+          (this as any)._isOperationInProgress = false;
           return;
         }
 
-        console.log('');
-        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
+        hasError = true;
 
+        console.log('');
+        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${tool} - ${error}`)}`);
+
+        // 添加详细的错误信息，包含工具名称和参数，便于 AI 理解和修正
         this.conversation.push({
           role: 'tool',
-          content: JSON.stringify({ error }),
+          content: JSON.stringify({
+            name: tool,
+            parameters: params,
+            error: error
+          }),
           tool_call_id: toolCall.id,
           timestamp: Date.now()
         });
@@ -1373,6 +1260,28 @@ export class InteractiveSession {
 
         // Always show details for todo tools so users can see their task lists
         const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
+
+        // Special handling for edit tool with diff
+        const isEditTool = tool === 'Edit';
+        const hasDiff = isEditTool && result?.diff;
+
+        // Special handling for Write tool with file preview
+        const isWriteTool = tool === 'Write';
+        const hasFilePreview = isWriteTool && result?.preview;
+
+        // Special handling for DeleteFile tool
+        const isDeleteTool = tool === 'DeleteFile';
+        const hasDeleteInfo = isDeleteTool && result?.filePath;
+
+        // Special handling for task tool (subagent)
+        const isTaskTool = tool === 'task' && params?.subagent_type;
+
+        // Check if tool is an MCP wrapper tool by looking up in tool registry
+        const { getToolRegistry } = await import('./tools.js');
+        const toolRegistry = getToolRegistry();
+        const toolDef = toolRegistry.get(tool);
+        const isMcpTool = toolDef && (toolDef as any)._isMcpTool === true;
+
         if (isTodoTool) {
           console.log('');
           console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
@@ -1380,6 +1289,123 @@ export class InteractiveSession {
           // Show summary if available
           if (result?.message) {
             console.log(`${displayIndent}${colors.textDim(result.message)}`);
+          }
+        } else if (hasDiff) {
+          // Show edit result with diff
+          console.log('');
+          const diffOutput = renderDiff(result.diff);
+          const indentedDiff = diffOutput.split('\n').map(line => `${displayIndent}  ${line}`).join('\n');
+          console.log(`${indentedDiff}`);
+        } else if (hasFilePreview) {
+          // Show new file content in diff-like style
+          console.log('');
+          console.log(`${displayIndent}${colors.success(`${icons.file} ${result.filePath}`)}`);
+          console.log(`${displayIndent}${colors.textDim(`  ${result.lineCount} lines`)}`);
+          console.log('');
+          console.log(renderLines(result.preview, { maxLines: 10, indent: displayIndent + '  ' }));
+        } else if (hasDeleteInfo) {
+          // Show DeleteFile result
+          console.log('');
+          console.log(`${displayIndent}${colors.success(`${icons.check} Deleted: ${result.filePath}`)}`);
+        } else if (isTaskTool) {
+          // Special handling for task tool (subagent) - show friendly summary
+          console.log('');
+          const subagentType = params.subagent_type;
+          const subagentName = params.description || (params.prompt ? params.prompt.substring(0, 50).replace(/\n/g, ' ') : 'Unknown task');
+
+          if (result?.success) {
+            console.log(`${displayIndent}${colors.success(`${icons.check} ${subagentType}: Completed`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+            if (result.message) {
+              console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+            }
+          } else if (result?.cancelled) {
+            console.log(`${displayIndent}${colors.warning(`${icons.cross} ${subagentType}: Cancelled`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+          } else {
+            console.log(`${displayIndent}${colors.error(`${icons.cross} ${subagentType}: Failed`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+            if (result?.message) {
+              console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+            }
+          }
+        } else if (isMcpTool) {
+          // Special handling for MCP tools - show friendly summary
+          console.log('');
+          // Extract server name and tool name from tool name (format: serverName__toolName)
+          let serverName = 'MCP';
+          let toolDisplayName = tool;
+          if (tool.includes('__')) {
+            const parts = tool.split('__');
+            serverName = parts[0];
+            toolDisplayName = parts.slice(1).join('__');
+          }
+
+          // Try to extract meaningful content from MCP result
+          let summary = '';
+          if (result?.content && Array.isArray(result.content) && result.content.length > 0) {
+            const firstBlock = result.content[0];
+            if (firstBlock?.type === 'text' && firstBlock?.text) {
+              const text = firstBlock.text;
+              if (typeof text === 'string') {
+                // Detect HTML content
+                if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+                  summary = '[HTML content fetched]';
+                } else {
+                  // Try to parse if it's JSON
+                  try {
+                    const parsed = JSON.parse(text);
+                    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.title) {
+                      // Search results format
+                      summary = `Found ${parsed.length} result(s)`;
+                    } else if (parsed?.message) {
+                      summary = parsed.message;
+                    } else if (typeof parsed === 'string') {
+                      summary = parsed.substring(0, 100);
+                    }
+                  } catch {
+                    // Not JSON, use as-is with truncation
+                    summary = text.substring(0, 100);
+                  }
+                }
+              }
+            }
+          } else if (result?.message) {
+            summary = result.message;
+          }
+
+          if (result?.success !== false) {
+            console.log(`${displayIndent}${colors.success(`${icons.check} ${serverName}: Success`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
+            if (summary) {
+              console.log(`${displayIndent}${colors.textDim(`  ${summary}`)}`);
+            }
+          } else {
+            console.log(`${displayIndent}${colors.error(`${icons.cross} ${serverName}: Failed`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
+            if (result?.message || result?.error) {
+              console.log(`${displayIndent}${colors.textDim(`  ${result?.message || result?.error}`)}`);
+            }
+          }
+        } else if (tool === 'InvokeSkill') {
+          // Special handling for InvokeSkill - show friendly summary
+          console.log('');
+          const skillName = params?.skillId || 'Unknown skill';
+          const taskDesc = params?.taskDescription || '';
+
+          if (result?.success) {
+            console.log(`${displayIndent}${colors.success(`${icons.check} Skill: Completed`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
+            if (taskDesc) {
+              const truncatedTask = taskDesc.length > 60 ? taskDesc.substring(0, 60) + '...' : taskDesc;
+              console.log(`${displayIndent}${colors.textDim(`  Task: ${truncatedTask}`)}`);
+            }
+          } else {
+            console.log(`${displayIndent}${colors.error(`${icons.cross} Skill: Failed`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
+            if (result?.message) {
+              console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+            }
           }
         } else if (showToolDetails) {
           console.log('');
@@ -1389,7 +1415,12 @@ export class InteractiveSession {
           // GUI task or other tool failed
           console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
         } else if (result) {
-          console.log(`${displayIndent}${colors.success(`${icons.check} Completed`)}`);
+          // Show brief preview by default (consistent with subagent behavior)
+          const resultPreview = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+          const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
+          // Indent the preview
+          const indentedPreview = truncatedPreview.split('\n').map(line => `${displayIndent}  ${line}`).join('\n');
+          console.log(`${indentedPreview}`);
         } else {
           console.log(`${displayIndent}${colors.textDim('(no result)')}`);
         }
@@ -1413,9 +1444,14 @@ export class InteractiveSession {
           timestamp: Date.now()
         });
 
+        // 统一消息格式，包含工具名称和参数
         this.conversation.push({
           role: 'tool',
-          content: JSON.stringify(result),
+          content: JSON.stringify({
+            name: tool,
+            parameters: params,
+            result: result
+          }),
           tool_call_id: toolCall.id,
           timestamp: Date.now()
         });
@@ -1424,7 +1460,6 @@ export class InteractiveSession {
 
     // Logic: Only skip returning results to main agent when user explicitly cancelled (ESC)
     // For all other cases (success, failure, errors), always return results for further processing
-    const guiSubagentFailed = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent');
     const guiSubagentCancelled = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent' && results.some(r => r.tool === 'task' && (r.result as any)?.cancelled === true));
 
     // If GUI agent was cancelled by user, don't continue generating response
@@ -1436,9 +1471,21 @@ export class InteractiveSession {
       return;
     }
 
-    // For all other cases (GUI success/failure, other tool errors), return results to main agent
-    // This allows main agent to decide how to handle failures (retry, fallback, user notification, etc.)
-    await this.generateResponse();
+    // Handle errors and completion based on whether onComplete callback is provided
+    if (hasError) {
+      (this as any)._isOperationInProgress = false;
+      // 不再抛出异常，而是将错误结果返回给 AI，让 AI 决定如何处理
+      // 这样可以避免工具错误导致程序退出
+    }
+
+    // Continue based on mode - 统一处理，无论是否有错误
+    if (onComplete) {
+      // Remote mode: use provided callback
+      await onComplete();
+    } else {
+      // Local mode: default behavior - continue with generateResponse
+      await this.generateResponse();
+    }
   }
 
   /**
@@ -1451,10 +1498,10 @@ export class InteractiveSession {
       'Grep': (p) => `Search text: "${p.pattern}"`,
       'Bash': (p) => `Execute command: ${this.truncateCommand(p.command)}`,
       'ListDirectory': (p) => `List directory: ${this.truncatePath(p.path || '.')}`,
-      'SearchCodebase': (p) => `Search files: ${p.pattern}`,
+      'SearchFiles': (p) => `Search files: ${p.pattern}`,
       'DeleteFile': (p) => `Delete file: ${this.truncatePath(p.filePath)}`,
       'CreateDirectory': (p) => `Create directory: ${this.truncatePath(p.dirPath)}`,
-      'replace': (p) => `Replace text: ${this.truncatePath(p.file_path)}`,
+      'Edit': (p) => `Edit text: ${this.truncatePath(p.file_path)}`,
       'web_search': (p) => `Web search: "${p.query}"`,
       'todo_write': () => `Update todo list`,
       'todo_read': () => `Read todo list`,
@@ -1474,157 +1521,6 @@ export class InteractiveSession {
 
     const getDescription = descriptions[toolName];
     return getDescription ? getDescription(params) : `Execute tool: ${toolName}`;
-  }
-
-  /**
-   * Handle tool calls for remote AI mode
-   * Executes tools and then continues the conversation with results
-   */
-  private async handleRemoteToolCalls(toolCalls: any[]): Promise<void> {
-    // Mark that tool execution is in progress
-    (this as any)._isOperationInProgress = true;
-
-    const toolRegistry = getToolRegistry();
-    const showToolDetails = this.configManager.get('showToolDetails') || false;
-    const indent = this.getIndent();
-
-    // Prepare all tool calls (include id for tool result matching)
-    const preparedToolCalls = toolCalls.map((toolCall, index) => {
-      const { name, arguments: params } = toolCall.function;
-
-      let parsedParams: any;
-      try {
-        parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
-      } catch (e) {
-        parsedParams = params;
-      }
-
-      return { name, params: parsedParams, index, id: toolCall.id };
-    });
-
-    // Display all tool calls info
-    for (const { name, params } of preparedToolCalls) {
-      if (showToolDetails) {
-        console.log('');
-        console.log(`${indent}${colors.warning(`${icons.tool} Tool Call: ${name}`)}`);
-        console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
-      } else {
-        const toolDescription = this.getToolDescription(name, params);
-        console.log('');
-        console.log(`${indent}${colors.textMuted(`${icons.loading} ${toolDescription}`)}`);
-      }
-    }
-
-    // Execute all tools in parallel
-    const results = await toolRegistry.executeAll(
-      preparedToolCalls.map(tc => ({ name: tc.name, params: tc.params })),
-      this.executionMode
-    );
-
-    // Process results and maintain order
-    let hasError = false;
-    for (const { tool, result, error } of results) {
-      const toolCall = preparedToolCalls.find(tc => tc.name === tool);
-      if (!toolCall) continue;
-
-      const { params } = toolCall;
-
-      if (error) {
-        // Clear the operation flag
-        (this as any)._isOperationInProgress = false;
-
-        if (error === 'Operation cancelled by user') {
-          return;
-        }
-
-        hasError = true;
-
-        console.log('');
-        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
-
-        this.conversation.push({
-          role: 'tool',
-          content: JSON.stringify({ error }),
-          tool_call_id: toolCall.id,
-          timestamp: Date.now()
-        });
-      } else {
-        // Use correct indent for gui-subagent tasks
-        const isGuiSubagent = tool === 'task' && params?.subagent_type === 'gui-subagent';
-        const displayIndent = isGuiSubagent ? indent + '  ' : indent;
-
-        // Always show details for todo tools so users can see their task lists
-        const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
-        if (isTodoTool) {
-          console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
-          console.log(this.renderTodoList(result.todos || result.todos, displayIndent));
-          // Show summary if available
-          if (result.message) {
-            console.log(`${displayIndent}${colors.textDim(result.message)}`);
-          }
-        } else if (showToolDetails) {
-          console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
-          console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
-        } else if (result.success === false) {
-          // GUI task or other tool failed
-          console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
-        } else {
-          console.log(`${displayIndent}${colors.success(`${icons.check} Completed`)}`);
-        }
-
-        const toolCallRecord: ToolCall = {
-          tool,
-          params,
-          result,
-          timestamp: Date.now()
-        };
-
-        this.toolCalls.push(toolCallRecord);
-
-        // Record tool output to session manager
-        await this.sessionManager.addOutput({
-          role: 'tool',
-          content: JSON.stringify(result),
-          toolName: tool,
-          toolParams: params,
-          toolResult: result,
-          timestamp: Date.now()
-        });
-
-        this.conversation.push({
-          role: 'tool',
-          content: JSON.stringify(result),
-          tool_call_id: toolCall.id,
-          timestamp: Date.now()
-        });
-      }
-    }
-
-    // Logic: Only skip returning results to main agent when user explicitly cancelled (ESC)
-    // For all other cases (success, failure, errors), always return results for further processing
-    const guiSubagentFailed = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent');
-    const guiSubagentCancelled = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent' && results.some(r => r.tool === 'task' && (r.result as any)?.cancelled === true));
-
-    // If GUI agent was cancelled by user, don't continue generating response
-    // This avoids wasting API calls and tokens on cancelled tasks
-    if (guiSubagentCancelled) {
-      console.log('');
-      console.log(`${indent}${colors.textMuted('GUI task cancelled by user')}`);
-      (this as any)._isOperationInProgress = false;
-      return;
-    }
-
-    // If any tool call failed, throw error to mark task as cancelled
-    if (hasError) {
-      throw new Error('Tool execution failed');
-    }
-
-    // For all other cases (GUI success/failure, other tool errors), return results to main agent
-    // This allows main agent to decide how to handle failures (retry, fallback, user notification, etc.)
-    // Reuse existing taskId instead of generating new one
-    await this.generateRemoteResponse(0, this.currentTaskId || undefined);
   }
 
   /**

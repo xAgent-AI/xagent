@@ -2,8 +2,9 @@ import { EventEmitter } from 'events';
 import https from 'https';
 import axios from 'axios';
 import { ChatMessage, SessionOutput, ToolCall } from './types.js';
-import { ChatCompletionResponse, ChatCompletionOptions, Message } from './ai-client.js';
+import { ChatCompletionResponse, ChatCompletionOptions, Message, renderMarkdown, displayMessages } from './ai-client.js';
 import { getLogger } from './logger.js';
+import { withRetry, RetryConfig } from './retry.js';
 
 const logger = getLogger();
 
@@ -125,7 +126,7 @@ export class RemoteAIClient extends EventEmitter {
           'Authorization': `Bearer ${this.authToken}`
         },
         httpsAgent,
-        timeout: 120000
+        timeout: 300000
       });
 
       // Check for 401 and throw TokenInvalidError
@@ -154,8 +155,16 @@ export class RemoteAIClient extends EventEmitter {
       }
 
       // Provide user-friendly error messages based on status code
+      let shouldRetry = false;
+      let retryMessage = '';
+
       if (error.response) {
         const status = error.response.status;
+
+        // Determine if error is retryable (5xx and 429 are retryable)
+        const isRetryableStatus = (status >= 500 && status < 600) || status === 429;
+        
+        // Build error message
         let errorMessage: string;
         let userFriendlyMessage: string;
 
@@ -170,10 +179,6 @@ export class RemoteAIClient extends EventEmitter {
             errorMessage = 'Payload Too Large';
             userFriendlyMessage = 'Request data is too large. Please reduce input content or screenshot size and try again.';
             break;
-          case 429:
-            errorMessage = 'Too Many Requests';
-            userFriendlyMessage = 'XAgent service rate limit exceeded. Please wait a moment and try again.';
-            break;
           case 500:
             // Try to parse server's detailed error message
             try {
@@ -182,24 +187,24 @@ export class RemoteAIClient extends EventEmitter {
               if (errorData?.error && errorData?.errorType === 'AI_SERVICE_ERROR') {
                 userFriendlyMessage = `${errorData.error}\n\nSuggestion: ${errorData.suggestion}`;
               } else {
-                userFriendlyMessage = errorData?.error || 'Server error. Please try again later. If the problem persists, contact the administrator.';
+                userFriendlyMessage = errorData?.error || 'Server error. Please try again later.';
               }
             } catch {
               errorMessage = 'Internal Server Error';
-              userFriendlyMessage = 'Server error. Please try again later. If the problem persists, contact the administrator.';
+              userFriendlyMessage = 'Server error. Please try again later.';
             }
             break;
           case 502:
             errorMessage = 'Bad Gateway';
-            userFriendlyMessage = 'Gateway error. Service temporarily unavailable. Please try again later.';
+            userFriendlyMessage = 'Service temporarily unavailable. Retrying...';
             break;
           case 503:
             errorMessage = 'Service Unavailable';
-            userFriendlyMessage = 'AI service request timed out. Please try again.';
+            userFriendlyMessage = 'AI service busy. Retrying...';
             break;
           case 504:
             errorMessage = 'Gateway Timeout';
-            userFriendlyMessage = 'Gateway timeout. Please try again later.';
+            userFriendlyMessage = 'Gateway timeout. Retrying...';
             break;
           default:
             try {
@@ -210,18 +215,96 @@ export class RemoteAIClient extends EventEmitter {
             userFriendlyMessage = `Request failed with status code: ${status}`;
         }
 
-        // Print user-friendly error message
-        console.error(`\n❌ Request failed (${status})`);
-        console.error(`   ${userFriendlyMessage}`);
-        if (this.showAIDebugInfo) {
-          console.error(`   Original error: ${errorMessage}`);
+        // For retryable errors (5xx, 429), set flag and continue to retry logic
+        // For non-retryable errors (4xx except 429), throw immediately
+        if (isRetryableStatus) {
+          shouldRetry = true;
+          retryMessage = userFriendlyMessage;
+          console.log(`\n⚠️  ${status}: ${userFriendlyMessage}`);
+          if (this.showAIDebugInfo) {
+            console.log(`   Original error: ${errorMessage}`);
+          }
+        } else {
+          console.error(`\n❌ Request failed (${status}): ${userFriendlyMessage}`);
+          throw new Error(userFriendlyMessage);
         }
-        throw new Error(userFriendlyMessage);
+      } else {
+        // Network error or other error (no response)
+        const isRetryable = this.isRetryableError(error);
+        if (isRetryable) {
+          shouldRetry = true;
+          retryMessage = 'Network error. Retrying...';
+          console.log(`\n⚠️  ${retryMessage}`);
+        } else {
+          throw error;
+        }
       }
 
-      // Network error or other error
-      throw error;
+      // Retry with exponential backoff (infinite retries until success)
+      if (shouldRetry) {
+        const retryResult = await withRetry(async () => {
+          const response = await axios.post(url, requestBody, {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${this.authToken}`
+            },
+            httpsAgent,
+            timeout: 300000
+          });
+
+          if (response.status === 401) {
+            throw new TokenInvalidError('Authentication token is invalid or expired. Please log in again.');
+          }
+
+          return {
+            role: 'assistant' as const,
+            content: response.data.content || '',
+            reasoningContent: response.data.reasoningContent || '',
+            toolCalls: response.data.toolCalls,
+            timestamp: Date.now()
+          };
+        }, { 
+          maxRetries: Infinity,    // 无限重试，直到成功
+          maxTotalTime: 0,         // 不限制总时间
+          baseDelay: 2000,         // 基础延迟 2 秒
+          maxDelay: 30000,         // 最大延迟 30 秒
+          jitter: true,
+          retryOnTimeout: true,
+          retryOn5xx: true,
+          retryOn429: true,
+          backoffMultiplier: 2
+        });
+
+        if (!retryResult.success) {
+          throw retryResult.error || new Error('Retry failed');
+        }
+
+        if (!retryResult.data) {
+          throw new Error('Retry returned empty response');
+        }
+
+        return retryResult.data;
+      }
+
+      // This should never be reached, but TypeScript requires a return
+      throw new Error('Unexpected error state: retry was not triggered and no error was thrown');
     }
+  }
+
+  private isRetryableError(error: any): boolean {
+    // Timeout or network error (no response received)
+    if (error.code === 'ECONNABORTED' || !error.response) {
+      return true;
+    }
+    // 5xx server errors
+    if (error.response?.status && error.response.status >= 500) {
+      return true;
+    }
+    // 429 rate limit
+    if (error.response?.status === 429) {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -325,12 +408,12 @@ export class RemoteAIClient extends EventEmitter {
         console.log('\n┌─────────────────────────────────────────────────────────────┐');
         console.log('│ 🟫 SYSTEM                                                     │');
         console.log('├─────────────────────────────────────────────────────────────┤');
-        console.log(this.renderMarkdown(systemContent).split('\n').map(l => '│ ' + l).join('\n'));
+        console.log(renderMarkdown(systemContent).split('\n').map(l => '│ ' + l).join('\n'));
         console.log('└─────────────────────────────────────────────────────────────┘');
       }
 
       // Display other messages
-      this.displayMessages(otherMsgs);
+      displayMessages(otherMsgs);
 
       console.log('\n📤 Sending request to Remote API...\n');
     }
@@ -343,7 +426,7 @@ export class RemoteAIClient extends EventEmitter {
       context: undefined,
       model: options.model,
       taskId: (options as any).taskId,
-      status: 'begin'  // Mark as beginning of task
+      status: (options as any).status || 'begin'  // Use status from options, default to 'begin'
     });
 
     // Debug output for response
@@ -363,7 +446,7 @@ export class RemoteAIClient extends EventEmitter {
       if (response.reasoningContent) {
         console.log('│ 🧠 REASONING:');
         console.log('│ ───────────────────────────────────────────────────────────');
-        const reasoningLines = this.renderMarkdown(response.reasoningContent).split('\n');
+        const reasoningLines = renderMarkdown(response.reasoningContent).split('\n');
         for (const line of reasoningLines.slice(0, 15)) {
           console.log('│ ' + line.slice(0, 62));
         }
@@ -374,7 +457,7 @@ export class RemoteAIClient extends EventEmitter {
       // Display content
       console.log('│ 💬 CONTENT:');
       console.log('│ ───────────────────────────────────────────────────────────');
-      const lines = this.renderMarkdown(response.content).split('\n');
+      const lines = renderMarkdown(response.content).split('\n');
       for (const line of lines.slice(0, 40)) {
         console.log('│ ' + line.slice(0, 62));
       }
@@ -430,81 +513,6 @@ export class RemoteAIClient extends EventEmitter {
   }
 
   /**
-   * Render markdown text (helper method for debug output)
-   */
-  private renderMarkdown(text: string): string {
-    let result = text;
-    // Code block rendering
-    result = result.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-      return `\n┌─[${lang || 'code'}]\n${code.trim().split('\n').map((l: string) => '│ ' + l).join('\n')}\n└─\n`;
-    });
-    // Inline code rendering
-    result = result.replace(/`([^`]+)`/g, '`$1`');
-    // Bold rendering
-    result = result.replace(/\*\*([^*]+)\*\*/g, '●$1○');
-    // Italic rendering
-    result = result.replace(/\*([^*]+)\*/g, '/$1/');
-    // List rendering
-    result = result.replace(/^- (.*$)/gm, '○ $1');
-    result = result.replace(/^\d+\. (.*$)/gm, '• $1');
-    // Heading rendering
-    result = result.replace(/^### (.*$)/gm, '\n━━━ $1 ━━━\n');
-    result = result.replace(/^## (.*$)/gm, '\n━━━━━ $1 ━━━━━\n');
-    result = result.replace(/^# (.*$)/gm, '\n━━━━━━━ $1 ━━━━━━━\n');
-    // Quote rendering
-    result = result.replace(/^> (.*$)/gm, '│ │ $1');
-    return result;
-  }
-
-  /**
-   * Display messages by category (helper method for debug output)
-   */
-  private displayMessages(messages: ChatMessage[]): void {
-    const roleColors: Record<string, string> = {
-      system: '🟫 SYSTEM',
-      user: '👤 USER',
-      assistant: '🤖 ASSISTANT',
-      tool: '🔧 TOOL'
-    };
-
-    for (let i = 0; i < messages.length; i++) {
-      const msg = messages[i];
-      const role = msg.role as string;
-      const roleLabel = roleColors[role] || `● ${role.toUpperCase()}`;
-
-      console.log(`\n┌─────────────────────────────────────────────────────────────┐`);
-      console.log(`│ ${roleLabel} (${i + 1}/${messages.length})                                          │`);
-      console.log('├─────────────────────────────────────────────────────────────┤');
-
-      // Display reasoning_content (if present) - check both camelCase and snake_case
-      const reasoningContent = (msg as any).reasoningContent || (msg as any).reasoning_content;
-      if (reasoningContent) {
-        console.log('│ 🧠 REASONING:');
-        console.log('│ ───────────────────────────────────────────────────────────');
-        const reasoningLines = this.renderMarkdown(reasoningContent).split('\n');
-        for (const line of reasoningLines.slice(0, 20)) {
-          console.log('│ ' + line.slice(0, 62));
-        }
-        if (reasoningContent.length > 1000) console.log('│ ... (truncated)');
-        console.log('│ ───────────────────────────────────────────────────────────');
-      }
-
-      // Display main content
-      const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-
-      const lines = this.renderMarkdown(content).split('\n');
-      for (const line of lines.slice(0, 50)) {
-        console.log('│ ' + line.slice(0, 62));
-      }
-      if (lines.length > 50) {
-        console.log('│ ... (' + (lines.length - 50) + ' more lines)');
-      }
-
-      console.log('└─────────────────────────────────────────────────────────────┘');
-    }
-  }
-
-  /**
    * Invoke VLM for image understanding
    * @param messages - full messages array (consistent with local mode)
    * @param systemPrompt - system prompt (optional, for reference)
@@ -539,6 +547,22 @@ export class RemoteAIClient extends EventEmitter {
       remoteChatOptions.signal.addEventListener?.('abort', () => controller?.abort());
     }
 
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+
+    // Retry on network errors, timeouts, 5xx, and 429
+    const isRetryable = (error: any): boolean => {
+      if (error.code === 'ECONNABORTED' || !error.response) {
+        return true;
+      }
+      if (error.response?.status && error.response.status >= 500) {
+        return true;
+      }
+      if (error.response?.status === 429) {
+        return true;
+      }
+      return false;
+    };
+
     try {
       const response = await axios.post(this.vlmApi, requestBody, {
         headers: {
@@ -546,7 +570,7 @@ export class RemoteAIClient extends EventEmitter {
           'Authorization': `Bearer ${this.authToken}`
         },
         signal: abortSignal,
-        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        httpsAgent,
         timeout: 120000
       });
 
@@ -561,7 +585,47 @@ export class RemoteAIClient extends EventEmitter {
       if (this.showAIDebugInfo) {
         console.log('[RemoteAIClient] VLM request exception:', error.message);
       }
-      throw error;
+
+      // Check if error is retryable
+      if (!isRetryable(error)) {
+        throw error;
+      }
+
+      // Retry with exponential backoff (infinite retries until success)
+      console.log('[RemoteAIClient] VLM network error, retrying with exponential backoff...');
+      const retryResult = await withRetry(async () => {
+        const response = await axios.post(this.vlmApi, requestBody, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.authToken}`
+          },
+          signal: abortSignal,
+          httpsAgent,
+          timeout: 120000
+        });
+        const data = response.data as RemoteVLMResponse;
+        return data.content || '';
+      }, { 
+        maxRetries: Infinity,    // 无限重试，直到成功
+        maxTotalTime: 0,         // 不限制总时间
+        baseDelay: 2000,         // 基础延迟 2 秒
+        maxDelay: 30000,         // 最大延迟 30 秒
+        jitter: true,
+        retryOnTimeout: true,
+        retryOn5xx: true,
+        retryOn429: true,
+        backoffMultiplier: 2
+      });
+
+      if (!retryResult.success) {
+        throw retryResult.error || new Error('VLM retry failed');
+      }
+
+      if (retryResult.data === undefined) {
+        throw new Error('VLM retry returned empty response');
+      }
+
+      return retryResult.data;
     }
   }
 

@@ -14,7 +14,7 @@ import { getLogger } from './logger.js';
 import { getCancellationManager } from './cancellation.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { InteractiveSession } from './session.js';
-import { ripgrep } from './ripgrep.js';
+import { ripgrep, fdFind } from './ripgrep.js';
 
 const execAsync = promisify(exec);
 
@@ -453,7 +453,7 @@ export interface SearchFilesResult {
 
 export class SearchFilesTool implements Tool {
   name = 'SearchFiles';
-  description = `Search for files matching a glob pattern. This is your PRIMARY tool for finding files by name or extension.
+  description = `Search for files matching a glob pattern using fd. This is your PRIMARY tool for finding files by name or extension.
 
 # When to Use
 - Finding all files of a certain type (*.ts, *.json, *.md)
@@ -494,10 +494,21 @@ export class SearchFilesTool implements Tool {
     const { pattern, path: searchPath = '.', limit = 1000 } = params;
 
     try {
-      const files = await glob(pattern, {
-        cwd: searchPath,
-        ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
+      const output = await fdFind({
+        pattern,
+        path: searchPath,
+        limit
       });
+
+      if (output === 'No files found') {
+        return {
+          files: [],
+          total: 0,
+          truncated: false
+        };
+      }
+
+      const files = output.split('\n').filter(line => line.trim());
 
       const total = files.length;
       const truncated = total > limit;

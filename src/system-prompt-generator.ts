@@ -320,7 +320,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       },
       SearchFiles: {
         name: 'SearchFiles',
-        description: 'Search for files matching a glob pattern by name or extension',
+        description: 'Search for files matching a glob pattern using fd (fast find)',
         parameters: {
           pattern: {
             type: 'string',
@@ -338,14 +338,15 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
             required: false
           }
         },
-        usage: 'Find files by name or extension pattern',
+        usage: 'Find files by name or extension pattern using fast fd tool',
         examples: [
           'Find all TypeScript files: SearchFiles(pattern="**/*.ts")',
           'Find config files: SearchFiles(pattern="**/config.*")'
         ],
         bestPractices: [
           'Use **/*.ts for recursive search',
-          'Combine with Read to examine found files'
+          'Combine with Read to examine found files',
+          'fd automatically respects .gitignore'
         ]
       },
       DeleteFile: {

@@ -21,6 +21,8 @@ const DEFAULT_SETTINGS: Settings = {
   guiSubagentApiKey: '',
   searchApiKey: '',
   skillsPath: '',  // Will be auto-detected if not set
+  userSkillsPath: '',  // Will be auto-detected to ~/.xagent/skills if not set
+  userNodeModulesPath: '',  // Will be auto-detected to ~/.xagent/node_modules if not set
   workspacePath: '',  // Will be auto-detected if not set
   executionMode: ExecutionMode.SMART,
   approvalMode: ExecutionMode.SMART,
@@ -240,6 +242,30 @@ export class ConfigManager {
 
   setSkillsPath(path: string): void {
     this.settings.skillsPath = path;
+  }
+
+  getUserSkillsPath(): string | undefined {
+    if (this.settings.userSkillsPath) {
+      return this.settings.userSkillsPath;
+    }
+    // Auto-detect: ~/.xagent/skills
+    return path.join(os.homedir(), '.xagent', 'skills');
+  }
+
+  setUserSkillsPath(path: string): void {
+    this.settings.userSkillsPath = path;
+  }
+
+  getUserNodeModulesPath(): string | undefined {
+    if (this.settings.userNodeModulesPath) {
+      return this.settings.userNodeModulesPath;
+    }
+    // Auto-detect: ~/.xagent/node_modules
+    return path.join(os.homedir(), '.xagent', 'node_modules');
+  }
+
+  setUserNodeModulesPath(path: string): void {
+    this.settings.userNodeModulesPath = path;
   }
 
   private readConfigFile(filePath: string): Partial<Settings> {

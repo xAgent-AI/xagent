@@ -102,6 +102,9 @@ export class SlashCommandHandler {
       case 'mcp':
         await this.handleMcp(args);
         break;
+      case 'skills':
+        await this.handleSkills(args);
+        break;
       case 'vlm':
         await this.handleVlm();
         break;
@@ -248,6 +251,12 @@ export class SlashCommandHandler {
         desc: 'Manage MCP servers',
         detail: 'Manage Model Context Protocol servers',
         example: '/mcp list\n/mcp add server-name'
+      },
+      {
+        cmd: '/skills [list|add|remove|install-deps]',
+        desc: 'Manage user skills',
+        detail: 'Install, list, or remove user skills from ~/.xagent/skills',
+        example: '/skills list\n/skills add ./my-skill\n/skills remove my-skill\n/skills install-deps'
       },
       {
         cmd: '/vlm',
@@ -1350,6 +1359,88 @@ export class SlashCommandHandler {
       default:
         console.log(chalk.red(`❌ Unknown action: ${action}`));
         console.log(chalk.gray('Available actions: on, off, max_message, max_token, exec'));
+    }
+  }
+
+  private async handleSkills(args: string[]): Promise<void> {
+    const os = await import('os');
+    const path = await import('path');
+    const { fileURLToPath } = await import('url');
+    const { promises: fs } = await import('fs');
+
+    const action = args[0] || 'list';
+    const userSkillsPath = this.configManager.getUserSkillsPath() || path.join(os.homedir(), '.xagent', 'skills');
+
+    switch (action) {
+      case 'list':
+        await this.listUserSkills(userSkillsPath, fs, path);
+        break;
+      case 'add':
+        logger.warn('Use CLI command: xagent skill --add <path>', 'Interactive add not supported');
+        break;
+      case 'remove':
+        logger.warn('Use CLI command: xagent skill -r <name>', 'Interactive remove not supported');
+        break;
+      case 'install-deps':
+        logger.warn('Use CLI command: xagent skill --install-deps', 'Interactive install not supported');
+        break;
+      default:
+        console.log(chalk.cyan('\n🔧 User Skills Management:\n'));
+        console.log(`  Skills directory: ${chalk.yellow(userSkillsPath)}\n`);
+        console.log(chalk.gray('Available commands:'));
+        console.log(chalk.gray('  /skills list              - List installed skills'));
+        console.log(chalk.gray('  /skills add <path>        - Add a skill (use CLI: xagent skill --add)'));
+        console.log(chalk.gray('  /skills remove <name>     - Remove a skill (use CLI: xagent skill -r)'));
+        console.log(chalk.gray('  /skills install-deps      - Install dependencies (use CLI: xagent skill --install-deps)'));
+        console.log();
+    }
+  }
+
+  private async listUserSkills(userSkillsPath: string, fs: any, path: any): Promise<void> {
+    console.log(chalk.cyan('\n🔧 User-Installed Skills:\n'));
+
+    try {
+      const entries = await fs.readdir(userSkillsPath, { withFileTypes: true });
+      const skills = entries.filter((e: any) => e.isDirectory());
+
+      if (skills.length === 0) {
+        console.log(chalk.gray('  No user skills installed'));
+        console.log(chalk.cyan('\n  To add a skill, use:'));
+        console.log(chalk.cyan('    xagent skill --add <path-to-skill>\n'));
+        return;
+      }
+
+      for (const skill of skills) {
+        const skillPath = path.join(userSkillsPath, skill.name as string);
+        const skillMdPath = path.join(skillPath, 'SKILL.md');
+
+        try {
+          const content = await fs.readFile(skillMdPath, 'utf-8');
+          const nameMatch = content.match(/^name:\s*(.+)$/m);
+          const descMatch = content.match(/^description:\s*(.+)$/m);
+          const name = nameMatch ? nameMatch[1].trim() : skill.name;
+          const description = descMatch ? descMatch[1].trim() : 'No description';
+
+          console.log(`  ${chalk.cyan('•')} ${chalk.yellow(name)}`);
+          console.log(`    ${chalk.gray(description)}`);
+          console.log();
+        } catch {
+          console.log(`  ${chalk.cyan('•')} ${chalk.yellow(skill.name)}`);
+          console.log(`    ${chalk.gray('(Missing SKILL.md)')}`);
+          console.log();
+        }
+      }
+
+      console.log(chalk.gray(`  Skills directory: ${userSkillsPath}`));
+      console.log();
+    } catch (error: any) {
+      if (error.code === 'ENOENT') {
+        console.log(chalk.gray('  No user skills installed'));
+        console.log(chalk.cyan('\n  To add a skill, use:'));
+        console.log(chalk.cyan('    xagent skill --add <path-to-skill>\n'));
+      } else {
+        console.log(chalk.red(`  Error: ${error.message}`));
+      }
     }
   }
 }

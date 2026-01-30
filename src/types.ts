@@ -91,7 +91,9 @@ export interface Settings {
   guiSubagentBaseUrl?: string;
   guiSubagentApiKey?: string;
   searchApiKey?: string;
-  skillsPath?: string;  // Path to skills directory
+  skillsPath?: string;  // Path to built-in skills directory
+  userSkillsPath?: string;  // Path to user-installed skills directory (~/.xagent/skills)
+  userNodeModulesPath?: string;  // Path to user-installed node_modules (~/.xagent/node_modules)
   workspacePath?: string;  // Path to workspace directory
   executionMode: ExecutionMode;
   approvalMode?: ExecutionMode;

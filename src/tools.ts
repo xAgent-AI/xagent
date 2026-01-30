@@ -283,11 +283,13 @@ export class BashTool implements Tool {
 - \`run_in_bg\`: (Optional) Run in background, default: false
 
 # Examples
+- Install dependencies to user directory: Bash(command="XAGENT_USER_NPM=1 npm install package-name", description="Install npm package to user directory")
 - Install dependencies: Bash(command="npm install", description="Install npm dependencies")
 - Run tests: Bash(command="npm test", description="Run unit tests")
 - Build project: Bash(command="npm run build", description="Build the project")
 
 # Best Practices
+- To install npm packages that persist across sessions, use: \`XAGENT_USER_NPM=1 npm install <package>\`
 - Always provide a description for context
 - Set appropriate timeout for long-running commands
 - Use run_in_bg=true for commands that take a long time
@@ -308,7 +310,7 @@ export class BashTool implements Tool {
     // Only use cwd if the command doesn't contain 'cd' (let LLM control directory)
     let effectiveCwd: string | undefined;
     const hasCdCommand = /cd\s+["']?[^"&|;]+["']?/.test(command);
-    
+
     if (cwd && !hasCdCommand) {
       // Command doesn't control its own directory, use provided cwd
       effectiveCwd = cwd;
@@ -319,19 +321,72 @@ export class BashTool implements Tool {
       // No cwd provided, use default
       effectiveCwd = undefined;
     }
-    
-    // Set up environment with NODE_PATH only for node commands
-    const nodeModulesPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules');
-    const env = {
+
+    // Resolve actual working directory
+    const actualCwd = effectiveCwd || process.cwd();
+
+    // Set up environment with NODE_PATH for node commands
+    // Dynamic NODE_PATH based on current working directory
+    const builtinNodeModulesPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules');
+
+    // Get user skills path from config
+    const { getConfigManager } = await import('./config.js');
+    const configManager = getConfigManager();
+    const userSkillsPath = configManager.getUserSkillsPath();
+
+    // Determine which node_modules to use
+    let skillNodeModulesPath: string | null = null;
+
+    // Check if we're inside a user skill directory
+    if (userSkillsPath && actualCwd.startsWith(userSkillsPath)) {
+      // Find the skill root directory
+      const relativePath = actualCwd.substring(userSkillsPath.length);
+      const pathParts = relativePath.split(path.sep).filter(Boolean);
+
+      if (pathParts.length > 0) {
+        // Assume first part is the skill name
+        const skillName = pathParts[0];
+        const skillRoot = path.join(userSkillsPath, skillName);
+
+        // Check if this looks like a skill directory (has SKILL.md)
+        try {
+          const skillMdPath = path.join(skillRoot, 'SKILL.md');
+          await fs.access(skillMdPath);
+          skillNodeModulesPath = path.join(skillRoot, 'node_modules');
+        } catch {
+          // Not a skill directory, skip
+        }
+      }
+    }
+
+    // Build NODE_PATH - skill's node_modules takes precedence if available
+    let nodePath: string;
+    if (skillNodeModulesPath) {
+      nodePath = `${skillNodeModulesPath};${builtinNodeModulesPath}`;
+    } else {
+      nodePath = builtinNodeModulesPath;
+    }
+
+    const env: Record<string, string> = {
       ...process.env,
-      NODE_PATH: nodeModulesPath
+      NODE_PATH: nodePath
     };
-    
+
+    // Handle npm install commands
+    const isNpmInstall = /\bnpm\s+install\b/i.test(command);
+    let finalCommand = command;
+
+    if (isNpmInstall && skillNodeModulesPath) {
+      // Install to skill's own node_modules
+      await fs.mkdir(skillNodeModulesPath, { recursive: true }).catch(() => {});
+      finalCommand = command.replace(/\bnpm\s+install\b/i, `npm install --prefix "${skillNodeModulesPath}"`);
+    }
+
     // Only add NODE_PATH prefix for node commands
-    const isNodeCommand = /\bnode\b/.test(command);
-    const finalCommand = isNodeCommand 
-      ? `set NODE_PATH=${nodeModulesPath} && ${command}`
-      : command;
+    const isNodeCommand = /\bnode\b/.test(finalCommand);
+    if (isNodeCommand) {
+      finalCommand = `set NODE_PATH=${nodePath} && ${finalCommand}`;
+    }
     
     try {
       if (run_in_bg) {

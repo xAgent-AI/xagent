@@ -101,6 +101,27 @@ function formatError(error: unknown): { message: string; suggestion: string } {
   };
 }
 
+/**
+ * Recursively copy a directory
+ */
+async function copyDirectory(src: string, dest: string): Promise<void> {
+  const entries = await fs.readdir(src, { withFileTypes: true });
+
+  await fs.mkdir(dest, { recursive: true });
+
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+
+    if (entry.isDirectory()) {
+      await copyDirectory(srcPath, destPath);
+    } else if (entry.isFile()) {
+      await fs.copyFile(srcPath, destPath);
+    }
+    // Skip symbolic links for simplicity
+  }
+}
+
 program
   .name('xagent')
   .description('AI-powered command-line assistant')
@@ -387,6 +408,223 @@ program
     } else {
       console.log('');
       console.log(colors.warning('Please specify an action: --list, --add, or --remove'));
+      console.log('');
+    }
+  });
+
+program
+  .command('skill')
+  .description('Manage user-installed skills')
+  .option('-l, --list', 'List all installed user skills')
+  .option('--add <path>', 'Install a skill from local path')
+  .option('-r, --remove <skill-id>', 'Remove a user-installed skill')
+  .action(async (options) => {
+    const { getConfigManager } = await import('./config.js');
+    const configManager = getConfigManager();
+    const { promises: fs } = await import('fs');
+    const pathModule = await import('path');
+    const { exec, spawn } = await import('child_process');
+    const { promisify } = await import('util');
+    const os = await import('os');
+
+    const execAsync = promisify(exec);
+    const userSkillsPath = configManager.getUserSkillsPath() || pathModule.join(os.homedir(), '.xagent', 'skills');
+    const userNodeModulesPath = configManager.getUserNodeModulesPath() || pathModule.join(os.homedir(), '.xagent', 'node_modules');
+
+    if (options.add) {
+      const separator = icons.separator.repeat(40);
+      console.log('');
+      console.log(colors.primaryBright(`${icons.tool} Install Skill`));
+      console.log(colors.border(separator));
+      console.log('');
+
+      const sourcePath = pathModule.resolve(options.add);
+      const skillName = pathModule.basename(sourcePath);
+      const destPath = pathModule.join(userSkillsPath, skillName);
+
+      try {
+        // Check if source exists
+        await fs.access(sourcePath);
+
+        // Check if SKILL.md exists
+        const skillMdPath = pathModule.join(sourcePath, 'SKILL.md');
+        try {
+          await fs.access(skillMdPath);
+        } catch {
+          console.log(colors.error(`SKILL.md not found in ${sourcePath}`));
+          console.log(colors.textMuted('Each skill must have a SKILL.md file'));
+          console.log('');
+          process.exit(1);
+        }
+
+        // Check if skill already exists
+        try {
+          await fs.access(destPath);
+          console.log(colors.warning(`Skill "${skillName}" already installed`));
+          console.log(colors.textMuted(`Use "xagent skill -r ${skillName}" to remove it first`));
+          console.log('');
+          process.exit(1);
+        } catch {
+          // Doesn't exist, proceed
+        }
+
+        // Ensure user skills directory exists
+        await fs.mkdir(userSkillsPath, { recursive: true });
+
+        // Copy the skill
+        await copyDirectory(sourcePath, destPath);
+        console.log(colors.success(`✅ Skill "${skillName}" installed successfully`));
+        console.log(colors.textMuted(`  Location: ${destPath}`));
+        console.log('');
+
+        // Check for package.json and install dependencies to skill's own node_modules
+        const packageJsonPath = pathModule.join(destPath, 'package.json');
+        const skillNodeModulesPath = pathModule.join(destPath, 'node_modules');
+
+        try {
+          await fs.access(packageJsonPath);
+          console.log(colors.textMuted('Processing dependencies...'));
+
+          // Read package.json to get dependencies
+          const packageJsonContent = await fs.readFile(packageJsonPath, 'utf-8');
+          const packageJson = JSON.parse(packageJsonContent);
+          const dependencies = packageJson.dependencies || {};
+          const devDependencies = packageJson.devDependencies || {};
+          const allDependencies = { ...dependencies, ...devDependencies };
+
+          if (Object.keys(allDependencies).length === 0) {
+            console.log(colors.textMuted('No dependencies defined'));
+          } else {
+            // Ensure skill's node_modules exists
+            await fs.mkdir(skillNodeModulesPath, { recursive: true });
+
+            // Get built-in node_modules path
+            const builtinNodeModulesPath = pathModule.resolve(pathModule.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules');
+
+            // Install dependencies to skill's own node_modules
+            // Note: Each skill has its own isolated node_modules
+            const depList = Object.entries(allDependencies)
+              .map(([dep, version]) => `${dep}@${version}`);
+
+            if (depList.length > 0) {
+              console.log(colors.textMuted(`Installing ${depList.length} dependency(ies) to skill's node_modules...`));
+
+              try {
+                await execAsync(`npm install ${depList.join(' ')} --no-save`, {
+                  cwd: destPath,
+                  env: {
+                    ...process.env,
+                    NODE_PATH: `${skillNodeModulesPath};${builtinNodeModulesPath}`
+                  },
+                  timeout: 180000 // 3 minutes
+                });
+
+                for (const dep of depList) {
+                  console.log(colors.success(`  ✓ ${dep} installed`));
+                }
+              } catch (err: any) {
+                console.log(colors.warning(`  ⚠️  Some dependencies failed to install: ${err.message}`));
+              }
+            }
+
+            console.log(colors.success(`✅ Dependencies installed (isolated to skill)`));
+          }
+        } catch {
+          // No package.json, skip
+        }
+
+        console.log('');
+        console.log(colors.textMuted('You can now use this skill in xAgent'));
+        console.log(colors.textMuted(`Restart xAgent if it's already running`));
+        console.log('');
+      } catch (error: any) {
+        const { message, suggestion } = formatError(error);
+        console.log(colors.error(`Failed to install skill: ${message}`));
+        console.log(colors.textMuted(suggestion));
+        console.log('');
+        process.exit(1);
+      }
+    } else if (options.list) {
+      const separator = icons.separator.repeat(40);
+      console.log('');
+      console.log(colors.primaryBright(`${icons.tool} User-Installed Skills`));
+      console.log(colors.border(separator));
+      console.log('');
+
+      try {
+        const entries = await fs.readdir(userSkillsPath, { withFileTypes: true });
+        const skills = entries.filter(e => e.isDirectory());
+
+        if (skills.length === 0) {
+          console.log(colors.textMuted('No user skills installed'));
+          console.log('');
+          return;
+        }
+
+        for (const skill of skills) {
+          const skillPath = path.join(userSkillsPath, skill.name);
+          const skillMdPath = path.join(skillPath, 'SKILL.md');
+
+          try {
+            const content = await fs.readFile(skillMdPath, 'utf-8');
+            // Simple parsing for name and description
+            const nameMatch = content.match(/^name:\s*(.+)$/m);
+            const descMatch = content.match(/^description:\s*(.+)$/m);
+            const name = nameMatch ? nameMatch[1].trim() : skill.name;
+            const description = descMatch ? descMatch[1].trim() : 'No description';
+
+            console.log(`  ${colors.primaryBright(`• ${name}`)}`);
+            console.log(`    ${colors.textDim(`  ${description}`)}`);
+            console.log('');
+          } catch {
+            console.log(`  ${colors.primaryBright(`• ${skill.name}`)}`);
+            console.log(`    ${colors.textDim(`  (Missing SKILL.md)`)}`);
+            console.log('');
+          }
+        }
+
+        console.log(colors.textMuted(`Skills directory: ${userSkillsPath}`));
+        console.log('');
+      } catch (error) {
+        console.log(colors.textMuted('No user skills installed'));
+        console.log('');
+      }
+    } else if (options.remove) {
+      const skillPath = path.join(userSkillsPath, options.remove);
+
+      try {
+        await fs.access(skillPath);
+        // Check if it's a user skill (not built-in)
+        const builtinSkillsPath = configManager.getSkillsPath();
+        if (builtinSkillsPath && skillPath.startsWith(builtinSkillsPath)) {
+          console.log('');
+          console.log(colors.error(`Cannot remove built-in skill: ${options.remove}`));
+          console.log(colors.textMuted('This is a pre-installed skill'));
+          console.log('');
+          process.exit(1);
+        }
+
+        // Remove the skill directory
+        await fs.rm(skillPath, { recursive: true, force: true });
+        console.log('');
+        console.log(colors.success(`✅ Skill ${options.remove} removed successfully`));
+        console.log('');
+      } catch (error) {
+        console.log('');
+        console.log(colors.error(`Skill not found: ${options.remove}`));
+        console.log('');
+        process.exit(1);
+      }
+    } else {
+      // Show help
+      console.log('');
+      console.log(colors.textMuted('Usage:'));
+      console.log(`  ${colors.primaryBright('xagent skill -l')}           ${colors.textDim('| List all user-installed skills')}`);
+      console.log(`  ${colors.primaryBright('xagent skill --add <path>')} ${colors.textDim('| Add a skill from local path')}`);
+      console.log(`  ${colors.primaryBright('xagent skill -r <name>')}    ${colors.textDim('| Remove a user-installed skill')}`);
+      console.log('');
+      console.log(colors.textMuted('To install a new skill, use the interactive command:'));
+      console.log(`  ${colors.primaryBright('/skills add')}`);
       console.log('');
     }
   });

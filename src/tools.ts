@@ -74,6 +74,9 @@ export class ReadTool implements Tool {
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
 
   async execute(params: { filePath: string; offset?: number; limit?: number }): Promise<string> {
+    if (!params || typeof params.filePath !== 'string') {
+      throw new Error('filePath is required and must be a string');
+    }
     const { filePath, offset = 0, limit } = params;
 
     try {
@@ -90,13 +93,22 @@ export class ReadTool implements Tool {
       }
       const absolutePath = path.resolve(resolvedPath);
       const content = await fs.readFile(absolutePath, 'utf-8');
-      
+
       const lines = content.split('\n');
+      const totalLines = lines.length;
       const startLine = Math.max(0, offset);
-      const endLine = limit !== undefined ? Math.min(lines.length, startLine + limit) : lines.length;
+      const endLine = limit !== undefined ? Math.min(totalLines, startLine + limit) : totalLines;
       const selectedLines = lines.slice(startLine, endLine);
-      
-      return selectedLines.join('\n');
+      const result = selectedLines.join('\n');
+
+      // Add truncation notice if content is limited
+      if (limit !== undefined && endLine < totalLines) {
+        const remaining = totalLines - endLine;
+        const nextOffset = endLine;
+        return result + `\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue]`;
+      }
+
+      return result;
     } catch (error: any) {
       // Show user-friendly path in error message
       let displayPath = filePath;

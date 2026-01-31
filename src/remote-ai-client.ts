@@ -19,7 +19,6 @@ export class TokenInvalidError extends Error {
 }
 
 export interface RemoteChatOptions {
-  model?: string;
   taskId?: string;
   status?: 'begin' | 'continue' | 'end' | 'cancel';
   conversationId?: string;
@@ -100,9 +99,6 @@ export class RemoteAIClient extends EventEmitter {
       status: remoteChatOptions.status || 'begin',
       conversationId: remoteChatOptions.conversationId,
       context: remoteChatOptions.context,
-      options: {
-        model: remoteChatOptions.model
-      },
       toolResults: remoteChatOptions.toolResults,
       tools: remoteChatOptions.tools
     };
@@ -396,7 +392,6 @@ export class RemoteAIClient extends EventEmitter {
       tools: options.tools as any,
       toolResults: undefined,
       context: undefined,
-      model: options.model,
       taskId: (options as any).taskId,
       status: (options as any).status || 'begin'  // Use status from options, default to 'begin'
     });
@@ -500,10 +495,7 @@ export class RemoteAIClient extends EventEmitter {
       messages,  // Pass complete messages array
       taskId: remoteChatOptions.taskId,
       status: remoteChatOptions.status || 'begin',
-      context: remoteChatOptions.context,
-      options: {
-        model: remoteChatOptions.model
-      }
+      context: remoteChatOptions.context
     };
 
     if (this.showAIDebugInfo) {

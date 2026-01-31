@@ -766,16 +766,19 @@ export class InteractiveSession {
       this.conversation,
       compressionConfig
     );
-    // 从 reason 中提取阈值信息 - 查找 "budget (" 后面的数字
-    const thresholdMatch = reason.match(/budget\s*\((\d+)/);
-    const threshold = thresholdMatch ? parseInt(thresholdMatch[1], 10) : '?';
 
     if (!needsCompression) {
       return;
     }
 
+    // Extract threshold and contextWindow from reason
+    const thresholdMatch = reason.match(/budget\s*\((\d+)/);
+    const contextWindowMatch = reason.match(/contextWindow:\s*(\d+)/);
+    const threshold = thresholdMatch ? parseInt(thresholdMatch[1], 10) : 0;
+    const contextWindow = contextWindowMatch ? parseInt(contextWindowMatch[1], 10) : 0;
+
     console.log('');
-    console.log(`${indent}${colors.info(`${icons.sparkles} Compressing context...`)}`);
+    console.log(`${indent}${colors.success(`${icons.sparkles} Compressing context (${currentMessages} messages, ${tokenCount.toLocaleString()} > ${threshold.toLocaleString()} / ${contextWindow.toLocaleString()})...`)}`);
 
     const toolRegistry = getToolRegistry();
     const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';

@@ -774,6 +774,9 @@ export class InteractiveSession {
       return;
     }
 
+    console.log('');
+    console.log(`${indent}${colors.info(`${icons.brain} Compressing context...`)}`);
+
     const toolRegistry = getToolRegistry();
     const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
     const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
@@ -788,6 +791,7 @@ export class InteractiveSession {
     if (result.wasCompressed) {
       this.conversation = result.compressedMessages;
       const reductionPercent = Math.round((1 - result.compressedSize / result.originalSize) * 100);
+      console.log(`${indent}${colors.success(`${icons.success} Compressed ${result.originalMessageCount} → ${result.compressedMessageCount} messages (${reductionPercent}% smaller)`)}`);
 
       // Display compressed summary content
       // Summary is embedded in first user message, look for it

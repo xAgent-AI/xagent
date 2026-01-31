@@ -778,7 +778,7 @@ export class InteractiveSession {
     const contextWindow = contextWindowMatch ? parseInt(contextWindowMatch[1], 10) : 0;
 
     console.log('');
-    console.log(`${indent}${colors.success(`${icons.sparkles} Compressing context (${currentMessages} messages, ${tokenCount.toLocaleString()} > ${threshold.toLocaleString()} / ${contextWindow.toLocaleString()})...`)}`);
+    console.log(`${indent}${colors.success(`${icons.sparkles} Compressing context (${currentMessages} messages, ${tokenCount.toLocaleString()} > ${threshold.toLocaleString()}/${contextWindow.toLocaleString()} tokens)...`)}`);
 
     const toolRegistry = getToolRegistry();
     const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';

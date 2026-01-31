@@ -684,14 +684,8 @@ export class InteractiveSession {
       timestamp: Date.now()
     };
 
-    // Save last user message for recovery after compression
-    const lastUserMessage = userMessage;
-
     this.conversation.push(userMessage);
     await this.conversationManager.addMessage(userMessage);
-
-    // Check if context compression is needed
-    await this.checkAndCompressContext(lastUserMessage);
 
     // Use remote AI client if available (OAuth XAGENT mode)
     const currentSelectedAuthType = this.configManager.get('selectedAuthType');
@@ -758,70 +752,112 @@ export class InteractiveSession {
   /**
    * Check and compress conversation context
    */
-  private async checkAndCompressContext(lastUserMessage?: ChatMessage): Promise<void> {
+  private async checkAndCompressContext(): Promise<void> {
     const compressionConfig = this.configManager.getContextCompressionConfig();
 
     if (!compressionConfig.enabled) {
       return;
     }
 
-    const { needsCompression, reason } = this.contextCompressor.needsCompression(
+    const indent = this.getIndent();
+    const currentTokens = this.contextCompressor.estimateContextTokens(this.conversation);
+    const currentMessages = this.conversation.length;
+    const { needsCompression, reason, tokenCount } = this.contextCompressor.needsCompression(
       this.conversation,
       compressionConfig
     );
+    // 从 reason 中提取阈值信息 - 查找 "budget (" 后面的数字
+    const thresholdMatch = reason.match(/budget\s*\((\d+)/);
+    const threshold = thresholdMatch ? parseInt(thresholdMatch[1], 10) : '?';
+    console.log(`${indent}[DEBUG] checkAndCompressContext: checking... messages=${currentMessages}, tokens=${currentTokens}/${threshold}`);
+    process.stdout.write('');
 
-    if (needsCompression) {
-      const indent = this.getIndent();
-      console.log('');
-      console.log(`${indent}${colors.warning(`${icons.brain} Context compression triggered: ${reason}`)}`);
+    if (!needsCompression) {
+      console.log(`${indent}[DEBUG] checkAndCompressContext: skip (tokens=${tokenCount})`);
+      process.stdout.write('');
+      return;
+    }
 
-      const toolRegistry = getToolRegistry();
-      const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
-      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
-      const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
+    console.log('');
+    console.log(`${indent}${colors.warning(`${icons.brain} Context compression triggered: ${reason}`)}`);
 
-      const result: CompressionResult = await this.contextCompressor.compressContext(
-        this.conversation,
-        enhancedSystemPrompt,
-        compressionConfig
+    const toolRegistry = getToolRegistry();
+    const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
+    const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+    const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
+
+    const result: CompressionResult = await this.contextCompressor.compressContext(
+      this.conversation,
+      enhancedSystemPrompt,
+      compressionConfig
+    );
+
+    if (result.wasCompressed) {
+      this.conversation = result.compressedMessages;
+      const reductionPercent = Math.round((1 - result.compressedSize / result.originalSize) * 100);
+      console.log(`${indent}[DEBUG] checkAndCompressContext: done - compressed ${result.originalMessageCount} -> ${result.compressedMessageCount} messages, reduction=${reductionPercent}%`);
+      process.stdout.write('');
+      // console.log(`${indent}${colors.success(`✓ Compressed ${result.originalMessageCount} messages to ${result.compressedMessageCount} messages`)}`);
+      console.log(`${indent}${colors.textMuted(`✓ Size: ${result.originalSize} -> ${result.compressedSize} chars (${reductionPercent}% reduction)`)}`);
+
+      // Debug: show compressed message roles and first message content
+      const roleSequence = result.compressedMessages.map(m => m.role).join(' → ');
+      console.log(`${indent}[DEBUG] compressed message roles: ${roleSequence}`);
+      process.stdout.write('');
+
+      // Debug: show first message content (should contain summary)
+      const firstMsg = result.compressedMessages[0];
+      console.log(`${indent}[DEBUG] first message role: ${firstMsg.role}`);
+      console.log(`${indent}[DEBUG] first message content (${firstMsg.content.length} chars):`);
+      console.log(`${indent}${firstMsg.content.replace(/^/gm, indent)}`);
+      process.stdout.write('');
+
+      // Display compressed summary content
+      // Summary is embedded in first user message, look for it
+      let summaryMessage: ChatMessage | undefined = result.compressedMessages.find(m =>
+        m.role === 'assistant' && m.content.includes('Conversation Summary')
       );
 
-      if (result.wasCompressed) {
-        this.conversation = result.compressedMessages;
-        // console.log(`${indent}${colors.success(`✓ Compressed ${result.originalMessageCount} messages to ${result.compressedMessageCount} messages`)}`);
-        console.log(`${indent}${colors.textMuted(`✓ Size: ${result.originalSize} → ${result.compressedSize} chars (${Math.round((1 - result.compressedSize / result.originalSize) * 100)}% reduction)`)}`);
-
-        // Display compressed summary content
-        const summaryMessage = result.compressedMessages.find(m => m.role === 'assistant');
-        if (summaryMessage && summaryMessage.content) {
-          const maxPreviewLength = 800;
-          let summaryContent = summaryMessage.content;
-          const isTruncated = summaryContent.length > maxPreviewLength;
-
-          if (isTruncated) {
-            summaryContent = summaryContent.substring(0, maxPreviewLength) + '\n...';
+      // If not found as assistant message, look for embedded summary in user message
+      if (!summaryMessage) {
+        const userMsgWithSummary = result.compressedMessages.find(m =>
+          m.role === 'user' && m.content.includes('[Previous conversation summarized')
+        );
+        if (userMsgWithSummary) {
+          // Extract summary content from the embedded format
+          const match = userMsgWithSummary.content.match(/\[Previous conversation summarized.*?\]:\n\n(.+?)(?=\n\n---\n\n)/s);
+          if (match) {
+            summaryMessage = {
+              role: 'assistant',
+              content: match[1],
+              timestamp: userMsgWithSummary.timestamp
+            };
           }
-
-          console.log('');
-          console.log(`${indent}${theme.predefinedStyles.title(`${icons.sparkles} Conversation Summary`)}`);
-          const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length * 2);
-          console.log(`${indent}${colors.border(separator)}`);
-          const renderedSummary = renderMarkdown(summaryContent, (process.stdout.columns || 80) - indent.length * 4);
-          console.log(`${indent}${theme.predefinedStyles.dim(renderedSummary).replace(/^/gm, indent)}`);
-          if (isTruncated) {
-            console.log(`${indent}${colors.textMuted(`(... ${summaryMessage.content.length - maxPreviewLength} more chars hidden)`)}`);
-          }
-          console.log(`${indent}${colors.border(separator)}`);
         }
-
-        // Restore user messages after compression, ensuring user message exists for API calls
-        if (lastUserMessage) {
-          this.conversation.push(lastUserMessage);
-        }
-
-        // Sync compressed conversation history to slashCommandHandler
-        this.slashCommandHandler.setConversationHistory(this.conversation);
       }
+      if (summaryMessage && summaryMessage.content) {
+        const maxPreviewLength = 800;
+        let summaryContent = summaryMessage.content;
+        const isTruncated = summaryContent.length > maxPreviewLength;
+
+        if (isTruncated) {
+          summaryContent = summaryContent.substring(0, maxPreviewLength) + '\n...';
+        }
+
+        console.log('');
+        console.log(`${indent}${theme.predefinedStyles.title(`${icons.sparkles} Conversation Summary`)}`);
+        const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length * 2);
+        console.log(`${indent}${colors.border(separator)}`);
+        const renderedSummary = renderMarkdown(summaryContent, (process.stdout.columns || 80) - indent.length * 4);
+        console.log(`${indent}${theme.predefinedStyles.dim(renderedSummary).replace(/^/gm, indent)}`);
+        if (isTruncated) {
+          console.log(`${indent}${colors.textMuted(`(... ${summaryMessage.content.length - maxPreviewLength} more chars hidden)`)}`);
+        }
+        console.log(`${indent}${colors.border(separator)}`);
+      }
+
+      // Sync compressed conversation history to slashCommandHandler
+      this.slashCommandHandler.setConversationHistory(this.conversation);
     }
   }
 
@@ -1054,6 +1090,8 @@ export class InteractiveSession {
 
       if (assistantMessage.tool_calls) {
         await this.handleToolCalls(assistantMessage.tool_calls);
+      } else {
+        await this.checkAndCompressContext();
       }
 
       if (this.checkpointManager.isEnabled()) {
@@ -1062,7 +1100,7 @@ export class InteractiveSession {
           [...this.conversation],
           [...this.toolCalls]
         );
-      }
+      }      
 
       // Operation completed successfully, clear the flag
       (this as any)._isOperationInProgress = false;
@@ -1497,9 +1535,11 @@ export class InteractiveSession {
 
     // Continue based on mode - 统一处理，无论是否有错误
     if (onComplete) {
+      await this.checkAndCompressContext();
       // Remote mode: use provided callback
       await onComplete();
     } else {
+      await this.checkAndCompressContext();
       // Local mode: default behavior - continue with generateResponse
       await this.generateResponse();
     }

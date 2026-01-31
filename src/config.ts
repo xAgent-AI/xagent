@@ -46,10 +46,8 @@ const DEFAULT_SETTINGS: Settings = {
   },
   contextCompression: {
     enabled: true,
-    maxMessages: 30,
-    maxContextSize: 1500000,
-    preserveRecentMessages: 0,
-    enableSummary: true
+    reserveTokens: 20000,
+    trackFileOperations: true
   },
   contextFileName: 'XAGENT.md',
   mcpServers: {},

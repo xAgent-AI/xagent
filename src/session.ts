@@ -796,29 +796,24 @@ export class InteractiveSession {
       const reductionPercent = Math.round((1 - result.compressedSize / result.originalSize) * 100);
       console.log(`${indent}${colors.success(`${icons.success} Compressed ${result.originalMessageCount} → ${result.compressedMessageCount} messages (${reductionPercent}% smaller)`)}`);
 
-      // Display compressed summary content
       // Summary is embedded in first user message, look for it
+      // The format is: "[Conversation Summary - X messages compressed]\n\n${summary}"
       let summaryMessage: ChatMessage | undefined = result.compressedMessages.find(m =>
-        m.role === 'assistant' && m.content.includes('Conversation Summary')
+        m.role === 'user' && m.content.includes('[Conversation Summary')
       );
 
-      // If not found as assistant message, look for embedded summary in user message
-      if (!summaryMessage) {
-        const userMsgWithSummary = result.compressedMessages.find(m =>
-          m.role === 'user' && m.content.includes('[Previous conversation summarized')
-        );
-        if (userMsgWithSummary) {
-          // Extract summary content from the embedded format
-          const match = userMsgWithSummary.content.match(/\[Previous conversation summarized.*?\]:\n\n(.+?)(?=\n\n---\n\n)/s);
-          if (match) {
-            summaryMessage = {
-              role: 'assistant',
-              content: match[1],
-              timestamp: userMsgWithSummary.timestamp
-            };
-          }
+      if (summaryMessage) {
+        // Extract summary content after the header
+        const match = summaryMessage.content.match(/\[Conversation Summary.*?\]:\n\n(.+)/s);
+        if (match) {
+          summaryMessage = {
+            role: 'assistant',
+            content: match[1],
+            timestamp: summaryMessage.timestamp
+          };
         }
       }
+
       if (summaryMessage && summaryMessage.content) {
         const maxPreviewLength = 800;
         let summaryContent = summaryMessage.content;

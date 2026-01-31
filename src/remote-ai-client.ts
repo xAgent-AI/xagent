@@ -20,7 +20,7 @@ export class TokenInvalidError extends Error {
 
 export interface RemoteChatOptions {
   taskId?: string;
-  status?: 'begin' | 'continue' | 'end' | 'cancel';
+  status?: 'begin' | 'continue' | 'end' | 'cancel' | 'timeout' | 'failure';
   conversationId?: string;
   context?: {
     cwd?: string;
@@ -338,6 +338,40 @@ export class RemoteAIClient extends EventEmitter {
       });
     } catch (error) {
       console.error('[RemoteAIClient] Failed to mark task as cancelled:', error);
+    }
+  }
+
+  /**
+   * Mark task as failed with specific reason
+   * @param taskId - Task ID
+   * @param reason - Failure reason: 'timeout' (LLM timeout) or 'failure' (LLM/tool error)
+   */
+  async failTask(taskId: string, reason: 'timeout' | 'failure'): Promise<void> {
+    if (!taskId) return;
+
+    logger.debug(`[RemoteAIClient] failTask called: taskId=${taskId}, reason=${reason}`);
+
+    const url = `${this.agentApi}/chat`;
+    const requestBody = {
+      taskId,
+      status: reason,
+      messages: [],
+      options: {}
+    };
+
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+
+    try {
+      await axios.post(url, requestBody, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.authToken}`
+        },
+        httpsAgent
+      });
+      logger.debug(`[RemoteAIClient] failTask successfully: taskId=${taskId}, reason=${reason}`);
+    } catch (error) {
+      console.error(`[RemoteAIClient] Failed to mark task as ${reason}:`, error);
     }
   }
 

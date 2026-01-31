@@ -1062,17 +1062,21 @@ export class InteractiveSession {
       (this as any)._isOperationInProgress = false;
 
       if (error.message === 'Operation cancelled by user') {
-        // Mark task as cancelled
+        // 用户手动取消 → 发送 cancel
         if (this.remoteAIClient && this.currentTaskId) {
           await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
         }
         return;
       }
 
-      // Mark task as cancelled when error occurs (发送 status: 'cancel')
-      logger.debug(`[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}`);
+      // 区分错误类型：timeout vs 其他失败
+      const isTimeout = error.message.includes('timeout') || 
+                        error.message.includes('Timeout');
+      const failureReason = isTimeout ? 'timeout' : 'failure';
+
+      logger.debug(`[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}, reason: ${failureReason}`);
       if (this.remoteAIClient && this.currentTaskId) {
-        await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
+        await this.remoteAIClient.failTask(this.currentTaskId, failureReason).catch(() => {});
       }
 
       console.log(colors.error(`Error: ${error.message}`));
@@ -1176,10 +1180,14 @@ export class InteractiveSession {
         return this.generateRemoteResponse(thinkingTokens);
       }
 
-      // Mark task as cancelled when error occurs (发送 status: 'cancel')
-      logger.debug(`[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}`);
+      // 区分错误类型：timeout vs 其他失败
+      const isTimeout = error.message.includes('timeout') || 
+                        error.message.includes('Timeout');
+      const failureReason = isTimeout ? 'timeout' : 'failure';
+
+      logger.debug(`[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}, reason: ${failureReason}`);
       if (this.remoteAIClient && this.currentTaskId) {
-        await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
+        await this.remoteAIClient.failTask(this.currentTaskId, failureReason).catch(() => {});
       }
 
       console.log(colors.error(`Error: ${error.message}`));

@@ -244,6 +244,23 @@ export function parseActionVlm(
           ] = trimmedParam;
         }
       }
+    } else {
+      // Check if rawStr is a natural language completion message
+      const completionKeywords = ['完成', '成功', '已经', '完毕', 'done', 'completed', 'success', 'finished'];
+      const trimmedRawStr = rawStr.trim();
+      const isCompletionMessage = completionKeywords.some(keyword => 
+        trimmedRawStr.toLowerCase().includes(keyword.toLowerCase())
+      ) && (
+        trimmedRawStr.length < 200 || // Reasonable length for a completion message
+        !rawStr.includes('Action:') && // No actual action format
+        !rawStr.match(/\(\s*\w+\s*=/) // No function call pattern
+      );
+
+      if (isCompletionMessage) {
+        // Return a finished action to terminate the task
+        actionType = 'finished';
+        actionInputs = { content: trimmedRawStr };
+      }
     }
 
     actions.push({

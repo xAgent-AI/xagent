@@ -51,14 +51,27 @@ export enum GUIAgentStatus {
  * Remote VLM Caller callback function type
  * Inject this function externally to handle VLM calls, GUI Agent doesn't need to know VLM implementation details
  * Receives full messages array (same as local mode) for consistent behavior
+ * @param messages - Full messages array
+ * @param systemPrompt - System prompt (for reference)
+ * @param taskId - Task identifier for backend tracking
+ * @param isFirstVlmCallRef - Reference object to track and update first VLM call state
  */
-export type RemoteVlmCaller = (messages: any[], systemPrompt: string) => Promise<string>;
+export type RemoteVlmCaller = (messages: any[], systemPrompt: string, taskId: string, isFirstVlmCallRef: { current: boolean }) => Promise<string>;
 
 export interface GUIAgentConfig<T extends Operator> {
   operator: T;
   model?: string;
   modelBaseUrl?: string;
   modelApiKey?: string;
+  /**
+   * Task identifier for VLM state tracking (begin vs continue)
+   */
+  taskId?: string;
+  /**
+   * Shared ref object to track first VLM call across createGUISubAgent calls
+   * Must be passed from outside to properly track VLM status across loop iterations
+   */
+  isFirstVlmCallRef?: { current: boolean };
   /**
    * Externally injected VLM caller function
    * If this function is provided, GUI Agent will use it to call VLM
@@ -133,6 +146,8 @@ export class GUIAgent<T extends Operator> {
   private readonly model: string;
   private readonly modelBaseUrl: string;
   private readonly modelApiKey: string;
+  private readonly taskId: string;
+  private readonly isFirstVlmCallRef?: { current: boolean };
   private readonly remoteVlmCaller?: RemoteVlmCaller;
   private readonly isLocalMode: boolean;
   private readonly systemPrompt: string;
@@ -149,12 +164,15 @@ export class GUIAgent<T extends Operator> {
   private resumePromise: Promise<void> | null = null;
   private resolveResume: (() => void) | null = null;
   private isStopped = false;
+  private isFirstVlmCall = true;
 
   constructor(config: GUIAgentConfig<T>) {
     this.operator = config.operator;
     this.model = config.model || '';
     this.modelBaseUrl = config.modelBaseUrl || '';
     this.modelApiKey = config.modelApiKey || '';
+    this.taskId = config.taskId || crypto.randomUUID();
+    this.isFirstVlmCallRef = config.isFirstVlmCallRef;
     this.remoteVlmCaller = config.remoteVlmCaller;
     this.isLocalMode = config.isLocalMode;
     this.loopIntervalInMs = config.loopIntervalInMs || 0;
@@ -167,6 +185,14 @@ export class GUIAgent<T extends Operator> {
     this.retry = config.retry;
 
     this.systemPrompt = config.systemPrompt || this.buildSystemPrompt();
+  }
+
+  /**
+   * Set isFirstVlmCall to false after first VLM call
+   * Called by external code after remoteVlmCaller completes first call
+   */
+  public setIsFirstVlmCall(value: boolean): void {
+    this.isFirstVlmCall = value;
   }
 
   /**
@@ -1014,8 +1040,15 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         this.debugRequest(messages, remoteVlmCaller);
       }
 
-      // Use externally injected VLM caller function with full messages (same as local mode)
-      const prediction = await remoteVlmCaller(messages, this.systemPrompt);
+      // Use shared ref from config for tracking first VLM call across createGUISubAgent calls
+      // If no shared ref provided, fall back to local tracking
+      const isFirstVlmCallRef = this.isFirstVlmCallRef || { current: this.isFirstVlmCall };
+
+      // Pass taskId and isFirstVlmCallRef for proper status tracking
+      const prediction = await remoteVlmCaller(messages, this.systemPrompt, this.taskId, isFirstVlmCallRef);
+      // Mark subsequent calls as continue (update both local state and shared ref)
+      this.isFirstVlmCall = false;
+      isFirstVlmCallRef.current = false;
 
       // Debug output for model response
       if (this.showAIDebugInfo) {

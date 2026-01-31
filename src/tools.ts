@@ -1355,16 +1355,22 @@ export class TaskTool implements Tool {
    * Create unified VLM caller
    * Uses remote VLM if remoteAIClient is provided, otherwise uses local VLM
    * Both modes receive full messages array for consistent behavior
+   * @param remoteAIClient - Remote AI client for VLM calls
+   * @param taskId - Task identifier for backend tracking
+   * @param localConfig - Local VLM configuration
+   * @param isFirstVlmCallRef - Reference to boolean tracking if this is the first VLM call
+   * @param signal - Abort signal for cancellation
    */
   private createRemoteVlmCaller(
     remoteAIClient: any,
     taskId: string | null,
     localConfig: { baseUrl: string; apiKey: string; modelName: string },
+    isFirstVlmCallRef: { current: boolean },
     signal?: AbortSignal
-  ): (messages: any[], systemPrompt: string) => Promise<string> {
+  ): (messages: any[], systemPrompt: string, taskId: string, isFirstVlmCallRef: { current: boolean }) => Promise<string> {
     // Remote mode: use RemoteAIClient
     if (remoteAIClient) {
-      return this.createRemoteVLMCaller(remoteAIClient, taskId, signal);
+      return this.createRemoteVLMCaller(remoteAIClient, taskId, isFirstVlmCallRef, signal);
     }
 
     // Local mode: use local API
@@ -1374,11 +1380,25 @@ export class TaskTool implements Tool {
   /**
    * Create remote VLM caller using RemoteAIClient
    * Now receives full messages array for consistent behavior with local mode
+   * @param remoteAIClient - Remote AI client
+   * @param taskId - Task identifier for backend tracking
+   * @param isFirstVlmCallRef - Reference to boolean tracking if this is the first VLM call
+   * @param signal - Abort signal for cancellation
    */
-  private createRemoteVLMCaller(remoteAIClient: any, taskId: string | null, signal?: AbortSignal) {
-    return async (messages: any[], systemPrompt: string): Promise<string> => {
+  private createRemoteVLMCaller(
+    remoteAIClient: any,
+    taskId: string | null,
+    isFirstVlmCallRef: { current: boolean },
+    signal?: AbortSignal
+  ): (messages: any[], systemPrompt: string, taskId: string, isFirstVlmCallRef: { current: boolean }) => Promise<string> {
+    return async (messages: any[], systemPrompt: string, _taskId: string, _isFirstVlmCallRef: { current: boolean }): Promise<string> => {
       try {
-        return await remoteAIClient.invokeVLM(messages, systemPrompt, { signal, taskId });
+        // Use the ref to track first call status for the backend
+        const status = isFirstVlmCallRef.current ? 'begin' : 'continue';
+        const result = await remoteAIClient.invokeVLM(messages, systemPrompt, { signal, taskId, status });
+        // Update ref after call so subsequent calls use 'continue'
+        isFirstVlmCallRef.current = false;
+        return result;
       } catch (error: any) {
         throw new Error(`Remote VLM call failed: ${error.message}`);
       }
@@ -1487,8 +1507,11 @@ export class TaskTool implements Tool {
       }
     }
 
+    // Track first VLM call for proper status management
+    const isFirstVlmCallRef = { current: true };
+
     // Create remoteVlmCaller using the unified method (handles both local and remote modes)
-    const remoteVlmCaller = this.createRemoteVlmCaller(remoteAIClient, taskId, { baseUrl, apiKey, modelName });
+    const remoteVlmCaller = this.createRemoteVlmCaller(remoteAIClient, taskId, { baseUrl, apiKey, modelName }, isFirstVlmCallRef);
 
     // Set up stdin polling for ESC cancellation
     let rawModeEnabled = false;
@@ -1551,6 +1574,8 @@ export class TaskTool implements Tool {
         model: !isRemoteMode ? modelName : undefined,
         modelBaseUrl: !isRemoteMode ? baseUrl : undefined,
         modelApiKey: !isRemoteMode ? apiKey : undefined,
+        taskId: taskId || undefined,
+        isFirstVlmCallRef,
         remoteVlmCaller,
         isLocalMode: !isRemoteMode,
         maxLoopCount: 30,

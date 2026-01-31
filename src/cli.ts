@@ -465,12 +465,16 @@ program
 
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
 
+      // Create ref for tracking first VLM call across loop iterations
+      const isFirstVlmCallRef = { current: true };
+
       // Create remoteVlmCaller for remote mode (uses full messages for consistent behavior)
-      let remoteVlmCaller: ((messages: any[], systemPrompt: string) => Promise<string>) | undefined;
+      let remoteVlmCaller: ((messages: any[], systemPrompt: string, taskId: string, isFirstVlmCallRef: { current: boolean }) => Promise<string>) | undefined;
 
       if (!isLocalMode && authConfig.baseUrl) {
         const remoteBaseUrl = `${authConfig.baseUrl}/api/agent/vlm`;
-        remoteVlmCaller = async (messages: any[], _systemPrompt: string): Promise<string> => {
+        remoteVlmCaller = async (messages: any[], _systemPrompt: string, _taskId: string, isFirstVlmCallRef: { current: boolean }): Promise<string> => {
+          const status = isFirstVlmCallRef.current ? 'begin' : 'continue';
           const response = await fetch(remoteBaseUrl, {
             method: 'POST',
             headers: {
@@ -478,7 +482,9 @@ program
               'Authorization': `Bearer ${authConfig.apiKey || ''}`,
             },
             body: JSON.stringify({
-              messages
+              messages,
+              taskId: _taskId,
+              status
             }),
           });
           if (!response.ok) {
@@ -486,6 +492,8 @@ program
             throw new Error(`Remote VLM error: ${response.status} - ${errorText}`);
           }
           const result = await response.json() as { response?: string; content?: string; message?: string };
+          // Update ref after call so subsequent calls use 'continue'
+          isFirstVlmCallRef.current = false;
           return result.response || result.content || result.message || '';
         };
       }
@@ -495,6 +503,7 @@ program
         model: isLocalMode ? modelName : undefined,
         modelBaseUrl: isLocalMode ? baseUrl : undefined,
         modelApiKey: isLocalMode ? apiKey : undefined,
+        isFirstVlmCallRef,
         remoteVlmCaller,
         isLocalMode,
       });

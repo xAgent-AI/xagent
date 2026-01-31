@@ -905,7 +905,7 @@ export class InteractiveSession {
         client.chatCompletion(messages, {
           ...options,
           taskId,
-          status,
+          status: options.isFirstApiCall ? 'begin' : 'continue',
           llmProvider: authConfig.remote_llmProvider,
           vlmProvider: authConfig.remote_vlmProvider
         }),
@@ -942,7 +942,11 @@ export class InteractiveSession {
     if (customAIClient) {
       // Custom client (used by remote mode) - pass taskId and status
       chatCompletion = (messages: ChatMessage[], options: any) =>
-        customAIClient.chatCompletion(messages as any, { ...options, taskId, status });
+        customAIClient.chatCompletion(messages as any, { 
+          ...options, 
+          taskId, 
+          isFirstApiCall: this.isFirstApiCall 
+        });
       isRemote = true;
     } else {
       // Use unified LLM Caller with taskId (automatically selects local or remote mode)

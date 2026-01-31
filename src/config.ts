@@ -26,7 +26,7 @@ const DEFAULT_SETTINGS: Settings = {
   xagentApiBaseUrl: LOCAL_BASE_URL,
   // VLM API - for GUI automation (browser/desktop operations)
   // Use XAGENT_GUI_BASE_URL env var for local development
-  guiSubagentModel: 'Qwen3-Coder',
+  guiSubagentModel: '',
   guiSubagentBaseUrl: `${process.env.XAGENT_GUI_BASE_URL || LOCAL_BASE_URL}/v3`,
   guiSubagentApiKey: '',
   searchApiKey: '',
@@ -59,7 +59,9 @@ const DEFAULT_SETTINGS: Settings = {
   telemetryEnabled: true,
   showToolDetails: false,
   showAIDebugInfo: false,
-  loggerLevel: LogLevel.INFO
+  loggerLevel: LogLevel.INFO,
+  remote_llmProvider: '',   // Remote mode LLM Provider ID
+  remote_vlmProvider: ''    // Remote mode VLM Provider ID
 };
 
 export class ConfigManager {

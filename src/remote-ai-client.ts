@@ -100,7 +100,12 @@ export class RemoteAIClient extends EventEmitter {
       conversationId: remoteChatOptions.conversationId,
       context: remoteChatOptions.context,
       toolResults: remoteChatOptions.toolResults,
-      tools: remoteChatOptions.tools
+      tools: remoteChatOptions.tools,
+      // Pass provider info to backend
+      options: {
+        llmProvider: (remoteChatOptions as any).llmProvider,
+        vlmProvider: (remoteChatOptions as any).vlmProvider
+      }
     };
 
     const url = `${this.agentApi}/chat`;

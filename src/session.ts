@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
-import { ExecutionMode, ChatMessage, ToolCall, AuthType } from './types.js';
+import { ExecutionMode, ChatMessage, ToolCall, AuthType, AuthConfig } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { RemoteAIClient, TokenInvalidError } from './remote-ai-client.js';
 import { getConfigManager, ConfigManager } from './config.js';
@@ -898,9 +898,17 @@ export class InteractiveSession {
    */
   private createRemoteCaller(taskId: string, status: 'begin' | 'continue') {
     const client = this.remoteAIClient!;
+    const authConfig = this.configManager.getAuthConfig() as AuthConfig & { remote_llmProvider?: string; remote_vlmProvider?: string };
+    
     return {
       chatCompletion: (messages: ChatMessage[], options: any) =>
-        client.chatCompletion(messages, { ...options, taskId, status }),
+        client.chatCompletion(messages, {
+          ...options,
+          taskId,
+          status,
+          llmProvider: authConfig.remote_llmProvider,
+          vlmProvider: authConfig.remote_vlmProvider
+        }),
       isRemote: true
     };
   }

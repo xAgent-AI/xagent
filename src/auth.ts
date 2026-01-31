@@ -13,6 +13,8 @@ logger.debug('[AUTH-MODULE] XAGENT_BASE_URL:', process.env.XAGENT_BASE_URL || '(
 // Extended AuthConfig for xAgent with additional fields
 interface XAgentAuthConfig extends AuthConfig {
   xagentApiBaseUrl?: string;
+  remote_llmProvider?: string;   // Remote mode LLM Provider ID
+  remote_vlmProvider?: string;   // Remote mode VLM Provider ID
 }
 
 interface VLMProviderInfo {

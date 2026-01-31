@@ -769,17 +769,10 @@ export class InteractiveSession {
     // 从 reason 中提取阈值信息 - 查找 "budget (" 后面的数字
     const thresholdMatch = reason.match(/budget\s*\((\d+)/);
     const threshold = thresholdMatch ? parseInt(thresholdMatch[1], 10) : '?';
-    console.log(`${indent}[DEBUG] checkAndCompressContext: checking... messages=${currentMessages}, tokens=${currentTokens}/${threshold}`);
-    process.stdout.write('');
 
     if (!needsCompression) {
-      console.log(`${indent}[DEBUG] checkAndCompressContext: skip (tokens=${tokenCount})`);
-      process.stdout.write('');
       return;
     }
-
-    console.log('');
-    console.log(`${indent}${colors.warning(`${icons.brain} Context compression triggered: ${reason}`)}`);
 
     const toolRegistry = getToolRegistry();
     const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
@@ -795,22 +788,6 @@ export class InteractiveSession {
     if (result.wasCompressed) {
       this.conversation = result.compressedMessages;
       const reductionPercent = Math.round((1 - result.compressedSize / result.originalSize) * 100);
-      console.log(`${indent}[DEBUG] checkAndCompressContext: done - compressed ${result.originalMessageCount} -> ${result.compressedMessageCount} messages, reduction=${reductionPercent}%`);
-      process.stdout.write('');
-      // console.log(`${indent}${colors.success(`✓ Compressed ${result.originalMessageCount} messages to ${result.compressedMessageCount} messages`)}`);
-      console.log(`${indent}${colors.textMuted(`✓ Size: ${result.originalSize} -> ${result.compressedSize} chars (${reductionPercent}% reduction)`)}`);
-
-      // Debug: show compressed message roles and first message content
-      const roleSequence = result.compressedMessages.map(m => m.role).join(' → ');
-      console.log(`${indent}[DEBUG] compressed message roles: ${roleSequence}`);
-      process.stdout.write('');
-
-      // Debug: show first message content (should contain summary)
-      const firstMsg = result.compressedMessages[0];
-      console.log(`${indent}[DEBUG] first message role: ${firstMsg.role}`);
-      console.log(`${indent}[DEBUG] first message content (${firstMsg.content.length} chars):`);
-      console.log(`${indent}${firstMsg.content.replace(/^/gm, indent)}`);
-      process.stdout.write('');
 
       // Display compressed summary content
       // Summary is embedded in first user message, look for it

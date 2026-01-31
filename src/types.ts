@@ -189,10 +189,6 @@ export interface Session {
 
 export interface CompressionConfig {
   enabled: boolean;
-  maxMessages: number;
-  maxContextSize: number;
-  preserveRecentMessages: number;
-  enableSummary: boolean;
 }
 
 export interface CompressionStats {

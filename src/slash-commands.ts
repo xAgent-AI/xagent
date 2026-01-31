@@ -1242,16 +1242,12 @@ export class SlashCommandHandler {
     console.log(chalk.cyan('\n📦 Context Compression:\n'));
 
     console.log(`  Status: ${config.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`);
-    console.log(`  Max Messages: ${chalk.yellow(config.maxMessages.toString())}`);
-    console.log(`  Max Tokens: ${chalk.yellow(config.maxContextSize.toString())}`);
 
     console.log('');
     console.log(chalk.gray('Usage:'));
     console.log(chalk.gray('  /compress                 - Show current configuration'));
     console.log(chalk.gray('  /compress exec            - Execute compression now'));
     console.log(chalk.gray('  /compress on|off          - Enable/disable compression'));
-    console.log(chalk.gray('  /compress max_message <n> - Set max messages before compression'));
-    console.log(chalk.gray('  /compress max_token <n>   - Set max tokens before compression'));
     console.log('');
   }
 
@@ -1325,41 +1321,9 @@ export class SlashCommandHandler {
         console.log(chalk.green('✅ Context compression disabled'));
         break;
 
-      case 'max_message':
-        if (args[1]) {
-          const maxMessages = parseInt(args[1], 10);
-          if (isNaN(maxMessages) || maxMessages < 1) {
-            console.log(chalk.red('❌ Invalid value for max_message. Must be a positive number.'));
-            return;
-          }
-          config.maxMessages = maxMessages;
-          this.configManager.setContextCompressionConfig(config);
-          await this.configManager.save('global');
-          console.log(chalk.green(`✅ Max messages set to: ${maxMessages}`));
-        } else {
-          console.log(chalk.gray('Usage: /compress max_message <number>'));
-        }
-        break;
-
-      case 'max_token':
-        if (args[1]) {
-          const maxContextSize = parseInt(args[1], 10);
-          if (isNaN(maxContextSize) || maxContextSize < 1000) {
-            console.log(chalk.red('❌ Invalid value for max_token. Must be at least 1000.'));
-            return;
-          }
-          config.maxContextSize = maxContextSize;
-          this.configManager.setContextCompressionConfig(config);
-          await this.configManager.save('global');
-          console.log(chalk.green(`✅ Max tokens set to: ${maxContextSize}`));
-        } else {
-          console.log(chalk.gray('Usage: /compress max_token <number>'));
-        }
-        break;
-
       default:
         console.log(chalk.red(`❌ Unknown action: ${action}`));
-        console.log(chalk.gray('Available actions: on, off, max_message, max_token, exec'));
+        console.log(chalk.gray('Available actions: on, off, exec'));
     }
   }
 }

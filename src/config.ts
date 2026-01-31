@@ -45,11 +45,7 @@ const DEFAULT_SETTINGS: Settings = {
     displayMode: 'compact'
   },
   contextCompression: {
-    enabled: true,
-    maxMessages: 30,
-    maxContextSize: 1500000,
-    preserveRecentMessages: 0,
-    enableSummary: true
+    enabled: true
   },
   contextFileName: 'XAGENT.md',
   mcpServers: {},

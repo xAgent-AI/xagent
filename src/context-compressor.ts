@@ -59,7 +59,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'doubao-1-5-ui-tars-250428': 256000,
 
   // Default fallback
-  'default': 40000
+  'default': 200000
 };
 
 /**

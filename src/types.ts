@@ -189,8 +189,6 @@ export interface Session {
 
 export interface CompressionConfig {
   enabled: boolean;
-  /** Tokens to reserve for new messages (default: 20000) */
-  reserveTokens: number;
   /** Whether to track file operations in summary */
   trackFileOperations: boolean;
 }

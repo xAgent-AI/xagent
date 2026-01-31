@@ -46,7 +46,6 @@ const DEFAULT_SETTINGS: Settings = {
   },
   contextCompression: {
     enabled: true,
-    reserveTokens: 20000,
     trackFileOperations: true
   },
   contextFileName: 'XAGENT.md',

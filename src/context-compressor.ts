@@ -59,7 +59,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'doubao-1-5-ui-tars-250428': 256000,
 
   // Default fallback
-  'default': 40000
+  'default': 200000
 };
 
 /**
@@ -161,8 +161,20 @@ Use this EXACT format:
 1. [Ordered list of what should happen next]
 
 ## Critical Context
-- [Any data, examples, or references needed to continue]
-- [Or "(none)" if not applicable]
+
+### Key Files & Code
+- [File path]: [Brief description of key content/structure]
+- [File path]: [Brief description of key content/structure]
+
+### Execution Results
+- **Files**: [What files were read, written, or edited and key findings]
+- **Commands**: [Key commands run and their outputs]
+- **Search/Analysis**: [Key findings from code search or analysis]
+
+### Project Context
+- [Architecture patterns identified]
+- [Important configurations]
+- [Dependencies or libraries relevant to the task]
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
@@ -201,7 +213,19 @@ Use this EXACT format:
 1. [Update based on current state]
 
 ## Critical Context
-- [Preserve important context, add new if needed]
+
+### Key Files & Code
+- [Preserve existing file info, add new files read]
+- [Include brief descriptions of key code structures]
+
+### Execution Results
+- **Files**: [Preserve file list, add new files read/written/edited]
+- **Commands**: [Preserve outputs, add new command results]
+- **Search/Analysis**: [Preserve findings, add new search results]
+
+### Project Context
+- [Preserve architecture info, add new patterns discovered]
+- [Preserve configs, add new relevant dependencies]
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
@@ -215,7 +239,16 @@ Summarize the prefix to provide context for the retained suffix:
 ## Early Progress
 - [Key decisions and work done in the prefix]
 
-## Context for Suffix
+## Critical Context
+
+### Key Files & Code
+- [File path]: [Brief description of key content/structure]
+
+### Execution Results
+- **Files**: [What files were read, written, or edited in this prefix]
+- **Commands**: [Key commands run and outputs]
+
+### Context for Suffix
 - [Information needed to understand the retained recent work]
 
 Be concise. Focus on what's needed to understand the kept suffix.`;
@@ -224,7 +257,6 @@ export class ContextCompressor {
   private aiClient: AIClient | null = null;
   private defaultConfig: CompressionConfig = {
     enabled: true,
-    reserveTokens: 20000,
     trackFileOperations: true
   };
 
@@ -256,10 +288,11 @@ export class ContextCompressor {
     // Get model context window
     const contextWindow = getModelContextWindow(modelName);
 
-    // Calculate threshold: contextWindow - reserveTokens
-    const threshold = contextWindow - cfg.reserveTokens;
+    // Calculate threshold: 50% of context window reserved for new conversation
+    const reserveTokens = Math.floor(contextWindow * 0.50);
+    const threshold = contextWindow - reserveTokens;
 
-    console.log(`[DEBUG] Compression check: model=${modelName || 'default'}, messages=${messageCount}, tokens=${tokenCount}/${threshold}, reserveTokens=${cfg.reserveTokens}, contextWindow=${contextWindow}`);
+    console.log(`[DEBUG] Compression check: model=${modelName || 'default'}, messages=${messageCount}, tokens=${tokenCount}/${threshold}, reserveTokens=${reserveTokens}, contextWindow=${contextWindow}`);
     process.stdout.write('');  // Force flush
 
     if (tokenCount > threshold) {
@@ -415,32 +448,72 @@ export class ContextCompressor {
       modified: new Set<string>()
     };
 
+    let totalToolCalls = 0;
+    let matchedToolCalls = 0;
+
+    // Normalize tool name (handle both API format and internal format)
+    const isReadTool = (name: string) => name === 'read_file' || name === 'Read';
+    const isWriteTool = (name: string) => name === 'write_file' || name === 'Write';
+    const isEditTool = (name: string) => name === 'Edit';
+    const isDeleteTool = (name: string) => name === 'DeleteFile';
+
+    const getFilePath = (args: any): string => {
+      return args.filePath || args.absolute_path || args.path || '';
+    };
+
     for (const msg of messages) {
+      // Case 1: assistant with toolCalls field
       if (msg.role === 'assistant' && msg.toolCalls) {
         for (const toolCall of msg.toolCalls) {
+          totalToolCalls++;
           const toolName = toolCall.function?.name || '';
           let args = {};
 
           try {
             args = JSON.parse(toolCall.function?.arguments || '{}');
           } catch {
-            try {
-              args = JSON.parse(toolCall.function?.arguments || '{}');
-            } catch {
-              continue;
-            }
+            continue;
           }
 
-          if (toolName === 'read_file' || toolName === 'Read') {
-            const filePath = (args as any).filePath || (args as any).absolute_path || '';
-            if (filePath) fileOps.read.add(filePath);
-          } else if (toolName === 'write_file' || toolName === 'replace' || toolName === 'DeleteFile') {
-            const filePath = (args as any).filePath || (args as any).absolute_path || '';
-            if (filePath) fileOps.modified.add(filePath);
+          const filePath = getFilePath(args);
+          if (!filePath) continue;
+
+          if (isReadTool(toolName)) {
+            fileOps.read.add(filePath);
+            matchedToolCalls++;
+          } else if (isWriteTool(toolName) || isEditTool(toolName) || isDeleteTool(toolName)) {
+            fileOps.modified.add(filePath);
+            matchedToolCalls++;
           }
         }
       }
+
+      // Case 2: tool role with JSON content (like {"name":"Read","parameters":...})
+      if (msg.role === 'tool' && typeof msg.content === 'string') {
+        try {
+          const content = JSON.parse(msg.content);
+          totalToolCalls++;
+          const toolName = content.name || '';
+          const args = content.parameters || {};
+
+          const filePath = getFilePath(args);
+          if (!filePath) continue;
+
+          if (isReadTool(toolName)) {
+            fileOps.read.add(filePath);
+            matchedToolCalls++;
+          } else if (isWriteTool(toolName) || isEditTool(toolName) || isDeleteTool(toolName)) {
+            fileOps.modified.add(filePath);
+            matchedToolCalls++;
+          }
+        } catch {
+          // Not JSON, skip
+        }
+      }
     }
+
+    console.log(`[DEBUG] extractFileOperations: processed ${messages.length} messages, found ${totalToolCalls} toolCalls, matched ${matchedToolCalls}, readFiles=${fileOps.read.size}, modifiedFiles=${fileOps.modified.size}`);
+    process.stdout.write('');
 
     return fileOps;
   }
@@ -725,9 +798,10 @@ export class ContextCompressor {
     }
 
     // Prepare compaction
-    // Reserve 25% of available budget for summary, minimum 1000 tokens
-    const summaryReserveTokens = Math.max(1000, Math.floor((contextWindow - cfg.reserveTokens) * 0.25));
-    const keepRecentTokens = contextWindow - cfg.reserveTokens - summaryReserveTokens;
+    // Reserve 50% of context window for new conversation, 15% for summary
+    const reserveTokens = Math.floor(contextWindow * 0.50);
+    const summaryReserveTokens = Math.max(800, Math.floor((contextWindow - reserveTokens) * 0.15));
+    const keepRecentTokens = contextWindow - reserveTokens - summaryReserveTokens;
     const preparation = this.prepareCompaction(messages, Math.max(0, keepRecentTokens));
 
     if (!preparation) {

@@ -291,9 +291,6 @@ export class ContextCompressor {
     const reserveTokens = Math.floor(contextWindow * 0.50);
     const threshold = contextWindow - reserveTokens;
 
-    console.log(`[DEBUG] Compression check: model=${modelName || 'default'}, messages=${messageCount}, tokens=${tokenCount}/${threshold}, reserveTokens=${reserveTokens}, contextWindow=${contextWindow}`);
-    process.stdout.write('');  // Force flush
-
     if (tokenCount > threshold) {
       return {
         needsCompression: true,
@@ -393,8 +390,6 @@ export class ContextCompressor {
     keepRecentTokens: number
   ): CutPointResult {
     const cutPoints = this.findValidCutPoints(messages, startIndex, endIndex);
-    console.log(`[DEBUG] findCutPoint: cutPoints=[${cutPoints.join(', ')}], keepRecentTokens=${keepRecentTokens}`);
-    process.stdout.write('');
 
     if (cutPoints.length === 0) {
       return { firstKeptEntryIndex: startIndex, turnStartIndex: -1, isSplitTurn: false };
@@ -419,8 +414,6 @@ export class ContextCompressor {
             break;
           }
         }
-        console.log(`[DEBUG] findCutPoint: i=${i}, accumulated=${accumulatedTokens}, selected cutIndex=${cutIndex}`);
-        process.stdout.write('');
         break;
       }
     }
@@ -428,8 +421,6 @@ export class ContextCompressor {
     // Determine if this is a split turn
     const isUserMessage = messages[cutIndex].role === 'user';
     const turnStartIndex = isUserMessage ? -1 : this.findTurnStartIndex(messages, cutIndex, startIndex);
-    console.log(`[DEBUG] findCutPoint: cutIndex=${cutIndex}, role=${messages[cutIndex].role}, isUserMessage=${isUserMessage}, turnStartIndex=${turnStartIndex}, isSplitTurn=${!isUserMessage && turnStartIndex !== -1}`);
-    process.stdout.write('');
 
     return {
       firstKeptEntryIndex: cutIndex,
@@ -511,9 +502,6 @@ export class ContextCompressor {
       }
     }
 
-    console.log(`[DEBUG] extractFileOperations: processed ${messages.length} messages, found ${totalToolCalls} toolCalls, matched ${matchedToolCalls}, readFiles=${fileOps.read.size}, modifiedFiles=${fileOps.modified.size}`);
-    process.stdout.write('');
-
     return fileOps;
   }
 
@@ -583,9 +571,6 @@ export class ContextCompressor {
     // Find cut point
     const cutPoint = this.findCutPoint(messages, startIndex, endIndex, keepRecentTokens);
 
-    console.log(`[DEBUG] prepareCompaction: startIndex=${startIndex}, endIndex=${endIndex}, firstKeptEntryIndex=${cutPoint.firstKeptEntryIndex}, keepRecentTokens=${keepRecentTokens}`);
-    process.stdout.write('');
-
         // Extract messages to summarize
 
         const historyEnd = cutPoint.firstKeptEntryIndex;
@@ -599,12 +584,6 @@ export class ContextCompressor {
           messagesToSummarize.push(messages[i]);
 
         }
-
-    
-
-        console.log(`[DEBUG] prepareCompaction: historyEnd=${historyEnd}, messagesToSummarize.length=${messagesToSummarize.length}`);
-
-        process.stdout.write('');
 
     
 
@@ -779,9 +758,6 @@ export class ContextCompressor {
     const originalTokens = this.estimateContextTokens(messages);
     const contextWindow = getModelContextWindow(modelName);
 
-    console.log(`[DEBUG] compressContext: originalMessages=${originalMessageCount}, originalTokens=${originalTokens}, contextWindow=${contextWindow}`);
-    process.stdout.write('');
-
     // Check if compression is needed
     const { needsCompression } = this.needsCompression(messages, config, modelName);
     if (!needsCompression) {
@@ -865,16 +841,6 @@ export class ContextCompressor {
         }
       }
 
-      console.log(`[DEBUG] compressContext: firstKeptEntryIndex=${firstKeptEntryIndex}, firstKeptUserIndex=${firstKeptUserIndex}, kept messages count=${messages.length - firstKeptEntryIndex}`);
-      process.stdout.write('');
-
-      // Debug: show roles of all kept messages
-      console.log(`[DEBUG] kept messages roles:`);
-      for (let i = firstKeptEntryIndex; i < messages.length; i++) {
-        console.log(`[DEBUG]   [${i}] ${messages[i].role}: ${messages[i].content.substring(0, 50).replace(/\n/g, ' ')}...`);
-      }
-      process.stdout.write('');
-
       if (firstKeptUserMsg) {
         // Prepend summary to first user message content
         const summaryPrefix = `[Previous conversation summarized (${messagesToSummarize.length} messages):]\n${summary}\n\n---\n\n`;
@@ -941,9 +907,6 @@ export class ContextCompressor {
     const compressedSize = compressedMessages.reduce((total, msg) => total + msg.content.length, 0);
     const compressedTokens = this.estimateContextTokens(compressedMessages);
     const reductionPercent = Math.round((1 - compressedSize / originalSize) * 100);
-
-    console.log(`[DEBUG] Compression result: compressedMessages=${compressedMessages.length}, compressedTokens=${compressedTokens}, reduction=${reductionPercent}%`);
-    process.stdout.write('');
 
     return {
       compressedMessages,

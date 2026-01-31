@@ -775,7 +775,7 @@ export class InteractiveSession {
     }
 
     console.log('');
-    console.log(`${indent}${colors.info(`${icons.brain} Compressing context...`)}`);
+    console.log(`${indent}${colors.info(`${icons.sparkles} Compressing context...`)}`);
 
     const toolRegistry = getToolRegistry();
     const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';

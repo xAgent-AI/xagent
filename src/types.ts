@@ -189,8 +189,6 @@ export interface Session {
 
 export interface CompressionConfig {
   enabled: boolean;
-  /** Whether to track file operations in summary */
-  trackFileOperations: boolean;
 }
 
 export interface CompressionStats {

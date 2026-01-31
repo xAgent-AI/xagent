@@ -256,8 +256,7 @@ Be concise. Focus on what's needed to understand the kept suffix.`;
 export class ContextCompressor {
   private aiClient: AIClient | null = null;
   private defaultConfig: CompressionConfig = {
-    enabled: true,
-    trackFileOperations: true
+    enabled: true
   };
 
   constructor(authConfig?: AuthConfig) {

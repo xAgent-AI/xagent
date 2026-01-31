@@ -45,8 +45,7 @@ const DEFAULT_SETTINGS: Settings = {
     displayMode: 'compact'
   },
   contextCompression: {
-    enabled: true,
-    trackFileOperations: true
+    enabled: true
   },
   contextFileName: 'XAGENT.md',
   mcpServers: {},

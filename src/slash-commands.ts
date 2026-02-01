@@ -371,10 +371,10 @@ export class SlashCommandHandler {
     // Clear local conversation history
     this.conversationHistory = [];
 
-    // Clear ConversationManager 中的当前对话
+    // Clear current conversation in ConversationManager
     await this.conversationManager.clearCurrentConversation();
 
-    // Call callback to notify InteractiveSession 清空对话
+    // Call callback to notify InteractiveSession to clear conversation
     if (this.onClearCallback) {
       this.onClearCallback();
     }
@@ -579,7 +579,7 @@ export class SlashCommandHandler {
   }
 
   private async handleVlm(): Promise<void> {
-    // 检查是否为 local 模式（remote 模式使用后端的 VLM 配置）
+    // Check if local mode (remote mode uses backend VLM config)
     const authConfig = this.configManager.getAuthConfig();
     if (authConfig.type === AuthType.OAUTH_XAGENT) {
       console.log(chalk.yellow('\n⚠️  This command is only available in local mode (third-party API).'));
@@ -675,20 +675,20 @@ export class SlashCommandHandler {
   private async handleProvider(): Promise<void> {
     const authConfig = this.configManager.getAuthConfig();
 
-    // 1. 检查是否为 remote 模式
+    // 1. Check if remote mode
     if (authConfig.type !== AuthType.OAUTH_XAGENT) {
       console.log(chalk.yellow('\n⚠️  This command is only available in remote mode.'));
       return;
     }
 
-    // 2. 获取 RemoteAIClient 实例（从 InteractiveSession 获取）
+    // 2. Get RemoteAIClient instance (from InteractiveSession)
     const remoteClient = this.remoteAIClient;
     if (!remoteClient) {
       console.log(chalk.red('\n❌ Remote client not initialized. Please use /auth to configure remote mode first.'));
       return;
     }
 
-    // 3. 显示当前配置
+    // 3. Display current configuration
     const currentLlm = authConfig.remote_llmProvider || 'Not set';
     const currentVlm = authConfig.remote_vlmProvider || 'Not set';
 
@@ -697,7 +697,7 @@ export class SlashCommandHandler {
     console.log(`  ${chalk.yellow('VLM Provider:')} ${currentVlm}`);
     console.log('');
 
-    // 4. 主菜单
+    // 4. Main menu
     const { action } = await inquirer.prompt([
       {
         type: 'list',
@@ -714,14 +714,14 @@ export class SlashCommandHandler {
 
     if (action === 'back') return;
 
-    // 5. 获取默认配置
+    // 5. Get default configuration
     if (action === 'default') {
       try {
         const defaults = await remoteClient.getDefaultModels();
-        // 更新内存配置
+        // Update in-memory config
         await this.configManager.set('remote_llmProvider', defaults.llm.provider);
         await this.configManager.set('remote_vlmProvider', defaults.vlm.provider);
-        // 保存到文件
+        // Save to file
         await this.configManager.save('global');
 
         console.log(chalk.green('\n✅ Default configuration applied!'));
@@ -738,7 +738,7 @@ export class SlashCommandHandler {
       return;
     }
 
-    // 6. 获取并显示 provider 列表
+    // 6. Get and display provider list
     try {
       const models = await remoteClient.getModels();
       const providers = action === 'llm' ? models.llm : models.vlm;
@@ -748,7 +748,7 @@ export class SlashCommandHandler {
         return;
       }
 
-      // 构建选择列表
+      // Build choice list
       const choices = providers.map((p: any) => ({
         name: `${p.providerDisplay} (${p.provider})`,
         value: p.provider
@@ -763,12 +763,18 @@ export class SlashCommandHandler {
         }
       ]);
 
-      // 7. 保存配置（内存立即生效 + 持久化）
+      // 7. Save config (immediate in-memory + persistent)
       const configKey = action === 'llm' ? 'remote_llmProvider' : 'remote_vlmProvider';
       await this.configManager.set(configKey, selectedProvider);
       await this.configManager.save('global');
 
-      // 通知 InteractiveSession 更新 aiClient config
+      // Clear conversation history to avoid tool call ID conflicts between providers
+      // Different models generate different tool_call_id, mixing them causes "tool id not found" errors      if (this.onClearCallback) {
+        this.onClearCallback();
+        console.log(chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between providers.'));
+      }
+
+      // Notify InteractiveSession to update aiClient config
       if (this.onConfigUpdate) {
         this.onConfigUpdate();
       }

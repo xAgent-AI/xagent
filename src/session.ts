@@ -1101,8 +1101,7 @@ export class InteractiveSession {
         }
         return;
       }
-
-      // 区分错误类型：timeout vs 其他失败
+      // Distinguish error types: timeout vs other failures
       const isTimeout = error.message.includes('timeout') || 
                         error.message.includes('Timeout');
       const failureReason = isTimeout ? 'timeout' : 'failure';
@@ -1157,6 +1156,10 @@ export class InteractiveSession {
       (this as any)._isOperationInProgress = false;
 
       if (error.message === 'Operation cancelled by user') {
+        // Notify backend to cancel the task
+        if (this.remoteAIClient && this.currentTaskId) {
+          await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
+        }
         return;
       }
 
@@ -1214,7 +1217,7 @@ export class InteractiveSession {
         return this.generateRemoteResponse(thinkingTokens);
       }
 
-      // 区分错误类型：timeout vs 其他失败
+      // Distinguish error types: timeout vs other failures
       const isTimeout = error.message.includes('timeout') || 
                         error.message.includes('Timeout');
       const failureReason = isTimeout ? 'timeout' : 'failure';
@@ -1279,6 +1282,10 @@ export class InteractiveSession {
 
       if (error) {
         if (error === 'Operation cancelled by user') {
+          // Notify backend to cancel the task
+          if (this.remoteAIClient && this.currentTaskId) {
+            await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
+          }
           (this as any)._isOperationInProgress = false;
           return;
         }
@@ -1288,7 +1295,7 @@ export class InteractiveSession {
         console.log('');
         console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${tool} - ${error}`)}`);
 
-        // 添加详细的错误信息，包含工具名称和参数，便于 AI 理解和修正
+        // Add detailed error info including tool name and params for AI understanding and correction
         this.conversation.push({
           role: 'tool',
           content: JSON.stringify({
@@ -1490,14 +1497,12 @@ export class InteractiveSession {
           timestamp: Date.now()
         });
 
-        // 统一消息格式，包含工具名称和参数
+        // Unified message format with tool name and params
+        // Format: OpenAI-compatible tool result with plain text content
+        // MiniMax requires content to be plain text, not JSON string
         this.conversation.push({
           role: 'tool',
-          content: JSON.stringify({
-            name: tool,
-            parameters: params,
-            result: result
-          }),
+          content: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
           tool_call_id: toolCall.id,
           timestamp: Date.now()
         });
@@ -1517,7 +1522,7 @@ export class InteractiveSession {
       return;
     }
 
-    // Continue based on mode - 统一处理，无论是否有错误
+    // Continue based on mode - unified handling for both success and error cases
     if (onComplete) {
       await this.checkAndCompressContext();
       // Remote mode: use provided callback

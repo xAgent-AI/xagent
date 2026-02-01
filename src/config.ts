@@ -10,24 +10,20 @@ const logger = getLogger();
 // Set these to use local development server instead of cloud
 const CLOUD_BASE_URL = 'https://www.xagent-colife.net';
 const LOCAL_BASE_URL = process.env.XAGENT_BASE_URL || CLOUD_BASE_URL;
-logger.debug('[CONFIG-MODULE] XAGENT_BASE_URL:', process.env.XAGENT_BASE_URL || '(not set)');
-logger.debug('[CONFIG-MODULE] LOCAL_BASE_URL:', LOCAL_BASE_URL);
 
 const DEFAULT_SETTINGS: Settings = {
   theme: 'Default',
   selectedAuthType: AuthType.OAUTH_XAGENT,
   apiKey: '',
   // LLM API - for main conversation and task processing (OpenAI compatible format)
-  // Use XAGENT_BASE_URL env var for local development
-  baseUrl: `${LOCAL_BASE_URL}/v1`,
+  baseUrl: `${CLOUD_BASE_URL}/v1`,
   modelName: 'Qwen3-Coder',
   // xAgent API - for token validation and other backend calls (without /v1)
-  // Use XAGENT_BASE_URL env var for local development
-  xagentApiBaseUrl: LOCAL_BASE_URL,
+  xagentApiBaseUrl: '',
   // VLM API - for GUI automation (browser/desktop operations)
-  // Use XAGENT_GUI_BASE_URL env var for local development
+  // NOTE: guiSubagent* fields are only set when user runs /vlm command
   guiSubagentModel: '',
-  guiSubagentBaseUrl: `${process.env.XAGENT_GUI_BASE_URL || LOCAL_BASE_URL}/v3`,
+  guiSubagentBaseUrl: '',
   guiSubagentApiKey: '',
   searchApiKey: '',
   skillsPath: '',  // Will be auto-detected if not set
@@ -95,17 +91,17 @@ export class ConfigManager {
       logger.debug('[CONFIG] 最终 settings.apiKey:', this.settings.apiKey ? this.settings.apiKey.substring(0, 30) + '...' : 'empty');
       logger.debug('[CONFIG] 最终 settings.refreshToken:', this.settings.refreshToken ? 'exists' : 'empty');
 
-      // Apply environment variables AFTER loading saved config (they take priority)
-      const localBaseUrl = process.env.XAGENT_BASE_URL || CLOUD_BASE_URL;
-      logger.debug('[CONFIG] XAGENT_BASE_URL env:', process.env.XAGENT_BASE_URL || '(not set)');
-      logger.debug('[CONFIG] Using baseUrl:', `${localBaseUrl}/v1`);
-      if (process.env.XAGENT_BASE_URL) {
+      // Apply environment variables AFTER loading saved config
+      // Only apply for remote mode (OAuth XAGENT) - local mode should use user-saved config
+      if (process.env.XAGENT_BASE_URL && this.settings.selectedAuthType === AuthType.OAUTH_XAGENT) {
+        const localBaseUrl = process.env.XAGENT_BASE_URL;
         this.settings.baseUrl = `${localBaseUrl}/v1`;
         this.settings.xagentApiBaseUrl = localBaseUrl;
+        logger.debug('[CONFIG] Applied XAGENT_BASE_URL for remote mode:', localBaseUrl);
       }
       if (process.env.XAGENT_GUI_BASE_URL) {
         this.settings.guiSubagentBaseUrl = `${process.env.XAGENT_GUI_BASE_URL}/v3`;
-        logger.debug('[CONFIG] Applied XAGENT_GUI_BASE_URL env var:', process.env.XAGENT_GUI_BASE_URL);
+        logger.debug('[CONFIG] Applied XAGENT_GUI_BASE_URL:', process.env.XAGENT_GUI_BASE_URL);
       }
 
       logger.debug('[CONFIG] ========== load() 结束 ==========');

@@ -1470,10 +1470,11 @@ export class TaskTool implements Tool {
     console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
     console.log('');
 
-    // Get VLM configuration (used for local mode fallback)
-    const baseUrl = config.get('guiSubagentBaseUrl') || config.get('baseUrl') || '';
-    const apiKey = config.get('guiSubagentApiKey') || config.get('apiKey') || '';
-    const modelName = config.get('guiSubagentModel') || config.get('modelName') || '';
+    // Get VLM configuration for local mode
+    // NOTE: guiSubagentBaseUrl must be explicitly configured, NOT fallback to baseUrl
+    const baseUrl = config.get('guiSubagentBaseUrl') || '';
+    const apiKey = config.get('guiSubagentApiKey') || '';
+    const modelName = config.get('guiSubagentModel') || '';
 
     // Determine mode: remote if remoteAIClient exists, otherwise local
     const isRemoteMode = !!remoteAIClient;
@@ -1483,11 +1484,11 @@ export class TaskTool implements Tool {
       console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
     } else {
       console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
-      // Local mode requires configuration check
-      if (!baseUrl) {
+      // Local mode requires explicit VLM configuration
+      if (!baseUrl || !apiKey || !modelName) {
         return {
           success: false,
-          message: `GUI task "${description}" failed: No valid API URL configured`
+          message: `GUI task "${description}" failed: VLM not configured. Please run /vlm to configure Vision-Language Model first.`
         };
       }
       console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);

@@ -16,7 +16,7 @@ import { getContextCompressor, ContextCompressor, CompressionResult } from './co
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
-import { AuthService } from './auth.js';
+import { AuthService, selectAuthType } from './auth.js';
 
 const logger = getLogger();
 
@@ -31,6 +31,7 @@ export class SlashCommandHandler {
   private conversationHistory: ChatMessage[] = [];
   private onClearCallback: (() => void) | null = null;
   private onSystemPromptUpdate: (() => Promise<void>) | null = null;
+  private onConfigUpdate: (() => void) | null = null;
 
   constructor() {
     this.configManager = getConfigManager(process.cwd());
@@ -54,6 +55,13 @@ export class SlashCommandHandler {
    */
   setSystemPromptUpdateCallback(callback: () => Promise<void>): void {
     this.onSystemPromptUpdate = callback;
+  }
+
+  /**
+   * Set callback for config update (called after /auth changes config)
+   */
+  setConfigUpdateCallback(callback: () => void): void {
+    this.onConfigUpdate = callback;
   }
 
   /**
@@ -371,14 +379,27 @@ export class SlashCommandHandler {
   private async handleAuth(): Promise<void> {
     logger.section('Authentication Management');
 
+    // Show current authentication configuration
+    const authConfig = this.configManager.getAuthConfig();
+    const currentType = authConfig.type === AuthType.OAUTH_XAGENT ? 'xAgent (Remote)' : 'Third-party API (Local)';
+
+    console.log(chalk.cyan('\n📋 Current Authentication Configuration:\n'));
+    console.log(`  ${chalk.yellow('Mode:')} ${currentType}`);
+    if (authConfig.baseUrl) {
+      console.log(`  ${chalk.yellow('API URL:')} ${authConfig.baseUrl}`);
+    }
+    if (authConfig.modelName) {
+      console.log(`  ${chalk.yellow('Model:')} ${authConfig.modelName}`);
+    }
+    console.log('');
+
     const { action } = await inquirer.prompt([
       {
         type: 'list',
         name: 'action',
         message: 'Select action:',
         choices: [
-          { name: 'Change authentication method', value: 'change' },
-          { name: 'Show current auth config', value: 'show' },
+          { name: 'Switch authentication method', value: 'switch' },
           { name: 'Back', value: 'back' }
         ]
       }
@@ -388,22 +409,98 @@ export class SlashCommandHandler {
       return;
     }
 
-    if (action === 'show') {
-      const authConfig = this.configManager.getAuthConfig();
-      logger.subsection('Current Authentication Configuration');
-      console.log(JSON.stringify(authConfig, null, 2));
-    } else if (action === 'change') {
-      const { selectAuthType } = await inquirer.prompt([
+    if (action === 'switch') {
+      // Use the same selection UI as initial setup
+      const { confirmSwitch } = await inquirer.prompt([
         {
           type: 'confirm',
-          name: 'selectAuthType',
-          message: 'Do you want to change authentication type?',
+          name: 'confirmSwitch',
+          message: `Switch from "${currentType}" to another authentication method?`,
           default: false
         }
       ]);
 
-      if (selectAuthType) {
-        logger.warn('Please restart xAgent CLI and run /auth again', 'Authentication changes require restart');
+      if (!confirmSwitch) {
+        return;
+      }
+
+      // Select authentication type (same as initial setup)
+      const authType = await selectAuthType();
+
+      if (authType === AuthType.OAUTH_XAGENT) {
+        // Switch to xAgent (Remote mode)
+        const authService = new AuthService({
+          type: AuthType.OAUTH_XAGENT,
+          apiKey: '',
+          baseUrl: '',
+          xagentApiBaseUrl: authConfig.xagentApiBaseUrl
+        });
+
+        const success = await authService.authenticate();
+        if (success) {
+          // Save the new configuration
+          const newAuthConfig = authService.getAuthConfig();
+          await this.configManager.setAuthConfig({
+            selectedAuthType: newAuthConfig.type,
+            apiKey: newAuthConfig.apiKey,
+            refreshToken: newAuthConfig.refreshToken,
+            baseUrl: newAuthConfig.baseUrl,
+            modelName: newAuthConfig.modelName,
+            xagentApiBaseUrl: newAuthConfig.xagentApiBaseUrl,
+            guiSubagentModel: '',
+            guiSubagentBaseUrl: 'https://www.xagent-colife.net/v3',
+            guiSubagentApiKey: ''
+          });
+          // Clear remote provider settings
+          await this.configManager.set('remote_llmProvider', '');
+          await this.configManager.set('remote_vlmProvider', '');
+          await this.configManager.save('global');
+
+          // Notify InteractiveSession to update aiClient config
+          if (this.onConfigUpdate) {
+            this.onConfigUpdate();
+          }
+
+          console.log(chalk.green('\n✅ Authentication switched to xAgent (Remote mode)!'));
+          console.log(chalk.cyan(`   Token: ${newAuthConfig.apiKey?.substring(0, 20)}...`));
+        }
+      } else {
+        // Switch to Third-party API (Local mode)
+        const authService = new AuthService({
+          type: AuthType.OPENAI_COMPATIBLE,
+          apiKey: '',
+          baseUrl: '',
+          modelName: ''
+        });
+
+        const success = await authService.authenticate();
+        if (success) {
+          // Save the new configuration
+          const newAuthConfig = authService.getAuthConfig();
+          await this.configManager.setAuthConfig({
+            selectedAuthType: newAuthConfig.type,
+            apiKey: newAuthConfig.apiKey,
+            baseUrl: newAuthConfig.baseUrl,
+            modelName: newAuthConfig.modelName,
+            // Clear remote-related fields when switching to local mode
+            xagentApiBaseUrl: '',
+            refreshToken: '',
+            guiSubagentModel: '',
+            guiSubagentBaseUrl: '',
+            guiSubagentApiKey: ''
+          });
+          // Clear remote provider settings when switching to local mode
+          await this.configManager.set('remote_llmProvider', '');
+          await this.configManager.set('remote_vlmProvider', '');
+          await this.configManager.save('global');
+
+          // Notify InteractiveSession to update aiClient config
+          if (this.onConfigUpdate) {
+            this.onConfigUpdate();
+          }
+
+          console.log(chalk.green('\n✅ Authentication switched to Third-party API (Local mode)!'));
+        }
       }
     }
   }

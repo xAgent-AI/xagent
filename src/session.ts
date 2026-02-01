@@ -58,56 +58,41 @@ export class InteractiveSession {
   private isFirstApiCall: boolean = true;
 
     constructor(indentLevel: number = 0) {
-
       this.rl = readline.createInterface({
-
         input: process.stdin,
-
         output: process.stdout
-
       });
 
-  
-
       this.configManager = getConfigManager(process.cwd());
-
       this.agentManager = getAgentManager(process.cwd());
-
       this.memoryManager = getMemoryManager(process.cwd());
-
       this.mcpManager = getMCPManager();
-
       this.checkpointManager = getCheckpointManager(process.cwd());
-
       this.conversationManager = getConversationManager();
-
       this.sessionManager = getSessionManager(process.cwd());
-
       this.slashCommandHandler = new SlashCommandHandler();
 
       // Register /clear callback, clear local conversation when clearing dialogue
-      this.slashCommandHandler.setClearCallback(() => {
-        this.conversation = [];
-        this.toolCalls = [];
-        this.currentTaskId = null;
-        this.taskCompleted = false;
-        this.isFirstApiCall = true;
-        this.slashCommandHandler.setConversationHistory([]);
-      });
-
-  
-
-      // Register MCP update callback, update system prompt
-
-      this.slashCommandHandler.setSystemPromptUpdateCallback(async () => {
-
-        await this.updateSystemPrompt();
-
-      });
-
-  
-
-      this.executionMode = ExecutionMode.DEFAULT;
+            this.slashCommandHandler.setClearCallback(() => {
+              this.conversation = [];
+              this.toolCalls = [];
+              this.currentTaskId = null;
+              this.taskCompleted = false;
+              this.isFirstApiCall = true;
+              this.slashCommandHandler.setConversationHistory([]);
+            });
+      
+            // Register MCP update callback, update system prompt
+            this.slashCommandHandler.setSystemPromptUpdateCallback(async () => {
+              await this.updateSystemPrompt();
+            });
+      
+            // Register config update callback, update aiClient config when /auth changes config
+            this.slashCommandHandler.setConfigUpdateCallback(() => {
+              this.updateAiClientConfig();
+            });
+      
+            this.executionMode = ExecutionMode.DEFAULT;
 
       this.cancellationManager = getCancellationManager();
 
@@ -125,6 +110,32 @@ export class InteractiveSession {
 
   setAIClient(aiClient: AIClient): void {
     this.aiClient = aiClient;
+  }
+
+  /**
+   * Update aiClient config when /auth changes config (called from callback)
+   */
+  updateAiClientConfig(): void {
+    const authConfig = this.configManager.getAuthConfig();
+
+    // Update local aiClient
+    if (this.aiClient) {
+      this.aiClient.updateAuthConfig(authConfig);
+    }
+
+    // Update or create remoteAIClient for OAuth XAGENT mode
+    if (authConfig.type === AuthType.OAUTH_XAGENT) {
+      const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
+      // Reinitialize RemoteAIClient with new token
+      this.remoteAIClient = new RemoteAIClient(
+        authConfig.apiKey || '',
+        webBaseUrl,
+        authConfig.showAIDebugInfo
+      );
+    } else {
+      // Clear remoteAIClient when switching to local mode
+      this.remoteAIClient = null;
+    }
   }
 
   setExecutionMode(mode: ExecutionMode): void {

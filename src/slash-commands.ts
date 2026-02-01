@@ -769,7 +769,10 @@ export class SlashCommandHandler {
       await this.configManager.save('global');
 
       // Clear conversation history to avoid tool call ID conflicts between providers
-      // Different models generate different tool_call_id, mixing them causes "tool id not found" errors      if (this.onClearCallback) {
+      // Different models generate different tool_call_id, mixing them causes "tool id not found" errors
+
+      // Clear conversation history to avoid tool call ID conflicts between providers
+      if (this.onClearCallback) {
         this.onClearCallback();
         console.log(chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between providers.'));
       }

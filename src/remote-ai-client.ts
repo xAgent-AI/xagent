@@ -45,6 +45,8 @@ export interface RemoteChatOptions {
     };
   }>;
   signal?: AbortSignal;
+  llmProvider?: string;
+  vlmProvider?: string;
 }
 
 export interface RemoteChatResponse {
@@ -432,7 +434,9 @@ export class RemoteAIClient extends EventEmitter {
       toolResults: undefined,
       context: undefined,
       taskId: (options as any).taskId,
-      status: (options as any).status || 'begin'  // Use status from options, default to 'begin'
+      status: (options as any).status || 'begin',  // Use status from options, default to 'begin'
+      llmProvider: (options as any).llmProvider,
+      vlmProvider: (options as any).vlmProvider
     });
 
     // Debug output for response
@@ -692,4 +696,47 @@ export class RemoteAIClient extends EventEmitter {
       throw new Error('Failed to delete conversation');
     }
   }
+
+  /**
+   * Get available models from marketplace
+   */
+  async getModels(): Promise<{ llm: ModelInfo[]; vlm: ModelInfo[] }> {
+    const url = `${this.webBaseUrl}/api/models`;
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Getting models:', url);
+    }
+
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+    const response = await axios.get(url, {
+      headers: { 'Authorization': `Bearer ${this.authToken}` },
+      httpsAgent,
+      timeout: 10000
+    });
+
+    return response.data;
+  }
+
+  /**
+   * Get default models configuration
+   */
+  async getDefaultModels(): Promise<{ llm: ModelInfo; vlm: ModelInfo }> {
+    const url = `${this.webBaseUrl}/api/models/default`;
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Getting default models:', url);
+    }
+
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+    const response = await axios.get(url, {
+      headers: { 'Authorization': `Bearer ${this.authToken}` },
+      httpsAgent,
+      timeout: 10000
+    });
+
+    return response.data;
+  }
+}
+
+export interface ModelInfo {
+  provider: string;
+  providerDisplay: string;
 }

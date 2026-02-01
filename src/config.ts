@@ -151,7 +151,9 @@ export class ConfigManager {
       xagentApiBaseUrl: this.settings.xagentApiBaseUrl,
       modelName: this.settings.modelName,
       searchApiKey: this.settings.searchApiKey,
-      showAIDebugInfo: this.settings.showAIDebugInfo
+      showAIDebugInfo: this.settings.showAIDebugInfo,
+      remote_llmProvider: this.settings.remote_llmProvider || '',
+      remote_vlmProvider: this.settings.remote_vlmProvider || ''
     };
 
     logger.debug('[CONFIG] getAuthConfig() 返回:');
@@ -160,6 +162,8 @@ export class ConfigManager {
     logger.debug('  - refreshToken:', result.refreshToken ? 'exists' : 'empty');
     logger.debug('  - baseUrl:', result.baseUrl);
     logger.debug('  - xagentApiBaseUrl:', result.xagentApiBaseUrl);
+    logger.debug(`[CONFIG] this.settings.remote_llmProvider=${this.settings.remote_llmProvider}, result.remote_llmProvider=${result.remote_llmProvider}`);
+    logger.debug(`[CONFIG] this.settings.remote_vlmProvider=${this.settings.remote_vlmProvider}, result.remote_vlmProvider=${result.remote_vlmProvider}`);
 
     return result;
   }

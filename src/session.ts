@@ -136,6 +136,9 @@ export class InteractiveSession {
       // Clear remoteAIClient when switching to local mode
       this.remoteAIClient = null;
     }
+
+    // Sync remoteAIClient reference to slashCommandHandler for /provider command
+    this.slashCommandHandler.setRemoteAIClient(this.remoteAIClient);
   }
 
   setExecutionMode(mode: ExecutionMode): void {
@@ -333,6 +336,9 @@ export class InteractiveSession {
       } else {
         logger.debug('[DEBUG Initialize] RemoteAIClient NOT created (not OAuth XAGENT mode)');
       }
+
+      // Sync remoteAIClient reference to slashCommandHandler for /provider command
+      this.slashCommandHandler.setRemoteAIClient(this.remoteAIClient);
 
       this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
 
@@ -700,15 +706,13 @@ export class InteractiveSession {
 
     // Use remote AI client if available (OAuth XAGENT mode)
     const currentSelectedAuthType = this.configManager.get('selectedAuthType');
-    logger.debug('[DEBUG processUserMessage] remoteAIClient exists:', !!this.remoteAIClient ? 'true' : 'false');
-    logger.debug('[DEBUG processUserMessage] selectedAuthType:', String(currentSelectedAuthType));
-    logger.debug('[DEBUG processUserMessage] AuthType.OAUTH_XAGENT:', String(AuthType.OAUTH_XAGENT));
+    logger.debug(`[DEBUG] processUserMessage: remoteAIClient exists=${!!this.remoteAIClient}, selectedAuthType=${currentSelectedAuthType}`);
 
     if (this.remoteAIClient) {
-      logger.debug('[DEBUG processUserMessage] Using generateRemoteResponse');
+      logger.debug('[DEBUG] Using generateRemoteResponse (remote mode)');
       await this.generateRemoteResponse(thinkingTokens);
     } else {
-      logger.debug('[DEBUG processUserMessage] Using generateResponse (local mode)');
+      logger.debug('[DEBUG] Using generateResponse (local mode)');
       await this.generateResponse(thinkingTokens);
     }
   }
@@ -924,17 +928,20 @@ export class InteractiveSession {
    */
   private createRemoteCaller(taskId: string, status: 'begin' | 'continue') {
     const client = this.remoteAIClient!;
-    const authConfig = this.configManager.getAuthConfig() as AuthConfig & { remote_llmProvider?: string; remote_vlmProvider?: string };
     
     return {
-      chatCompletion: (messages: ChatMessage[], options: any) =>
-        client.chatCompletion(messages, {
+      chatCompletion: (messages: ChatMessage[], options: any) => {
+        // Must fetch authConfig inside the closure, otherwise it captures stale config
+        const authConfig = this.configManager.getAuthConfig();
+        logger.debug(`[DEBUG] createRemoteCaller: llmProvider=${authConfig.remote_llmProvider}, vlmProvider=${authConfig.remote_vlmProvider}`);
+        return client.chatCompletion(messages, {
           ...options,
           taskId,
           status: options.isFirstApiCall ? 'begin' : 'continue',
           llmProvider: authConfig.remote_llmProvider,
           vlmProvider: authConfig.remote_vlmProvider
-        }),
+        });
+      },
       isRemote: true
     };
   }
@@ -951,37 +958,22 @@ export class InteractiveSession {
     };
   }
 
-  private async generateResponse(thinkingTokens: number = 0, customAIClient?: AIClient, existingTaskId?: string): Promise<void> {
+  private async generateResponse(thinkingTokens: number = 0, _customAIClient?: AIClient, existingTaskId?: string): Promise<void> {
     // Use existing taskId or create new one for this user interaction
     // If taskId already exists (e.g., from tool calls), reuse it
     const taskId = existingTaskId || this.currentTaskId || crypto.randomUUID();
     this.currentTaskId = taskId;
-    this.isFirstApiCall = true;
 
-    // Determine status based on whether this is the first API call
+    // isFirstApiCall is reset in generateRemoteResponse for new tasks
+    // For continuation calls (existingTaskId provided), keep previous value
+
+    // Use unified LLM Caller with taskId (automatically selects local or remote mode)
     const status: 'begin' | 'continue' = this.isFirstApiCall ? 'begin' : 'continue';
+    const caller = this.createLLMCaller(taskId, status);
+    const chatCompletion = caller.chatCompletion;
+    const isRemote = caller.isRemote;
 
-    // Use custom AI client if provided, otherwise use default logic
-    let chatCompletion: (messages: ChatMessage[], options: any) => Promise<any>;
-    let isRemote = false;
-
-    if (customAIClient) {
-      // Custom client (used by remote mode) - pass taskId and status
-      chatCompletion = (messages: ChatMessage[], options: any) =>
-        customAIClient.chatCompletion(messages as any, { 
-          ...options, 
-          taskId, 
-          isFirstApiCall: this.isFirstApiCall 
-        });
-      isRemote = true;
-    } else {
-      // Use unified LLM Caller with taskId (automatically selects local or remote mode)
-      const caller = this.createLLMCaller(taskId, status);
-      chatCompletion = caller.chatCompletion;
-      isRemote = caller.isRemote;
-    }
-
-    if (!isRemote && !this.aiClient && !customAIClient) {
+    if (!isRemote && !this.aiClient) {
       console.log(colors.error('AI client not initialized'));
       return;
     }
@@ -1031,7 +1023,8 @@ export class InteractiveSession {
         chatCompletion(messages, {
           tools: availableTools,
           toolChoice: availableTools.length > 0 ? 'auto' : 'none',
-          thinkingTokens
+          thinkingTokens,
+          isFirstApiCall: this.isFirstApiCall
         }),
         operationId
       );
@@ -1136,13 +1129,10 @@ export class InteractiveSession {
     this.currentTaskId = taskId;
     logger.debug(`[Session] generateRemoteResponse: taskId=${taskId}, existingTaskId=${!!existingTaskId}`);
 
-    // Reset isFirstApiCall for new task, keep true for continuation
-    if (!existingTaskId) {
-      this.isFirstApiCall = true;
-    }
-
-    // Determine status based on whether this is the first API call
-    const status: 'begin' | 'continue' = this.isFirstApiCall ? 'begin' : 'continue';
+    // Each new user message is a fresh task - always set isFirstApiCall = true
+    // This ensures status is 'begin' for every user message
+    this.isFirstApiCall = true;
+    const status: 'begin' | 'continue' = 'begin';
     logger.debug(`[Session] Status for this call: ${status}, isFirstApiCall=${this.isFirstApiCall}`);
 
     // Check if remote client is available
@@ -1152,8 +1142,9 @@ export class InteractiveSession {
     }
 
     try {
-      // Reuse generateResponse with remote client, pass taskId to avoid generating new one
-      await this.generateResponse(thinkingTokens, this.remoteAIClient as any, taskId);
+      // Use unified generateResponse without passing customAIClient, 
+      // let createLLMCaller handle remote/local selection
+      await this.generateResponse(thinkingTokens, undefined, taskId);
 
       // Mark task as completed (发送 status: 'end')
       logger.debug(`[Session] Task completed: taskId=${this.currentTaskId}`);
@@ -1212,6 +1203,9 @@ export class InteractiveSession {
         } else {
           logger.debug('[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!');
         }
+
+        // Sync remoteAIClient reference to slashCommandHandler for /provider command
+        this.slashCommandHandler.setRemoteAIClient(this.remoteAIClient);
 
         // Retry the current operation
         console.log('');

@@ -32,6 +32,7 @@ export class SlashCommandHandler {
   private onClearCallback: (() => void) | null = null;
   private onSystemPromptUpdate: (() => Promise<void>) | null = null;
   private onConfigUpdate: (() => void) | null = null;
+  private remoteAIClient: any = null;  // Reference to InteractiveSession's remoteAIClient
 
   constructor() {
     this.configManager = getConfigManager(process.cwd());
@@ -41,6 +42,13 @@ export class SlashCommandHandler {
     this.checkpointManager = getCheckpointManager(process.cwd());
     this.contextCompressor = getContextCompressor();
     this.conversationManager = getConversationManager();
+  }
+
+  /**
+   * Set remote AI client reference (called from InteractiveSession)
+   */
+  setRemoteAIClient(client: any): void {
+    this.remoteAIClient = client;
   }
 
   /**
@@ -112,6 +120,9 @@ export class SlashCommandHandler {
         break;
       case 'vlm':
         await this.handleVlm();
+        break;
+      case 'provider':
+        await this.handleProvider();
         break;
       case 'memory':
         await this.handleMemory(args);
@@ -568,6 +579,14 @@ export class SlashCommandHandler {
   }
 
   private async handleVlm(): Promise<void> {
+    // 检查是否为 local 模式（remote 模式使用后端的 VLM 配置）
+    const authConfig = this.configManager.getAuthConfig();
+    if (authConfig.type === AuthType.OAUTH_XAGENT) {
+      console.log(chalk.yellow('\n⚠️  This command is only available in local mode (third-party API).'));
+      console.log(chalk.cyan('   In remote mode, VLM configuration is managed by /provider.'));
+      return;
+    }
+
     logger.section('VLM Configuration for GUI Agent');
 
     // Show current VLM config
@@ -647,6 +666,117 @@ export class SlashCommandHandler {
       } else {
         console.log(chalk.red('❌ VLM configuration failed or cancelled'));
       }
+    }
+  }
+
+  /**
+   * Handle /provider command - Configure LLM/VLM providers for remote mode
+   */
+  private async handleProvider(): Promise<void> {
+    const authConfig = this.configManager.getAuthConfig();
+
+    // 1. 检查是否为 remote 模式
+    if (authConfig.type !== AuthType.OAUTH_XAGENT) {
+      console.log(chalk.yellow('\n⚠️  This command is only available in remote mode.'));
+      return;
+    }
+
+    // 2. 获取 RemoteAIClient 实例（从 InteractiveSession 获取）
+    const remoteClient = this.remoteAIClient;
+    if (!remoteClient) {
+      console.log(chalk.red('\n❌ Remote client not initialized. Please use /auth to configure remote mode first.'));
+      return;
+    }
+
+    // 3. 显示当前配置
+    const currentLlm = authConfig.remote_llmProvider || 'Not set';
+    const currentVlm = authConfig.remote_vlmProvider || 'Not set';
+
+    console.log(chalk.cyan('\n📊 Current Provider Configuration:\n'));
+    console.log(`  ${chalk.yellow('LLM Provider:')} ${currentLlm}`);
+    console.log(`  ${chalk.yellow('VLM Provider:')} ${currentVlm}`);
+    console.log('');
+
+    // 4. 主菜单
+    const { action } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'action',
+        message: 'Select action:',
+        choices: [
+          { name: 'Use default llm/vlm config', value: 'default' },
+          { name: 'Change LLM config', value: 'llm' },
+          { name: 'Change VLM config', value: 'vlm' },
+          { name: 'Back', value: 'back' }
+        ]
+      }
+    ]);
+
+    if (action === 'back') return;
+
+    // 5. 获取默认配置
+    if (action === 'default') {
+      try {
+        const defaults = await remoteClient.getDefaultModels();
+        // 更新内存配置
+        await this.configManager.set('remote_llmProvider', defaults.llm.provider);
+        await this.configManager.set('remote_vlmProvider', defaults.vlm.provider);
+        // 保存到文件
+        await this.configManager.save('global');
+
+        console.log(chalk.green('\n✅ Default configuration applied!'));
+        console.log(`   LLM: ${defaults.llm.providerDisplay}`);
+        console.log(`   VLM: ${defaults.vlm.providerDisplay}`);
+
+        // 通知 InteractiveSession 更新 aiClient config
+        if (this.onConfigUpdate) {
+          this.onConfigUpdate();
+        }
+      } catch (error: any) {
+        console.log(chalk.red(`\n❌ Failed to get default models: ${error.message}`));
+      }
+      return;
+    }
+
+    // 6. 获取并显示 provider 列表
+    try {
+      const models = await remoteClient.getModels();
+      const providers = action === 'llm' ? models.llm : models.vlm;
+
+      if (providers.length === 0) {
+        console.log(chalk.yellow('\n⚠️  No providers available.'));
+        return;
+      }
+
+      // 构建选择列表
+      const choices = providers.map((p: any) => ({
+        name: `${p.providerDisplay} (${p.provider})`,
+        value: p.provider
+      }));
+
+      const { selectedProvider } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'selectedProvider',
+          message: action === 'llm' ? 'Select LLM Provider:' : 'Select VLM Provider:',
+          choices
+        }
+      ]);
+
+      // 7. 保存配置（内存立即生效 + 持久化）
+      const configKey = action === 'llm' ? 'remote_llmProvider' : 'remote_vlmProvider';
+      await this.configManager.set(configKey, selectedProvider);
+      await this.configManager.save('global');
+
+      // 通知 InteractiveSession 更新 aiClient config
+      if (this.onConfigUpdate) {
+        this.onConfigUpdate();
+      }
+
+      console.log(chalk.green('\n✅ Provider updated successfully!'));
+      console.log(`   ${action === 'llm' ? 'LLM' : 'VLM'}: ${selectedProvider}`);
+    } catch (error: any) {
+      console.log(chalk.red(`\n❌ Failed to get models: ${error.message}`));
     }
   }
 

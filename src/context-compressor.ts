@@ -1,6 +1,7 @@
 import { ChatMessage, CompressionConfig } from './types.js';
 import { AIClient, Message } from './ai-client.js';
 import { AuthConfig } from './types.js';
+import { getCancellationManager } from './cancellation.js';
 
 /**
  * Model context window sizes (in tokens)
@@ -679,20 +680,28 @@ export class ContextCompressor {
 
     const maxTokens = Math.floor(0.8 * reserveTokens);
 
-    try {
-      const summaryMessage: Message = {
-        role: 'user',
-        content: promptText
-      };
+    const summaryMessage: Message = {
+      role: 'user',
+      content: promptText
+    };
 
-      const response = await this.aiClient.chatCompletion([summaryMessage], {
-        maxTokens,
-        temperature: 0.3
-      });
+    const aiPromise = this.aiClient.chatCompletion([summaryMessage], {
+      maxTokens,
+      temperature: 0.3
+    });
+
+    try {
+      const response = await getCancellationManager().withCancellation(
+        aiPromise,
+        'context-compression-summary'
+      );
 
       const summary = response.choices[0]?.message?.content || '';
       return typeof summary === 'string' ? summary : JSON.stringify(summary);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.message === 'Operation cancelled by user') {
+        throw error;
+      }
       console.error('Failed to generate summary:', error);
       const userCount = messages.filter(m => m.role === 'user').length;
       const toolCount = messages.filter(m => m.role === 'tool').length;
@@ -723,20 +732,28 @@ export class ContextCompressor {
     const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
     const maxTokens = Math.floor(0.5 * reserveTokens);
 
-    try {
-      const summaryMessage: Message = {
-        role: 'user',
-        content: promptText
-      };
+    const summaryMessage: Message = {
+      role: 'user',
+      content: promptText
+    };
 
-      const response = await this.aiClient.chatCompletion([summaryMessage], {
-        maxTokens,
-        temperature: 0.3
-      });
+    const aiPromise = this.aiClient.chatCompletion([summaryMessage], {
+      maxTokens,
+      temperature: 0.3
+    });
+
+    try {
+      const response = await getCancellationManager().withCancellation(
+        aiPromise,
+        'context-compression-turn-prefix'
+      );
 
       const content = response.choices[0]?.message?.content || '';
       return typeof content === 'string' ? content : JSON.stringify(content);
-    } catch (error) {
+    } catch (error: any) {
+      if (error.message === 'Operation cancelled by user') {
+        throw error;
+      }
       console.error('Failed to generate turn prefix summary:', error);
       return '[Turn prefix summary unavailable]';
     }

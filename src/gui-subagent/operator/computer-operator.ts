@@ -324,7 +324,8 @@ export class ComputerOperator extends Operator {
             await sleep(50);
             await keyboard.releaseKey(Key.LeftControl, Key.V);
             await sleep(50);
-            await clipboard.setContent(originalClipboard);
+            // Restore clipboard content with retry to handle clipboardy occasional panics on Windows
+            await restoreClipboardWithRetry(originalClipboard, this.logger);
           } else {
             await keyboard.type(stripContent);
           }
@@ -513,5 +514,27 @@ export class ComputerOperator extends Operator {
         'arrow right': 'Right arrow',
       },
     };
+  }
+}
+
+/**
+ * Restore clipboard content with retry mechanism.
+ * Handles clipboardy occasional panics on Windows gracefully.
+ */
+async function restoreClipboardWithRetry(content: string, logger: any): Promise<void> {
+  const maxRetries = 2;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      await clipboard.setContent(content);
+      return;
+    } catch (restoreError: any) {
+      if (i === maxRetries - 1) {
+        // Last retry failed - log warning and give up
+        logger.warn('[ComputerOperator] Failed to restore clipboard content after retries:', restoreError?.message || restoreError);
+      } else {
+        // Retry after brief delay
+        await sleep(100);
+      }
+    }
   }
 }

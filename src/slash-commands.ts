@@ -1062,11 +1062,27 @@ export class SlashCommandHandler {
       }
     } else {
       config.url = url;
-      if (authToken) {
-        config.authToken = authToken;
+
+      // Handle user input that mistakenly puts Bearer token in headers field
+      // Detect pattern: headers looks like "Bearer xxx.yyy.zzz" (JWT token)
+      let resolvedAuthToken = authToken;
+      let resolvedHeaders = headers;
+
+      if (headers && typeof headers === 'string' && !authToken) {
+        const trimmedHeaders = headers.trim();
+        if (trimmedHeaders.startsWith('Bearer ') && trimmedHeaders.split('.').length === 3) {
+          // User mistakenly put token in headers field - extract it
+          resolvedAuthToken = trimmedHeaders;
+          resolvedHeaders = undefined;
+          console.log('[MCP] Note: Detected Bearer token in headers field, moved to authToken');
+        }
       }
-      if (headers) {
-        config.headers = headers;
+
+      if (resolvedAuthToken) {
+        config.authToken = resolvedAuthToken;
+      }
+      if (resolvedHeaders) {
+        config.headers = resolvedHeaders;
       }
     }
 

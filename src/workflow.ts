@@ -118,7 +118,26 @@ export class WorkflowManager {
     }
   }
 
+  /**
+   * Validate workflow ID format - only allow alphanumeric, hyphens, and underscores
+   * @returns validation error message, or null if valid
+   */
+  private validateWorkflowId(workflowId: string): string | null {
+    if (!workflowId || typeof workflowId !== 'string' || !workflowId.trim()) {
+      return 'Workflow ID is required';
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(workflowId)) {
+      return 'Workflow ID must contain only alphanumeric characters, hyphens, and underscores';
+    }
+    return null;
+  }
+
   async addWorkflow(workflowId: string, scope: 'global' | 'project' = 'project'): Promise<void> {
+    const validationError = this.validateWorkflowId(workflowId);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
     const workflowsPath = scope === 'global' ? this.globalWorkflowsPath : this.projectWorkflowsPath;
     
     if (!workflowsPath) {
@@ -227,6 +246,11 @@ export class WorkflowManager {
   }
 
   async removeWorkflow(workflowId: string, scope: 'global' | 'project' = 'project'): Promise<void> {
+    const validationError = this.validateWorkflowId(workflowId);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
     const workflowsPath = scope === 'global' ? this.globalWorkflowsPath : this.projectWorkflowsPath;
     
     if (!workflowsPath) {
@@ -397,6 +421,11 @@ export class WorkflowManager {
   }
 
   async executeWorkflow(workflowId: string, input: string): Promise<void> {
+    const validationError = this.validateWorkflowId(workflowId);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
     const workflow = this.getWorkflow(workflowId);
     
     if (!workflow) {

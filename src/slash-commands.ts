@@ -984,6 +984,9 @@ export class SlashCommandHandler {
           if (!input.trim()) {
             return 'Server name is required';
           }
+          if (!/^[a-zA-Z0-9_-]+$/.test(input)) {
+            return 'Server name must contain only alphanumeric characters, hyphens, and underscores';
+          }
           const servers = this.mcpManager.getAllServers();
           if (servers.some((s: MCPServer) => (s as any).config?.name === input)) {
             return 'Server with this name already exists';
@@ -1021,7 +1024,17 @@ export class SlashCommandHandler {
         name: 'url',
         message: 'Enter server URL (for HTTP/SSE/HTTP transport):',
         when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http',
-        validate: (input: string) => input.trim() ? true : 'URL is required'
+        validate: (input: string) => {
+          if (!input.trim()) {
+            return 'URL is required';
+          }
+          try {
+            new URL(input);
+            return true;
+          } catch {
+            return 'Invalid URL format (e.g., https://example.com)';
+          }
+        }
       },
       {
         type: 'password',

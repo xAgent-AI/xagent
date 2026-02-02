@@ -91,19 +91,19 @@ export function killProcessTree(pid: number): void {
 				stdio: 'ignore',
 				detached: true,
 			});
-		} catch {
-			// Ignore errors if taskkill fails
+		} catch (error) {
+			console.warn(`[shell] Failed to kill process tree (PID ${pid}): ${error instanceof Error ? error.message : String(error)}`);
 		}
 	} else {
 		// Use SIGKILL on Unix/Linux/Mac
 		try {
 			process.kill(-pid, 'SIGKILL');
-		} catch {
+		} catch (error) {
 			// Fallback to killing just the child if process group kill fails
 			try {
 				process.kill(pid, 'SIGKILL');
-			} catch {
-				// Process already dead
+			} catch (fallbackError) {
+				console.warn(`[shell] Failed to kill process (PID ${pid}): ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
 			}
 		}
 	}

@@ -64,6 +64,15 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'default': 200000
 };
 
+// Compression ratio constants - easier to tune and maintain
+const COMPRESSION_RATIO = {
+  RESERVE_RATIO: 0.50,        // Reserve 50% of context window for system prompt and recent messages
+  SUMMARY_THRESHOLD_RATIO: 0.15, // Use 15% of available space for summary
+  MAX_TOKENS_RATIO: 0.8,      // Use 80% of reserved tokens for compression
+  SUMMARY_MAX_TOKENS_RATIO: 0.5, // Use 50% of reserved tokens for summary
+  MIN_SUMMARY_TOKENS: 800     // Minimum tokens for summary
+};
+
 /**
  * Get the context window for a model
  */
@@ -289,8 +298,8 @@ export class ContextCompressor {
     // Get model context window
     const contextWindow = getModelContextWindow(modelName);
 
-    // Calculate threshold: 50% of context window reserved for new conversation
-    const reserveTokens = Math.floor(contextWindow * 0.50);
+    // Calculate threshold using compression ratio constants
+    const reserveTokens = Math.floor(contextWindow * COMPRESSION_RATIO.RESERVE_RATIO);
     const threshold = contextWindow - reserveTokens;
 
     if (tokenCount > threshold) {
@@ -679,7 +688,7 @@ export class ContextCompressor {
     }
     promptText += basePrompt;
 
-    const maxTokens = Math.floor(0.8 * reserveTokens);
+    const maxTokens = Math.floor(reserveTokens * COMPRESSION_RATIO.MAX_TOKENS_RATIO);
 
     const summaryMessage: Message = {
       role: 'user',
@@ -731,7 +740,7 @@ export class ContextCompressor {
       .join('\n\n' + '='.repeat(50) + '\n\n');
 
     const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
-    const maxTokens = Math.floor(0.5 * reserveTokens);
+    const maxTokens = Math.floor(reserveTokens * COMPRESSION_RATIO.SUMMARY_MAX_TOKENS_RATIO);
 
     const summaryMessage: Message = {
       role: 'user',
@@ -792,8 +801,8 @@ export class ContextCompressor {
 
     // Prepare compaction
     // Reserve 50% of context window for new conversation, 15% for summary
-    const reserveTokens = Math.floor(contextWindow * 0.50);
-    const summaryReserveTokens = Math.max(800, Math.floor((contextWindow - reserveTokens) * 0.15));
+    const reserveTokens = Math.floor(contextWindow * COMPRESSION_RATIO.RESERVE_RATIO);
+    const summaryReserveTokens = Math.max(COMPRESSION_RATIO.MIN_SUMMARY_TOKENS, Math.floor((contextWindow - reserveTokens) * COMPRESSION_RATIO.SUMMARY_THRESHOLD_RATIO));
     const keepRecentTokens = contextWindow - reserveTokens - summaryReserveTokens;
     const preparation = this.prepareCompaction(messages, Math.max(0, keepRecentTokens));
 

@@ -88,8 +88,7 @@ export class ConfigManager {
         this.settings = { ...this.settings, ...projectConfig };
       }
 
-      logger.debug('[CONFIG] 最终 settings.apiKey:', this.settings.apiKey ? this.settings.apiKey.substring(0, 30) + '...' : 'empty');
-      logger.debug('[CONFIG] 最终 settings.refreshToken:', this.settings.refreshToken ? 'exists' : 'empty');
+      // Removed: logging sensitive information (apiKey, refreshToken)
 
       // Apply environment variables AFTER loading saved config
       // Only apply for remote mode (OAuth XAGENT) - local mode should use user-saved config
@@ -130,7 +129,7 @@ export class ConfigManager {
     fs.writeFileSync(
       configPath,
       JSON.stringify(configToSave, null, 2),
-      'utf-8'
+      { mode: 0o600, encoding: 'utf-8' }
     );
   }
 
@@ -158,8 +157,7 @@ export class ConfigManager {
 
     logger.debug('[CONFIG] getAuthConfig() 返回:');
     logger.debug('  - type:', result.type);
-    logger.debug('  - apiKey:', result.apiKey ? result.apiKey.substring(0, 30) + '...' : 'empty');
-    logger.debug('  - refreshToken:', result.refreshToken ? 'exists' : 'empty');
+    // Removed: logging sensitive information (apiKey, refreshToken)
     logger.debug('  - baseUrl:', result.baseUrl);
     logger.debug('  - xagentApiBaseUrl:', result.xagentApiBaseUrl);
     logger.debug(`[CONFIG] this.settings.remote_llmProvider=${this.settings.remote_llmProvider}, result.remote_llmProvider=${result.remote_llmProvider}`);

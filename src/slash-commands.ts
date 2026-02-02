@@ -476,7 +476,7 @@ export class SlashCommandHandler {
           }
 
           console.log(chalk.green('\n✅ Authentication switched to xAgent (Remote mode)!'));
-          console.log(chalk.cyan(`   Token: ${newAuthConfig.apiKey?.substring(0, 20)}...`));
+          // Removed: logging partial token for security
         }
       } else {
         // Switch to Third-party API (Local mode)

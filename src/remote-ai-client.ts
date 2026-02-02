@@ -72,7 +72,7 @@ export class RemoteAIClient extends EventEmitter {
 
   constructor(authToken: string, webBaseUrl: string, showAIDebugInfo: boolean = false) {
     super();
-    logger.debug(`[RemoteAIClient] Constructor called, authToken: ${authToken ? authToken.substring(0, 30) + '...' : 'empty'}`);
+    // Removed: logging authToken for security
     this.authToken = authToken;
     this.webBaseUrl = webBaseUrl.replace(/\/$/, ''); // Remove trailing slash
     this.agentApi = `${this.webBaseUrl}/api/agent`;
@@ -113,7 +113,7 @@ export class RemoteAIClient extends EventEmitter {
     const url = `${this.agentApi}/chat`;
     if (this.showAIDebugInfo) {
       logger.debug(`[RemoteAIClient] Sending request to: ${url}`);
-      logger.debug(`[RemoteAIClient] Token prefix: ${this.authToken.substring(0, 20)}...`);
+      // Removed: logging token prefix for security
       logger.debug(`[RemoteAIClient] Message count: ${messages.length}`);
       if (remoteChatOptions.tools) {
         logger.debug(`[RemoteAIClient] Tool count: ${remoteChatOptions.tools.length}`);

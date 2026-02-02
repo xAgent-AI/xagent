@@ -117,27 +117,31 @@ export class InteractiveSession {
    */
   updateAiClientConfig(): void {
     const authConfig = this.configManager.getAuthConfig();
+    const isRemote = authConfig.type === AuthType.OAUTH_XAGENT;
 
-    // Update local aiClient
-    if (this.aiClient) {
-      this.aiClient.updateAuthConfig(authConfig);
-    }
-
-    // Update or create remoteAIClient for OAuth XAGENT mode
-    if (authConfig.type === AuthType.OAUTH_XAGENT) {
+    if (isRemote) {
+      // Already in remote mode, no change needed
+      if (this.remoteAIClient !== null) {
+        return;
+      }
+      // Switch to remote: clear local client, create remote client
+      this.aiClient = null;
       const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-      // Reinitialize RemoteAIClient with new token
       this.remoteAIClient = new RemoteAIClient(
         authConfig.apiKey || '',
         webBaseUrl,
         authConfig.showAIDebugInfo
       );
     } else {
-      // Clear remoteAIClient when switching to local mode
+      // Already in local mode, no change needed
+      if (this.aiClient !== null) {
+        return;
+      }
+      // Switch to local: clear remote client, create local client
       this.remoteAIClient = null;
+      this.aiClient = new AIClient(authConfig);
     }
 
-    // Sync remoteAIClient reference to slashCommandHandler for /provider command
     this.slashCommandHandler.setRemoteAIClient(this.remoteAIClient);
   }
 

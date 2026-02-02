@@ -120,7 +120,7 @@ export interface ChatMessage {
   images?: string[];
   timestamp: number;
   reasoningContent?: string;
-  toolCalls?: any[];
+  tool_calls?: any[];
   tool_call_id?: string;
 }
 
@@ -145,7 +145,7 @@ export interface Checkpoint {
   description: string;
   gitSnapshot?: string;
   conversationSnapshot: ChatMessage[];
-  toolCalls: ToolCall[];
+  tool_calls: ToolCall[];
 }
 
 export interface InputType {
@@ -171,7 +171,7 @@ export interface SessionOutput {
   timestamp: number;
   duration?: number;
   reasoningContent?: string;
-  toolCalls?: any[];
+  tool_calls?: any[];
 }
 
 export interface Session {

@@ -39,7 +39,7 @@ export class InteractiveSession {
   private aiClient: AIClient | null = null;
   private remoteAIClient: RemoteAIClient | null = null;
   private conversation: ChatMessage[] = [];
-  private toolCalls: ToolCall[] = [];
+  private tool_calls: ToolCall[] = [];
   private executionMode: ExecutionMode;
   private slashCommandHandler: SlashCommandHandler;
   private configManager: ConfigManager;
@@ -75,7 +75,7 @@ export class InteractiveSession {
       // Register /clear callback, clear local conversation when clearing dialogue
             this.slashCommandHandler.setClearCallback(() => {
               this.conversation = [];
-              this.toolCalls = [];
+              this.tool_calls = [];
               this.currentTaskId = null;
               this.taskCompleted = false;
               this.isFirstApiCall = true;
@@ -883,7 +883,7 @@ export class InteractiveSession {
         timestamp: Date.now()
       };
 
-      this.toolCalls.push(toolCall);
+      this.tool_calls.push(toolCall);
 
       // Record command execution to session manager
       await this.sessionManager.addInput({
@@ -1059,7 +1059,7 @@ export class InteractiveSession {
         content,
         timestamp: Date.now(),
         reasoningContent,
-        toolCalls: assistantMessage.tool_calls
+        tool_calls: assistantMessage.tool_calls
       });
 
       // Record output to session manager
@@ -1068,7 +1068,7 @@ export class InteractiveSession {
         content,
         timestamp: Date.now(),
         reasoningContent,
-        toolCalls: assistantMessage.tool_calls
+        tool_calls: assistantMessage.tool_calls
       });
 
       if (assistantMessage.tool_calls) {
@@ -1081,7 +1081,7 @@ export class InteractiveSession {
         await this.checkpointManager.createCheckpoint(
           `Response generated at ${new Date().toLocaleString()}`,
           [...this.conversation],
-          [...this.toolCalls]
+          [...this.tool_calls]
         );
       }      
 
@@ -1485,7 +1485,7 @@ export class InteractiveSession {
           timestamp: Date.now()
         };
 
-        this.toolCalls.push(toolCallRecord);
+        this.tool_calls.push(toolCallRecord);
 
         // Record tool output to session manager
         await this.sessionManager.addOutput({

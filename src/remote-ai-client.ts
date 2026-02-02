@@ -52,7 +52,7 @@ export interface RemoteChatOptions {
 export interface RemoteChatResponse {
   content: string;
   reasoningContent?: string;
-  toolCalls?: ToolCall[];
+  tool_calls?: ToolCall[];
   conversationId: string;
 }
 
@@ -126,7 +126,8 @@ export class RemoteAIClient extends EventEmitter {
       const response = await axios.post(url, requestBody, {
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.authToken}`
+          'Authorization': `Bearer ${this.authToken}`,
+          'xagent-cli-version': '1.0'
         },
         httpsAgent,
         timeout: 300000
@@ -141,14 +142,14 @@ export class RemoteAIClient extends EventEmitter {
       logger.debug('[RemoteAIClient] response received, status:', String(response.status));
       if (this.showAIDebugInfo) {
         console.log('[RemoteAIClient] Received response, content length:', data.content?.length || 0);
-        console.log('[RemoteAIClient] toolCalls count:', data.toolCalls?.length || 0);
+        console.log('[RemoteAIClient] tool_calls count:', data.tool_calls?.length || 0);
       }
 
       return {
         role: 'assistant',
         content: data.content || '',
         reasoningContent: data.reasoningContent || '',
-        toolCalls: data.toolCalls,
+        tool_calls: data.tool_calls,
         timestamp: Date.now()
       };
 
@@ -235,7 +236,8 @@ export class RemoteAIClient extends EventEmitter {
         const response = await axios.post(url, requestBody, {
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.authToken}`
+            'Authorization': `Bearer ${this.authToken}`,
+            'xagent-cli-version': '1.0'
           },
           httpsAgent,
           timeout: 300000
@@ -249,7 +251,7 @@ export class RemoteAIClient extends EventEmitter {
           role: 'assistant' as const,
           content: response.data.content || '',
           reasoningContent: response.data.reasoningContent || '',
-          toolCalls: response.data.toolCalls,
+          tool_calls: response.data.tool_calls,
           timestamp: Date.now()
         };
       }, { maxRetries: 3, baseDelay: 1000, maxDelay: 10000, jitter: true });
@@ -477,12 +479,12 @@ export class RemoteAIClient extends EventEmitter {
       console.log('└─────────────────────────────────────────────────────────────┘');
 
       // Display tool calls if present
-      if (response.toolCalls && response.toolCalls.length > 0) {
+      if (response.tool_calls && response.tool_calls.length > 0) {
         console.log('\n┌─────────────────────────────────────────────────────────────┐');
         console.log('│ 🔧 TOOL CALLS                                                │');
         console.log('├─────────────────────────────────────────────────────────────┤');
-        for (let i = 0; i < response.toolCalls.length; i++) {
-          const tc = response.toolCalls[i];
+        for (let i = 0; i < response.tool_calls.length; i++) {
+          const tc = response.tool_calls[i];
           console.log(`│ ${i + 1}. ${tc.function?.name || 'unknown'}`);
           if (tc.function?.arguments) {
             const args = typeof tc.function.arguments === 'string'
@@ -513,7 +515,7 @@ export class RemoteAIClient extends EventEmitter {
             role: 'assistant',
             content: response.content,
             reasoning_content: response.reasoningContent || '',
-            tool_calls: response.toolCalls
+            tool_calls: response.tool_calls
           },
           finish_reason: 'stop'
         }

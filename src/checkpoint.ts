@@ -70,7 +70,7 @@ export class CheckpointManager {
     }
   }
 
-  async createCheckpoint(description: string, conversation: ChatMessage[], toolCalls: ToolCall[]): Promise<Checkpoint> {
+  async createCheckpoint(description: string, conversation: ChatMessage[], tool_calls: ToolCall[]): Promise<Checkpoint> {
     if (!this.enabled) {
       throw new Error('Checkpointing is not enabled');
     }
@@ -83,7 +83,7 @@ export class CheckpointManager {
       timestamp,
       description,
       conversationSnapshot: conversation,
-      toolCalls
+      tool_calls
     };
 
     await this.createGitSnapshot(checkpointId);

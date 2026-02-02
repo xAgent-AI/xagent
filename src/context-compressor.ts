@@ -320,7 +320,7 @@ export class ContextCompressor {
         if (message.reasoningContent) {
           chars += message.reasoningContent.length;
         }
-        const toolCalls = message.toolCalls as any[] | undefined;
+        const toolCalls = message.tool_calls as any[] | undefined;
         if (toolCalls && toolCalls.length > 0) {
           for (const toolCall of toolCalls) {
             chars += JSON.stringify(toolCall).length;
@@ -453,9 +453,9 @@ export class ContextCompressor {
     };
 
     for (const msg of messages) {
-      // Case 1: assistant with toolCalls field
-      if (msg.role === 'assistant' && msg.toolCalls) {
-        for (const toolCall of msg.toolCalls) {
+      // Case 1: assistant with tool_calls field
+      if (msg.role === 'assistant' && msg.tool_calls) {
+        for (const toolCall of msg.tool_calls) {
           totalToolCalls++;
           const toolName = toolCall.function?.name || '';
           let args = {};
@@ -877,7 +877,7 @@ export class ContextCompressor {
             timestamp: msg.timestamp,
             images: msg.images,
             reasoningContent: msg.reasoningContent,
-            toolCalls: msg.toolCalls,
+            tool_calls: msg.tool_calls,
             tool_call_id: msg.tool_call_id
           });
         }
@@ -900,7 +900,7 @@ export class ContextCompressor {
             timestamp: msg.timestamp,
             images: msg.images,
             reasoningContent: msg.reasoningContent,
-            toolCalls: msg.toolCalls,
+            tool_calls: msg.tool_calls,
             tool_call_id: msg.tool_call_id
           });
         }
@@ -915,7 +915,7 @@ export class ContextCompressor {
           timestamp: msg.timestamp,
           images: msg.images,
           reasoningContent: msg.reasoningContent,
-          toolCalls: msg.toolCalls,
+          tool_calls: msg.tool_calls,
           tool_call_id: msg.tool_call_id
         });
       }

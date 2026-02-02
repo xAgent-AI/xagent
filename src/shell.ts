@@ -44,7 +44,6 @@ export function getShellConfig(): ShellConfig {
 	if (process.platform === 'win32') {
 		// On Windows, prefer PowerShell for better compatibility and output handling
 		// Use -NoProfile to avoid profile script interference
-		// -Encoding UTF8 ensures proper output encoding
 		// -Command executes the command string as PowerShell script
 		cachedShellConfig = {
 			shell: 'powershell',

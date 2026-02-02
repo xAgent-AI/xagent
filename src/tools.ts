@@ -330,7 +330,15 @@ export class BashTool implements Tool {
 
     // Get shell configuration (Windows Git Bash detection, etc.)
     const { shell, args } = getShellConfig();
-    const shellArgs = [...args, quoteShellCommand(command)];
+    
+    // On Windows with PowerShell, we need to prepend the UTF-8 encoding setup
+    // to ensure proper output encoding for the user command
+    let fullCommand = command;
+    if (process.platform === 'win32') {
+      fullCommand = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
+    }
+    
+    const shellArgs = [...args, quoteShellCommand(fullCommand)];
 
     try {
       if (run_in_bg) {
@@ -362,7 +370,9 @@ export class BashTool implements Tool {
         });
 
         childProcess.on('close', (code: number) => {
-          console.log(`Background task ${taskId} exited with code ${code}`);
+          // Silent cleanup - don't log to avoid noise during normal operation
+          // Note: On Windows with PowerShell, the shell process exits after
+          // the command completes
         });
 
         const toolRegistry = getToolRegistry();

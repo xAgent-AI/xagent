@@ -67,7 +67,7 @@ export class InputProcessor {
           }
         });
       } catch (error) {
-        console.warn(`Failed to process image #${imageId}:`, error);
+        console.warn(`[input-processor] Failed to process image #${imageId}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -101,7 +101,8 @@ export class InputProcessor {
       
       return `data:${mimeType};base64,${base64}`;
     } catch (error) {
-      throw new Error(`Failed to read image file: ${filePath}`);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to read image file ${filePath}: ${errorMsg}`);
     }
   }
 
@@ -204,6 +205,7 @@ export class InputProcessor {
         content: clipboardContent
       }];
     } catch (error) {
+      console.warn(`[input-processor] Failed to read clipboard: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
   }
@@ -251,7 +253,8 @@ export class InputProcessor {
       
       return `data:${mimeType};base64,${base64}`;
     } catch (error) {
-      throw new Error(`Failed to convert image to base64: ${filePath}`);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to convert image to base64 ${filePath}: ${errorMsg}`);
     }
   }
 

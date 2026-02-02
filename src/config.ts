@@ -266,7 +266,7 @@ export class ConfigManager {
       return JSON.parse(content);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        logger.error(`Error reading config file ${filePath}`, 'Check file permissions and format');
+        logger.error(`Error reading config file ${filePath}: ${error instanceof Error ? error.message : String(error)}`, 'Check file permissions and format');
       }
       return {};
     }

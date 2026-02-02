@@ -46,7 +46,7 @@ export class MCPServer {
       this.isConnected = true;
       console.log(`✅ MCP Server connected`);
     } catch (error) {
-      console.error(`❌ Failed to connect MCP Server:`, error);
+      console.error(`❌ [mcp] Failed to connect MCP Server: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
   }
@@ -291,7 +291,7 @@ export class MCPServer {
         const message = JSON.parse(line);
         this.handleJsonRpcMessage(message);
       } catch (error) {
-        console.warn('Failed to parse MCP message:', line);
+        console.warn(`[mcp] Failed to parse MCP message: ${error instanceof Error ? error.message : String(error)}`, line);
       }
     }
   }
@@ -529,9 +529,10 @@ export class MCPServer {
             }
           }
         } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
           console.error('\n========== MCP STDIO Parse Error ==========');
-            console.error('Raw data:', data.toString());
-          console.error('Error:', error);
+          console.error('Raw data:', data.toString());
+          console.error('Error:', errorMsg);
           console.error('==========================================\n');
           reject(error);
         }
@@ -586,7 +587,7 @@ export class MCPManager {
         try {
           await server.connect();
         } catch (error) {
-          console.error(`Failed to connect MCP server ${name}:`, error);
+          console.error(`[mcp] Failed to connect MCP server ${name}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     );

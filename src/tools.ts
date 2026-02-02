@@ -336,12 +336,18 @@ export class BashTool implements Tool {
       if (run_in_bg) {
         const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        const childProcess = spawn(shell, shellArgs, {
+        const spawnOptions: any = {
           cwd: effectiveCwd || process.cwd(),
-          detached: true,
           env,
-          stdio: ['ignore', 'pipe', 'pipe']
-        });
+          stdio: ['pipe', 'pipe', 'pipe']
+        };
+
+        // On Windows, don't use detached mode for PowerShell as it breaks output piping
+        if (process.platform !== 'win32') {
+          spawnOptions.detached = true;
+        }
+
+        const childProcess = spawn(shell, shellArgs, spawnOptions);
 
         const output: string[] = [];
 
@@ -434,12 +440,18 @@ export class BashTool implements Tool {
       let timedOut = false;
       let timeoutHandle: NodeJS.Timeout | undefined;
 
-      const child = spawn(shell, args, {
+      const spawnOptions: any = {
         cwd,
         env,
-        detached: true,
-        stdio: ['ignore', 'pipe', 'pipe']
-      });
+        stdio: ['pipe', 'pipe', 'pipe']
+      };
+
+      // On Windows, don't use detached mode for PowerShell as it breaks output piping
+      if (process.platform !== 'win32') {
+        spawnOptions.detached = true;
+      }
+
+      const child = spawn(shell, args, spawnOptions);
 
       const stdoutChunks: Buffer[] = [];
       const stderrChunks: Buffer[] = [];

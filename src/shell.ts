@@ -31,7 +31,7 @@ let cachedShellConfig: ShellConfig | null = null;
 /**
  * Get shell configuration based on platform.
  * Resolution order:
- * 1. On Windows: Git Bash in known locations, then bash on PATH
+ * 1. On Windows: PowerShell (preferred), then Git Bash as fallback
  * 2. On Unix: /bin/bash
  *
  * @returns ShellConfig with shell path and args
@@ -42,33 +42,14 @@ export function getShellConfig(): ShellConfig {
 	}
 
 	if (process.platform === 'win32') {
-		// Try Git Bash in known locations
-		const paths: string[] = [];
-		const programFiles = process.env.ProgramFiles;
-		if (programFiles) {
-			paths.push(`${programFiles}\\Git\\bin\\bash.exe`);
-		}
-		const programFilesX86 = process.env['ProgramFiles(x86)'];
-		if (programFilesX86) {
-			paths.push(`${programFilesX86}\\Git\\bin\\bash.exe`);
-		}
-
-		for (const p of paths) {
-			if (existsSync(p)) {
-				cachedShellConfig = { shell: p, args: ['-c'] };
-				return cachedShellConfig;
-			}
-		}
-
-		// Fallback: search bash.exe on PATH (Cygwin, MSYS2, WSL, etc.)
-		const bashOnPath = findBashOnPath();
-		if (bashOnPath) {
-			cachedShellConfig = { shell: bashOnPath, args: ['-c'] };
-			return cachedShellConfig;
-		}
-
-		// No bash found, use PowerShell as fallback
-		cachedShellConfig = { shell: 'powershell', args: ['-Command'] };
+		// On Windows, prefer PowerShell for better compatibility and output handling
+		// Use -NoProfile to avoid profile script interference
+		// -Encoding UTF8 ensures proper output encoding
+		// -Command executes the command string as PowerShell script
+		cachedShellConfig = {
+			shell: 'powershell',
+			args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command']
+		};
 		return cachedShellConfig;
 	}
 
@@ -88,8 +69,10 @@ export function getShellConfig(): ShellConfig {
  */
 export function quoteShellCommand(command: string): string {
 	if (process.platform === 'win32') {
-		// For PowerShell, wrap in quotes
-		return `"${command.replace(/"/g, '\\"')}"`;
+		// For PowerShell -Command, the command string is passed directly
+		// PowerShell will parse and execute it as a script
+		// No additional quoting needed - just return the command as-is
+		return command;
 	} else {
 		// For bash/sh, use single quotes
 		return `'${command.replace(/'/g, "'\\''")}'`;

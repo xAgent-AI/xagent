@@ -102,7 +102,6 @@ export class ComputerOperator extends Operator {
       'finished',
       'user_stop',
       'error_env',
-      'call_user',
     ];
   }
 
@@ -156,12 +155,12 @@ export class ComputerOperator extends Operator {
     const { parsedPrediction, screenWidth, screenHeight, scaleFactor } = params;
     const { action_type, action_inputs } = parsedPrediction;
 
-    // Empty or invalid action should return failed to avoid infinite loop
+    // Empty or invalid action should return needs_input to let main agent decide
     if (!action_type || action_type.trim() === '') {
-      this.logger.warn(`[ComputerOperator] Empty action, skipping step`);
+      this.logger.debug(`[ComputerOperator] Empty action, returning to main agent for decision`);
       return {
-        status: 'failed',
-        errorMessage: 'Empty or invalid action type'
+        status: 'needs_input',
+        errorMessage: 'Empty or invalid action type - returned to main agent for decision'
       };
     }
 
@@ -454,7 +453,6 @@ export class ComputerOperator extends Operator {
       }
 
       case 'error_env':
-      case 'call_user':
       case 'finished':
       case 'user_stop':
         this.logger.debug(`[ComputerOperator] ${actionType}`);
@@ -497,7 +495,6 @@ export class ComputerOperator extends Operator {
         // System
         `wait() # Sleep 5s and take a screenshot`,
         `finished() # Task completed`,
-        `call_user() # Need user's help`,
       ],
       
       KEY_SPACE: {

@@ -322,18 +322,17 @@ export class InteractiveSession {
       }
       // For OPENAI_COMPATIBLE with API key, skip validation and proceed directly
 
-      this.aiClient = new AIClient(authConfig);
-      this.contextCompressor.setAIClient(this.aiClient);
-
-      // Initialize remote AI client for OAuth XAGENT mode
-      logger.debug('[SESSION] Final selectedAuthType:', String(selectedAuthType));
-      logger.debug('[SESSION] Creating RemoteAIClient?', String(selectedAuthType === AuthType.OAUTH_XAGENT));
+      // Initialize AI clients and set contextCompressor appropriately
       if (selectedAuthType === AuthType.OAUTH_XAGENT) {
+        // Remote mode: create RemoteAIClient and use it for context compression
         const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-        // In OAuth XAGENT mode, we still pass apiKey (can be empty or used for other purposes)
         this.remoteAIClient = new RemoteAIClient(authConfig.apiKey || '', webBaseUrl, authConfig.showAIDebugInfo);
+        this.contextCompressor.setAIClient(this.remoteAIClient);
         logger.debug('[DEBUG Initialize] RemoteAIClient created successfully');
       } else {
+        // Local mode: create local AIClient
+        this.aiClient = new AIClient(authConfig);
+        this.contextCompressor.setAIClient(this.aiClient);
         logger.debug('[DEBUG Initialize] RemoteAIClient NOT created (not OAuth XAGENT mode)');
       }
 

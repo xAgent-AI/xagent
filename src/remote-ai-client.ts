@@ -736,6 +736,42 @@ export class RemoteAIClient extends EventEmitter {
 
     return response.data;
   }
+
+  /**
+   * Compress context - generate summary for long conversations
+   * Uses separate /api/agent/compress endpoint that doesn't require taskId
+   */
+  async compress(
+    messages: Message[],
+    options: { maxTokens?: number; temperature?: number } = {}
+  ): Promise<ChatCompletionResponse> {
+    const url = `${this.agentApi}/compress`;
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Compressing context:', url);
+      console.log('[RemoteAIClient] Message count:', messages.length);
+    }
+
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+    const response = await axios.post(url, {
+      messages,
+      maxTokens: options.maxTokens || 4096,
+      temperature: options.temperature || 0.3
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.authToken}`,
+        'xagent-cli-version': '1.0'
+      },
+      httpsAgent,
+      timeout: 60000
+    });
+
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Compression complete');
+    }
+
+    return response.data;
+  }
 }
 
 export interface ModelInfo {

@@ -1522,6 +1522,20 @@ export class AIClient {
       return false;
     });
   }
+
+  /**
+   * Compress context - generate summary for long conversations
+   * Local mode: calls LLM directly via chatCompletion
+   */
+  async compress(
+    messages: Message[],
+    options: { maxTokens?: number; temperature?: number } = {}
+  ): Promise<ChatCompletionResponse> {
+    return this.chatCompletion(messages, {
+      maxTokens: options.maxTokens || 4096,
+      temperature: options.temperature || 0.3
+    });
+  }
 }
 
 export function detectThinkingKeywords(text: string): 'none' | 'normal' | 'hard' | 'mega' | 'ultra' {

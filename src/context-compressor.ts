@@ -686,7 +686,7 @@ export class ContextCompressor {
       content: promptText
     };
 
-    const aiPromise = this.aiClient.chatCompletion([summaryMessage], {
+    const aiPromise = this.aiClient.compress([summaryMessage], {
       maxTokens,
       temperature: 0.3
     });
@@ -738,7 +738,7 @@ export class ContextCompressor {
       content: promptText
     };
 
-    const aiPromise = this.aiClient.chatCompletion([summaryMessage], {
+    const aiPromise = this.aiClient.compress([summaryMessage], {
       maxTokens,
       temperature: 0.3
     });

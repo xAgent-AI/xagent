@@ -17,6 +17,7 @@ import { AuthConfig, AuthType } from './types.js';
  */
 export interface AIClientInterface {
   chatCompletion(messages: Message[], options?: ChatCompletionOptions): Promise<ChatCompletionResponse>;
+  compress(messages: Message[], options?: { maxTokens?: number; temperature?: number }): Promise<ChatCompletionResponse>;
 }
 
 /**

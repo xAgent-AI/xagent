@@ -165,6 +165,12 @@ program
 
     if (success) {
       const authConfig = authService.getAuthConfig();
+      
+      // Clear modelName for remote mode
+      if (authType === AuthType.OAUTH_XAGENT) {
+        authConfig.modelName = '';
+      }
+      
       await configManager.setAuthConfig(authConfig);
       
       // Set default remote provider settings if not already set

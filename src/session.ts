@@ -493,6 +493,11 @@ export class InteractiveSession {
 
     const authConfig = authService.getAuthConfig();
 
+    // Clear modelName for remote mode
+    if (authType === AuthType.OAUTH_XAGENT) {
+      authConfig.modelName = '';
+    }
+
     // VLM configuration is optional - only show for non-OAuth (local) mode
     // Remote mode uses backend VLM configuration
     if (authType !== AuthType.OAUTH_XAGENT) {

@@ -456,7 +456,7 @@ export class SlashCommandHandler {
             apiKey: newAuthConfig.apiKey,
             refreshToken: newAuthConfig.refreshToken,
             baseUrl: newAuthConfig.baseUrl,
-            modelName: newAuthConfig.modelName,
+            modelName: '',  // Clear modelName for remote mode
             xagentApiBaseUrl: newAuthConfig.xagentApiBaseUrl,
             guiSubagentModel: '',
             guiSubagentBaseUrl: 'https://www.xagent-colife.net/v3',

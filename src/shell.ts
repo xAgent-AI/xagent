@@ -29,7 +29,7 @@ export function getPowerShellVersion(): string {
 	}
 
 	try {
-		const result = spawnSync('powershell', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major.$Minor.$Build'], {
+		const result = spawnSync('powershell', ['-NoProfile', '-Command', '($PSVersionTable.PSVersion | Select-Object -ExpandProperty Major), ($PSVersionTable.PSVersion | Select-Object -ExpandProperty Minor), ($PSVersionTable.PSVersion | Select-Object -ExpandProperty Build) -join "."'], {
 			encoding: 'utf-8',
 			timeout: 5000
 		});

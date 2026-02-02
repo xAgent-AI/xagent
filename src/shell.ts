@@ -19,6 +19,30 @@ function findBashOnPath(): string | null {
 	return null;
 }
 
+/**
+ * Get PowerShell version on Windows.
+ * @returns Version string (e.g., "5.1.22621") or "Unknown" if detection fails
+ */
+export function getPowerShellVersion(): string {
+	if (process.platform !== 'win32') {
+		return 'N/A';
+	}
+
+	try {
+		const result = spawnSync('powershell', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.Major.$Minor.$Build'], {
+			encoding: 'utf-8',
+			timeout: 5000
+		});
+
+		if (result.status === 0 && result.stdout.trim()) {
+			return result.stdout.trim();
+		}
+	} catch {
+		// Ignore errors
+	}
+	return 'Unknown';
+}
+
 interface ShellConfig {
 	/** Path to the shell executable */
 	shell: string;

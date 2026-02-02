@@ -3,6 +3,7 @@ import { ExecutionMode, AgentConfig } from './types.js';
 import { getAgentManager } from './agents.js';
 import { getSkillInvoker, SkillInfo } from './skill-invoker.js';
 import { MCPManager } from './mcp.js';
+import { getPowerShellVersion } from './shell.js';
 import os from 'os';
 
 export interface ToolParameter {
@@ -36,33 +37,6 @@ export class SystemPromptGenerator {
   }
 
   /**
-   * Get PowerShell version on Windows
-   */
-  private getPowerShellVersion(): string {
-    if (process.platform !== 'win32') {
-      return 'N/A';
-    }
-
-    try {
-      const { spawnSync } = require('child_process');
-      const result = spawnSync('powershell', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion'], {
-        encoding: 'utf-8',
-        timeout: 5000
-      });
-      
-      if (result.status === 0 && result.stdout) {
-        const versionMatch = result.stdout.match(/^(\d+\.\d+\.\d+)/m);
-        if (versionMatch) {
-          return versionMatch[1];
-        }
-      }
-    } catch {
-      // Ignore errors
-    }
-    return 'Unknown';
-  }
-
-  /**
    * Generate system environment information for the LLM
    */
   private generateEnvironmentInfo(): string {
@@ -83,41 +57,24 @@ export class SystemPromptGenerator {
     };
 
     // Get PowerShell version for Windows
-    const psVersion = platform === 'win32' ? this.getPowerShellVersion() : 'N/A';
-    const psSupportsChainOperators = psVersion >= '7.0';
+    const psVersion = platform === 'win32' ? getPowerShellVersion() : 'N/A';
+    const psMajorVersion = parseInt(psVersion.split('.')[0], 10);
+    const psSupportsChaining = !isNaN(psMajorVersion) && psMajorVersion >= 7;
 
-    // Generate PowerShell syntax rules based on version
+    // Generate PowerShell syntax rules
     let psSyntaxRules = '';
     if (platform === 'win32') {
-      if (psSupportsChainOperators) {
+      if (psSupportsChaining) {
         psSyntaxRules = `
-**Windows PowerShell Syntax Rules** (v${psVersion}):
-- PowerShell 7+ supports \`&&\` and \`||\` pipeline chain operators
-- Use \`command1 && command2\` to run command2 only if command1 succeeds
-- Use \`command1 || command2\` to run command2 only if command1 fails
-- For older syntax compatibility, also works: \`command1; command2\`
-- Common Windows equivalents:
-  - \`ls\` → \`dir\` or \`Get-ChildItem\`
-  - \`cat\` → \`type\` or \`Get-Content\`
-  - \`rm\` → \`Remove-Item\` or \`del\`
-  - \`sleep\` → \`Start-Sleep -Seconds N\`
-  - \`echo\` → \`Write-Output\` or \`echo\``;
+**PowerShell Syntax** (v${psVersion}):
+- Supports \`&&\` and \`||\` for command chaining
+- Also supports \`;\` for sequential execution`;
       } else {
         psSyntaxRules = `
-**Windows PowerShell Syntax Rules** (v${psVersion}):
-- PowerShell ${psVersion} does NOT support \`&&\` or \`||\` command chaining (these are bash features)
-- PowerShell 7+ is required for \`&&\` and \`||\` support
-- Use semicolon \`;\` to chain commands sequentially: \`command1; command2\`
-- For conditional execution, use PowerShell's native syntax:
-  - Success-dependent: \`if ($?) { command2 }\`
-  - Failure-dependent: \`if (!$?) { command2 }\`
-- Common Windows equivalents:
-  - \`ls\` → \`dir\` or \`Get-ChildItem\`
-  - \`cat\` → \`type\` or \`Get-Content\`
-  - \`rm\` → \`Remove-Item\` or \`del\`
-  - \`sleep\` → \`Start-Sleep -Seconds N\`
-  - \`echo\` → \`Write-Output\` or \`echo\`
-- Upgrade to PowerShell 7+ for modern chain operator support: \`winget install Microsoft.PowerShell\``;
+**PowerShell Syntax** (v${psVersion}):
+- Does NOT support \`&&\` or \`||\` (use \`;\` instead)
+- Use \`if ($?) { cmd2 }\` for conditional execution
+- Common: \`ls\`→\`dir\`, \`cat\`→\`type\`, \`rm\`→\`Remove-Item\`, \`sleep\`→\`Start-Sleep\``;
       }
     }
 
@@ -126,7 +83,6 @@ export class SystemPromptGenerator {
 
 - **Operating System**: ${osName[platform] || platform} (${platform}) ${os.arch()}
 - **Node.js Version**: ${nodeVersion}
-- **PowerShell Version**: ${psVersion}
 - **Current Working Directory**: ${cwd}
 - **User Home Directory**: ${homeDir}
 - **Current User**: ${username}

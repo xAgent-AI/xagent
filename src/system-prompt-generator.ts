@@ -65,10 +65,20 @@ export class SystemPromptGenerator {
 - **Current User**: ${username}
 - **Current Date**: ${currentDate} (Timezone: ${timeZone})
 
-**Command Syntax Notes**:
-- Use PowerShell/CMD syntax for Windows (e.g., \`dir\` instead of \`ls\`, \`type\` instead of \`cat\`)
-- Use \`&&\` for command chaining on Unix-like systems
-- Use \`;\` for command chaining on Windows`;
+**Windows PowerShell Syntax Rules**:
+- PowerShell does NOT support \`&&\` or \`||\` command chaining (these are bash features)
+- Use semicolon \`;\` to chain commands sequentially: \`command1; command2\`
+- For conditional execution, use PowerShell's native syntax:
+  - Success-dependent: \`if ($?) { command2 }\` or \`& command1; if ($?) { command2 }\`
+  - Failure-dependent: \`if (!$?) { command2 }\`
+- Common Windows equivalents:
+  - \`ls\` → \`dir\` or \`Get-ChildItem\`
+  - \`cat\` → \`type\` or \`Get-Content\`
+  - \`rm\` → \`Remove-Item\` or \`del\`
+  - \`mkdir\` → \`New-Item -ItemType Directory\` or \`mkdir\`
+  - \`sleep\` → \`Start-Sleep -Seconds N\`
+  - \`echo\` → \`Write-Output\` or \`echo\`
+- Always prefer native PowerShell cmdlets for cross-session compatibility`;
   }
 
   async generateEnhancedSystemPrompt(baseSystemPrompt: string): Promise<string> {

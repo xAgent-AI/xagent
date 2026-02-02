@@ -462,10 +462,14 @@ export class SlashCommandHandler {
             guiSubagentBaseUrl: 'https://www.xagent-colife.net/v3',
             guiSubagentApiKey: ''
           });
-          // Clear remote provider settings
-          await this.configManager.set('remote_llmProvider', '');
-          await this.configManager.set('remote_vlmProvider', '');
-          await this.configManager.save('global');
+          // Set default remote provider settings if not already set
+          if (!this.configManager.get('remote_llmProvider')) {
+            this.configManager.set('remote_llmProvider', 'Default');
+          }
+          if (!this.configManager.get('remote_vlmProvider')) {
+            this.configManager.set('remote_vlmProvider', 'Default');
+          }
+          this.configManager.save('global');
 
           // Notify InteractiveSession to update aiClient config
           if (this.onConfigUpdate) {
@@ -500,10 +504,7 @@ export class SlashCommandHandler {
             guiSubagentBaseUrl: '',
             guiSubagentApiKey: ''
           });
-          // Clear remote provider settings when switching to local mode
-          await this.configManager.set('remote_llmProvider', '');
-          await this.configManager.set('remote_vlmProvider', '');
-          await this.configManager.save('global');
+          this.configManager.save('global');
 
           // Notify InteractiveSession to update aiClient config
           if (this.onConfigUpdate) {

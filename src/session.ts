@@ -504,6 +504,17 @@ export class InteractiveSession {
 
     // Save LLM config only, skip VLM for now
     await this.configManager.setAuthConfig(authConfig);
+    
+    // Set default remote provider settings if not already set
+    if (authType === AuthType.OAUTH_XAGENT) {
+      if (!this.configManager.get('remote_llmProvider')) {
+        this.configManager.set('remote_llmProvider', 'Default');
+      }
+      if (!this.configManager.get('remote_vlmProvider')) {
+        this.configManager.set('remote_vlmProvider', 'Default');
+      }
+      this.configManager.save('global');
+    }
   }
 
   private showWelcomeMessage(): void {

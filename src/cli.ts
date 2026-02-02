@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { startInteractiveSession } from './session.js';
 import { getConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
+import { AuthType } from './types.js';
 import { getAgentManager } from './agents.js';
 import { getMCPManager } from './mcp.js';
 import { getLogger, setConfigProvider } from './logger.js';
@@ -165,6 +166,17 @@ program
     if (success) {
       const authConfig = authService.getAuthConfig();
       await configManager.setAuthConfig(authConfig);
+      
+      // Set default remote provider settings if not already set
+      if (authType === AuthType.OAUTH_XAGENT) {
+        if (!configManager.get('remote_llmProvider')) {
+          configManager.set('remote_llmProvider', 'Default');
+        }
+        if (!configManager.get('remote_vlmProvider')) {
+          configManager.set('remote_vlmProvider', 'Default');
+        }
+        configManager.save('global');
+      }
 
       console.log('');
       console.log(colors.success('Authentication configured successfully!'));

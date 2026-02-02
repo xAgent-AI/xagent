@@ -2,6 +2,7 @@ import { ChatMessage, CompressionConfig } from './types.js';
 import { AIClient, Message } from './ai-client.js';
 import { AuthConfig } from './types.js';
 import { getCancellationManager } from './cancellation.js';
+import { createAIClient, AIClientInterface } from './ai-client-factory.js';
 
 /**
  * Model context window sizes (in tokens)
@@ -255,18 +256,18 @@ Summarize the prefix to provide context for the retained suffix:
 Be concise. Focus on what's needed to understand the kept suffix.`;
 
 export class ContextCompressor {
-  private aiClient: AIClient | null = null;
+  private aiClient: AIClientInterface | null = null;
   private defaultConfig: CompressionConfig = {
     enabled: true
   };
 
   constructor(authConfig?: AuthConfig) {
     if (authConfig) {
-      this.aiClient = new AIClient(authConfig);
+      this.aiClient = createAIClient(authConfig);
     }
   }
 
-  setAIClient(aiClient: AIClient): void {
+  setAIClient(aiClient: AIClientInterface): void {
     this.aiClient = aiClient;
   }
 

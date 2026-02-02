@@ -228,7 +228,7 @@ export class InteractiveSession {
               frameIndex = (frameIndex + 1) % frames.length;
             }, 120);
       logger.debug('[SESSION] 调用 configManager.load()...');
-      await this.configManager.load();
+      this.configManager.load();
 
       logger.debug('[SESSION] Config loaded');
       let authConfig = this.configManager.getAuthConfig();
@@ -262,9 +262,8 @@ export class InteractiveSession {
           process.stdout.write('\r' + ' '.repeat(50) + '\r');
 
           if (newToken) {
-            // Save new token and persist
-            await this.configManager.set('apiKey', newToken);
-            await this.configManager.save('global');
+            this.configManager.set('apiKey', newToken);
+            this.configManager.save('global');
             authConfig.apiKey = newToken;
             isValid = true;
           }
@@ -276,13 +275,11 @@ export class InteractiveSession {
           console.log(colors.info('Please select an authentication method to continue.'));
           console.log('');
 
-          // Clear invalid credentials and persist
-          // Note: Do NOT overwrite selectedAuthType - let user re-select their preferred auth method
-          await this.configManager.set('apiKey', '');
-          await this.configManager.set('refreshToken', '');
-          await this.configManager.save('global');
+          this.configManager.set('apiKey', '');
+          this.configManager.set('refreshToken', '');
+          this.configManager.save('global');
 
-          await this.configManager.load();
+          this.configManager.load();
           authConfig = this.configManager.getAuthConfig();
 
           await this.setupAuthentication();
@@ -506,8 +503,7 @@ export class InteractiveSession {
       console.log('');
     }
 
-    // Save LLM config only, skip VLM for now
-    await this.configManager.setAuthConfig(authConfig);
+    this.configManager.setAuthConfig(authConfig);
     
     // Set default remote provider settings if not already set
     if (authType === AuthType.OAUTH_XAGENT) {
@@ -1186,9 +1182,9 @@ export class InteractiveSession {
         console.log('');
 
         // Clear invalid credentials and persist
-        await this.configManager.set('apiKey', '');
-        await this.configManager.set('refreshToken', '');
-        await this.configManager.save('global');
+        this.configManager.set('apiKey', '');
+        this.configManager.set('refreshToken', '');
+        this.configManager.save('global');
 
         logger.debug('[DEBUG generateRemoteResponse] Cleared invalid credentials, starting re-authentication...');
 
@@ -1196,8 +1192,7 @@ export class InteractiveSession {
         await this.setupAuthentication();
 
         // Reload config to ensure we have the latest authConfig
-        logger.debug('[DEBUG generateRemoteResponse] Re-authentication completed, reloading config...');
-        await this.configManager.load();
+        this.configManager.load();
         const authConfig = this.configManager.getAuthConfig();
 
         logger.debug('[DEBUG generateRemoteResponse] After re-auth:');

@@ -3,6 +3,7 @@ import { ExecutionMode, AgentConfig } from './types.js';
 import { getAgentManager } from './agents.js';
 import { getSkillInvoker, SkillInfo } from './skill-invoker.js';
 import { MCPManager } from './mcp.js';
+import os from 'os';
 
 export interface ToolParameter {
   type: string;
@@ -34,6 +35,42 @@ export class SystemPromptGenerator {
     this.mcpManager = mcpManager;
   }
 
+  /**
+   * Generate system environment information for the LLM
+   */
+  private generateEnvironmentInfo(): string {
+    const platform = os.platform();
+    const arch = os.arch();
+    const nodeVersion = process.version;
+    const cwd = process.cwd();
+    const homeDir = os.homedir();
+    const username = os.userInfo().username;
+    const currentDate = new Date().toISOString().split('T')[0];
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // Map platform to human-readable OS name
+    const osName: Record<string, string> = {
+      'win32': 'Windows',
+      'darwin': 'macOS',
+      'linux': 'Linux'
+    };
+
+    return `
+## System Environment Information
+
+- **Operating System**: ${osName[platform] || platform} (${platform}) ${os.arch()}
+- **Node.js Version**: ${nodeVersion}
+- **Current Working Directory**: ${cwd}
+- **User Home Directory**: ${homeDir}
+- **Current User**: ${username}
+- **Current Date**: ${currentDate} (Timezone: ${timeZone})
+
+**Command Syntax Notes**:
+- Use PowerShell/CMD syntax for Windows (e.g., \`dir\` instead of \`ls\`, \`type\` instead of \`cat\`)
+- Use \`&&\` for command chaining on Unix-like systems
+- Use \`;\` for command chaining on Windows`;
+  }
+
   async generateEnhancedSystemPrompt(baseSystemPrompt: string): Promise<string> {
     let localTools = this.toolRegistry.getAll().filter(
       tool => tool.allowedModes.includes(this.executionMode)
@@ -49,6 +86,9 @@ export class SystemPromptGenerator {
     let allAvailableTools = localTools;
 
     let enhancedPrompt = baseSystemPrompt;
+
+    // Add system environment information
+    enhancedPrompt += this.generateEnvironmentInfo();
 
     // Only add tool-related content if tools are available
     if (allAvailableTools.length > 0) {

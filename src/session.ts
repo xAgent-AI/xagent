@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
-import { ExecutionMode, ChatMessage, ToolCall, AuthType, AuthConfig } from './types.js';
+import { ExecutionMode, ChatMessage, ToolCall, AuthType, AuthConfig, AgentConfig, ToolCallItem } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { RemoteAIClient, TokenInvalidError } from './remote-ai-client.js';
 import { getConfigManager, ConfigManager } from './config.js';
@@ -47,7 +47,7 @@ export class InteractiveSession {
   private memoryManager: MemoryManager;
   private mcpManager: MCPManager;
   private checkpointManager: CheckpointManager;
-  private currentAgent: any = null;
+  private currentAgent: AgentConfig | null = null;
   private rl: readline.Interface;
   private cancellationManager: CancellationManager;
   private indentLevel: number;
@@ -172,7 +172,7 @@ export class InteractiveSession {
     this.slashCommandHandler.setConversationHistory(this.conversation);
   }
 
-  setAgent(agent: any): void {
+  setAgent(agent: AgentConfig): void {
     this.currentAgent = agent;
   }
 
@@ -392,7 +392,7 @@ export class InteractiveSession {
         await this.checkpointManager.initialize();
       }
 
-      this.currentAgent = this.agentManager.getAgent('general-purpose');
+      this.currentAgent = this.agentManager.getAgent('general-purpose') ?? null;
 
       console.log(colors.success('✔ Initialization complete'));
     } catch (error: any) {
@@ -666,7 +666,7 @@ export class InteractiveSession {
     await this.processUserMessage(task, agent);
   }
 
-  public async processUserMessage(message: string, agent?: any): Promise<void> {
+  public async processUserMessage(message: string, agent?: AgentConfig): Promise<void> {
     const inputs = parseInput(message);
     const textInput = inputs.find(i => i.type === 'text');
     const fileInputs = inputs.filter(i => i.type === 'file');
@@ -1021,10 +1021,11 @@ export class InteractiveSession {
 
       // Available tools for this session
       const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
-        ? toolDefinitions.filter((tool: any) => allowedToolNames.includes(tool.function.name))
+        ? toolDefinitions.filter((tool): tool is { function: { name: string } } =>
+            typeof tool.function?.name === 'string' && allowedToolNames.includes(tool.function.name))
         : toolDefinitions;
 
-      const baseSystemPrompt = this.currentAgent?.systemPrompt;
+      const baseSystemPrompt = this.currentAgent?.systemPrompt ?? '';
       const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
       const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
@@ -1246,7 +1247,7 @@ export class InteractiveSession {
     }
   }
 
-  private async handleToolCalls(toolCalls: any[], onComplete?: () => Promise<void>): Promise<void> {
+  private async handleToolCalls(toolCalls: ToolCallItem[], onComplete?: () => Promise<void>): Promise<void> {
     // Mark that tool execution is in progress
     (this as any)._isOperationInProgress = true;
 

@@ -197,3 +197,21 @@ export interface CompressionStats {
   originalMessagesTotal: number;
   compressedMessagesTotal: number;
 }
+
+export interface Agent {
+  name: string;
+  description: string;
+  systemPrompt: string;
+  capabilities: string[];
+}
+
+export interface ToolCallFunction {
+  name: string;
+  arguments: string;
+}
+
+export interface ToolCallItem {
+  id?: string;
+  type?: string;
+  function: ToolCallFunction;
+}

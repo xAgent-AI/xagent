@@ -44,7 +44,7 @@ export enum GUIAgentStatus {
   END = 'end',
   ERROR = 'error',
   USER_STOPPED = 'user_stopped',
-  CALL_USER = 'call_user',
+  CALL_LLM = 'call_llm',
 }
 
 /**
@@ -246,9 +246,6 @@ export class GUIAgent<T extends Operator> {
         if (data.error) {
           console.log(`${indent}${colors.error(`${icons.cross} ${data.error}`)}`);
         }
-        break;
-      case GUIAgentStatus.CALL_USER:
-        console.log(`${indent}${colors.warning(`${icons.warning} Needs user input`)}`);
         break;
       case GUIAgentStatus.USER_STOPPED:
         console.log(`${indent}${colors.warning(`${icons.warning} Stopped`)}`);
@@ -652,6 +649,13 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
                   // 'finished' action or explicit end
                   stepSuccess = true;
                   break;
+                } else if (executeResult.status === 'needs_input') {
+                  // Empty action - return to main agent for re-calling LLM
+                  this.logger.debug(`[GUIAgent] Empty action received, returning to main agent for LLM decision`);
+                  data.status = GUIAgentStatus.CALL_LLM;
+                  data.error = 'Empty action - main agent should re-call LLM to decide next step';
+                  stepSuccess = true;
+                  return data; // Return immediately with all results to main agent
                 }
 
                 // Any other status (success, failed, etc.) is considered success
@@ -700,10 +704,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           }
 
           // Handle special action types
-          if (actionType === 'call_user') {
-            data.status = GUIAgentStatus.CALL_USER;
-            break;
-          } else if (actionType === 'finished') {
+          if (actionType === 'finished') {
             data.status = GUIAgentStatus.END;
             break;
           }

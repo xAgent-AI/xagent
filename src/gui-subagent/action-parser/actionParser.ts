@@ -17,6 +17,9 @@ import {
   MAX_PIXELS_V1_5,
 } from './constants.js';
 import isNumber from 'lodash.isnumber';
+import { getLogger } from '../../logger.js';
+
+const logger = getLogger();
 
 function roundByFactor(num: number, factor: number): number {
   return Math.round(num / factor) * factor;
@@ -39,7 +42,7 @@ function smartResizeForV15(
   maxPixels: number = MAX_PIXELS_V1_5,
 ): [number, number] | null {
   if (Math.max(height, width) / Math.min(height, width) > maxRatio) {
-    console.error(
+    logger.error(
       `absolute aspect ratio must be smaller than ${maxRatio}, got ${
         Math.max(height, width) / Math.min(height, width)
       }`,
@@ -309,7 +312,7 @@ function parseAction(actionStr: string) {
       args: kwargs,
     };
   } catch (e) {
-    console.warn(`[ActionParser] Skipping invalid action: '${actionStr}'`);
+    logger.debug(`[ActionParser] Skipping invalid action: '${actionStr}'`);
     return null;
   }
 }

@@ -1611,26 +1611,65 @@ export class TaskTool implements Tool {
       process.stdout.write('\n');
 
       // Return result based on GUIAgent status
+      // Always return all info except screenshots (base64) to avoid huge payload
+      const conversationsWithoutScreenshots = result.conversations.map((conv: any) => ({
+        ...conv,
+        screenshotBase64: undefined  // Remove screenshots to avoid huge payload
+      }));
+
       if (result.status === 'end') {
-        const iterations = result.conversations.filter(c => c.from === 'human' && c.screenshotBase64).length;
+        const iterations = conversationsWithoutScreenshots.filter((c: any) => c.from === 'human' && c.screenshotContext).length;
         console.log(`${indent}${colors.success(`${icons.check} GUI task completed in ${iterations} iterations`)}`);
         return {
           success: true,
           message: `GUI task "${description}" completed`,
-          result: `Completed in ${iterations} iterations`
+          result: {
+            status: result.status,
+            iterations,
+            actions: conversationsWithoutScreenshots.filter((c: any) => c.from === 'assistant' && c.actionType).map((c: any) => c.actionType),
+            conversations: conversationsWithoutScreenshots,
+            error: result.error
+          }
+        };
+      } else if (result.status === 'call_llm') {
+        // Empty action or needs LLM decision - return to main agent with full context
+        console.log(`${indent}${colors.warning(`${icons.warning} GUI agent returned to main agent for LLM decision`)}`);
+        return {
+          success: true,
+          message: `GUI task "${description}" returned for LLM decision`,
+          result: {
+            status: result.status,
+            iterations: conversationsWithoutScreenshots.filter((c: any) => c.from === 'human' && c.screenshotContext).length,
+            actions: conversationsWithoutScreenshots.filter((c: any) => c.from === 'assistant' && c.actionType).map((c: any) => c.actionType),
+            conversations: conversationsWithoutScreenshots,
+            error: result.error
+          }
         };
       } else if (result.status === 'user_stopped') {
         return {
           success: true,
           message: `GUI task "${description}" stopped by user`,
-          result: 'User stopped'
+          result: {
+            status: result.status,
+            iterations: conversationsWithoutScreenshots.filter((c: any) => c.from === 'human' && c.screenshotContext).length,
+            actions: conversationsWithoutScreenshots.filter((c: any) => c.from === 'assistant' && c.actionType).map((c: any) => c.actionType),
+            conversations: conversationsWithoutScreenshots,
+            stopped: true
+          }
         };
       } else {
         // status is 'error' or other non-success status
         const errorMsg = result.error || 'Unknown error';
         return {
           success: false,
-          message: `GUI task "${description}" failed: ${errorMsg}`
+          message: `GUI task "${description}" failed: ${errorMsg}`,
+          result: {
+            status: result.status,
+            iterations: conversationsWithoutScreenshots.filter((c: any) => c.from === 'human' && c.screenshotContext).length,
+            actions: conversationsWithoutScreenshots.filter((c: any) => c.from === 'assistant' && c.actionType).map((c: any) => c.actionType),
+            conversations: conversationsWithoutScreenshots,
+            error: result.error
+          }
         };
       }
     } catch (error: any) {

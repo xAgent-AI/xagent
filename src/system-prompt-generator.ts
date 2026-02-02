@@ -36,6 +36,33 @@ export class SystemPromptGenerator {
   }
 
   /**
+   * Get PowerShell version on Windows
+   */
+  private getPowerShellVersion(): string {
+    if (process.platform !== 'win32') {
+      return 'N/A';
+    }
+
+    try {
+      const { spawnSync } = require('child_process');
+      const result = spawnSync('powershell', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion'], {
+        encoding: 'utf-8',
+        timeout: 5000
+      });
+      
+      if (result.status === 0 && result.stdout) {
+        const versionMatch = result.stdout.match(/^(\d+\.\d+\.\d+)/m);
+        if (versionMatch) {
+          return versionMatch[1];
+        }
+      }
+    } catch {
+      // Ignore errors
+    }
+    return 'Unknown';
+  }
+
+  /**
    * Generate system environment information for the LLM
    */
   private generateEnvironmentInfo(): string {
@@ -55,30 +82,55 @@ export class SystemPromptGenerator {
       'linux': 'Linux'
     };
 
-    return `
-## System Environment Information
+    // Get PowerShell version for Windows
+    const psVersion = platform === 'win32' ? this.getPowerShellVersion() : 'N/A';
+    const psSupportsChainOperators = psVersion >= '7.0';
 
-- **Operating System**: ${osName[platform] || platform} (${platform}) ${os.arch()}
-- **Node.js Version**: ${nodeVersion}
-- **Current Working Directory**: ${cwd}
-- **User Home Directory**: ${homeDir}
-- **Current User**: ${username}
-- **Current Date**: ${currentDate} (Timezone: ${timeZone})
-
-**Windows PowerShell Syntax Rules**:
-- PowerShell does NOT support \`&&\` or \`||\` command chaining (these are bash features)
+    // Generate PowerShell syntax rules based on version
+    let psSyntaxRules = '';
+    if (platform === 'win32') {
+      if (psSupportsChainOperators) {
+        psSyntaxRules = `
+**Windows PowerShell Syntax Rules** (v${psVersion}):
+- PowerShell 7+ supports \`&&\` and \`||\` pipeline chain operators
+- Use \`command1 && command2\` to run command2 only if command1 succeeds
+- Use \`command1 || command2\` to run command2 only if command1 fails
+- For older syntax compatibility, also works: \`command1; command2\`
+- Common Windows equivalents:
+  - \`ls\` → \`dir\` or \`Get-ChildItem\`
+  - \`cat\` → \`type\` or \`Get-Content\`
+  - \`rm\` → \`Remove-Item\` or \`del\`
+  - \`sleep\` → \`Start-Sleep -Seconds N\`
+  - \`echo\` → \`Write-Output\` or \`echo\``;
+      } else {
+        psSyntaxRules = `
+**Windows PowerShell Syntax Rules** (v${psVersion}):
+- PowerShell ${psVersion} does NOT support \`&&\` or \`||\` command chaining (these are bash features)
+- PowerShell 7+ is required for \`&&\` and \`||\` support
 - Use semicolon \`;\` to chain commands sequentially: \`command1; command2\`
 - For conditional execution, use PowerShell's native syntax:
-  - Success-dependent: \`if ($?) { command2 }\` or \`& command1; if ($?) { command2 }\`
+  - Success-dependent: \`if ($?) { command2 }\`
   - Failure-dependent: \`if (!$?) { command2 }\`
 - Common Windows equivalents:
   - \`ls\` → \`dir\` or \`Get-ChildItem\`
   - \`cat\` → \`type\` or \`Get-Content\`
   - \`rm\` → \`Remove-Item\` or \`del\`
-  - \`mkdir\` → \`New-Item -ItemType Directory\` or \`mkdir\`
   - \`sleep\` → \`Start-Sleep -Seconds N\`
   - \`echo\` → \`Write-Output\` or \`echo\`
-- Always prefer native PowerShell cmdlets for cross-session compatibility`;
+- Upgrade to PowerShell 7+ for modern chain operator support: \`winget install Microsoft.PowerShell\``;
+      }
+    }
+
+    return `
+## System Environment Information
+
+- **Operating System**: ${osName[platform] || platform} (${platform}) ${os.arch()}
+- **Node.js Version**: ${nodeVersion}
+- **PowerShell Version**: ${psVersion}
+- **Current Working Directory**: ${cwd}
+- **User Home Directory**: ${homeDir}
+- **Current User**: ${username}
+- **Current Date**: ${currentDate} (Timezone: ${timeZone})${psSyntaxRules}`;
   }
 
   async generateEnhancedSystemPrompt(baseSystemPrompt: string): Promise<string> {

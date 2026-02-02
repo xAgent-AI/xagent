@@ -12,10 +12,12 @@ import { colors, icons, styleHelpers } from './theme.js';
 import { getLogger } from './logger.js';
 import { getCancellationManager } from './cancellation.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
-import { InteractiveSession } from './session.js';
+import { getSingletonSession } from './session.js';
 import { ripgrep, fdFind } from './ripgrep.js';
 import { getShellConfig, killProcessTree, quoteShellCommand } from './shell.js';
 import { truncateTail, buildTruncationNotice } from './truncate.js';
+import { createAIClient } from './ai-client-factory.js';
+import { AIClient } from './ai-client.js';
 
 //
 // Tool Description Pattern
@@ -1295,13 +1297,8 @@ export class TaskTool implements Tool {
       const { getConfigManager } = await import('./config.js');
       const config = getConfigManager();
       
-      const { AIClient } = await import('./ai-client.js');
-      const aiClient = new AIClient({
-        type: AuthType.OPENAI_COMPATIBLE,
-        apiKey: config.get('apiKey'),
-        baseUrl: config.get('baseUrl'),
-        modelName: config.get('modelName') || 'Qwen3-Coder'
-      });
+      const authConfig = config.getAuthConfig();
+      const aiClient = createAIClient(authConfig);
       
       const toolRegistry = getToolRegistry();
       
@@ -1739,15 +1736,30 @@ export class TaskTool implements Tool {
       }
     }
 
-    // Create a new AIClient for this subagent with its specific model
-    const { AIClient: SubAgentAIClient } = await import('./ai-client.js');
-    const subAgentClient = new SubAgentAIClient({
-      type: AuthType.OPENAI_COMPATIBLE,
-      apiKey: apiKey,
-      baseUrl: baseUrl,
-      modelName: modelName,
-      showAIDebugInfo: config.get('showAIDebugInfo') || false
-    });
+    // Create AI client for this subagent
+    let subAgentClient;
+    const authConfig = config.getAuthConfig();
+    
+    if (authConfig.type === AuthType.OAUTH_XAGENT) {
+      // Remote mode: try to reuse session's RemoteAIClient first
+      const session = getSingletonSession();
+      const existingClient = session?.getRemoteAIClient();
+      
+      if (existingClient) {
+        subAgentClient = existingClient;
+      } else {
+        subAgentClient = createAIClient(authConfig);
+      }
+    } else {
+      // Local mode: create client with subagent-specific model config
+      subAgentClient = new AIClient({
+        type: AuthType.OPENAI_COMPATIBLE,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+        modelName: modelName,
+        showAIDebugInfo: config.get('showAIDebugInfo') || false
+      });
+    }
     
     const indent = '  '.repeat(indentLevel);
     const indentNext = '  '.repeat(indentLevel + 1);
@@ -2741,17 +2753,12 @@ export class ImageReadTool implements Tool {
         imageData = image_input;
       }
       
-      const { AIClient } = await import('./ai-client.js');
       const configManager = await import('./config.js');
       const { getConfigManager } = configManager;
       const config = getConfigManager();
+      const authConfig = config.getAuthConfig();
       
-      const aiClient = new AIClient({
-        type: AuthType.OPENAI_COMPATIBLE,
-        apiKey: config.get('apiKey'),
-        baseUrl: config.get('baseUrl'),
-        modelName: config.get('modelName') || 'Qwen3-Coder'
-      });
+      const aiClient = createAIClient(authConfig);
       
       const textContent = task_brief ? `${task_brief}\n\n${prompt}` : prompt;
       const messages: Message[] = [

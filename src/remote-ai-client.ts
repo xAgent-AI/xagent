@@ -91,7 +91,7 @@ export class RemoteAIClient extends EventEmitter {
    * Non-streaming chat - send messages and receive full response
    */
   async chat(
-    messages: ChatMessage[],
+    messages: Message[],
     remoteChatOptions: RemoteChatOptions = {}
   ): Promise<SessionOutput> {
     // Pass complete messages array to backend, backend forwards directly to LLM
@@ -389,7 +389,7 @@ export class RemoteAIClient extends EventEmitter {
    * Implements transparency: caller doesn't need to know remote vs local mode
    */
   async chatCompletion(
-    messages: ChatMessage[],
+    messages: Message[],
     options: ChatCompletionOptions = {}
   ): Promise<ChatCompletionResponse> {
     const model = options.model || 'remote-llm';

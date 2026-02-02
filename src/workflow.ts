@@ -222,7 +222,7 @@ export class WorkflowManager {
       }
     }
 
-    await configManager.save(scope);
+    configManager.save(scope);
     console.log(`✅ Installed ${Object.keys(workflow.mcpServers).length} MCP servers`);
   }
 
@@ -313,7 +313,7 @@ export class WorkflowManager {
       }
     }
 
-    await configManager.save(scope);
+    configManager.save(scope);
   }
 
   listWorkflows(): WorkflowConfig[] {

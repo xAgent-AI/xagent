@@ -128,7 +128,7 @@ program
       }
 
       configManager.setApprovalMode(options.approvalMode as any);
-      await configManager.save('global');
+      configManager.save('global');
       console.log('');
       console.log(colors.success(`✅ Approval mode set to: ${options.approvalMode}`));
       console.log('');
@@ -171,7 +171,7 @@ program
         authConfig.modelName = '';
       }
       
-      await configManager.setAuthConfig(authConfig);
+      configManager.setAuthConfig(authConfig);
       
       // Set default remote provider settings if not already set
       if (authType === AuthType.OAUTH_XAGENT) {
@@ -300,7 +300,7 @@ program
         mcpManager.disconnectServer(options.remove);
         const mcpServers = configManager.getMcpServers();
         delete mcpServers[options.remove];
-        await configManager.save(options.scope);
+        configManager.save(options.scope);
         console.log('');
         console.log(colors.success(`MCP server ${options.remove} removed successfully`));
         console.log('');

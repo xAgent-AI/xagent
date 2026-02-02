@@ -69,7 +69,7 @@ export class ConfigManager {
     this.settings = { ...DEFAULT_SETTINGS };
   }
 
-  async load(): Promise<Settings> {
+  load(): Settings {
     logger.debug('[CONFIG] ========== load() 开始 ==========');
     logger.debug('[CONFIG] globalConfigPath:', this.globalConfigPath);
     logger.debug('[CONFIG] projectConfigPath:', this.projectConfigPath);
@@ -114,7 +114,7 @@ export class ConfigManager {
     }
   }
 
-  async save(scope: 'global' | 'project' = 'global'): Promise<void> {
+  save(scope: 'global' | 'project' = 'global'): void {
     const configPath = scope === 'global' ? this.globalConfigPath : this.projectConfigPath;
     if (!configPath) {
       throw new Error('Project config path not set');
@@ -168,11 +168,9 @@ export class ConfigManager {
     return result;
   }
 
-  async setAuthConfig(config: Partial<Settings> & { xagentApiBaseUrl?: string }): Promise<void> {
-    // Extract xagentApiBaseUrl separately since it's not in Settings
+  setAuthConfig(config: Partial<Settings> & { xagentApiBaseUrl?: string }): void {
     const { xagentApiBaseUrl, type, ...otherConfig } = config as any;
     
-    // Map 'type' to 'selectedAuthType' (AuthConfig uses 'type', Settings uses 'selectedAuthType')
     if (type !== undefined) {
       this.settings.selectedAuthType = type;
     }
@@ -181,7 +179,7 @@ export class ConfigManager {
     if (xagentApiBaseUrl !== undefined) {
       this.settings.xagentApiBaseUrl = xagentApiBaseUrl;
     }
-    await this.save('global');
+    this.save('global');
   }
 
   getExecutionMode(): ExecutionMode {
@@ -303,9 +301,9 @@ export class ConfigManager {
     return this.settings;
   }
 
-  async resetToDefaults(): Promise<void> {
+  resetToDefaults(): void {
     this.settings = { ...DEFAULT_SETTINGS };
-    await this.save('global');
+    this.save('global');
   }
 }
 

@@ -449,14 +449,13 @@ export class SlashCommandHandler {
 
         const success = await authService.authenticate();
         if (success) {
-          // Save the new configuration
           const newAuthConfig = authService.getAuthConfig();
-          await this.configManager.setAuthConfig({
+          this.configManager.setAuthConfig({
             selectedAuthType: newAuthConfig.type,
             apiKey: newAuthConfig.apiKey,
             refreshToken: newAuthConfig.refreshToken,
             baseUrl: newAuthConfig.baseUrl,
-            modelName: '',  // Clear modelName for remote mode
+            modelName: '',
             xagentApiBaseUrl: newAuthConfig.xagentApiBaseUrl,
             guiSubagentModel: '',
             guiSubagentBaseUrl: 'https://www.xagent-colife.net/v3',
@@ -490,14 +489,12 @@ export class SlashCommandHandler {
 
         const success = await authService.authenticate();
         if (success) {
-          // Save the new configuration
           const newAuthConfig = authService.getAuthConfig();
-          await this.configManager.setAuthConfig({
+          this.configManager.setAuthConfig({
             selectedAuthType: newAuthConfig.type,
             apiKey: newAuthConfig.apiKey,
             baseUrl: newAuthConfig.baseUrl,
             modelName: newAuthConfig.modelName,
-            // Clear remote-related fields when switching to local mode
             xagentApiBaseUrl: '',
             refreshToken: '',
             guiSubagentModel: '',
@@ -539,13 +536,13 @@ export class SlashCommandHandler {
       }
 
       // Switch to OAuth xAgent
-      await this.configManager.setAuthConfig({
+      this.configManager.setAuthConfig({
         selectedAuthType: AuthType.OAUTH_XAGENT,
         apiKey: '',
         refreshToken: '',
         baseUrl: ''
       });
-      await this.configManager.save('global');
+      this.configManager.save('global');
       console.log(chalk.green('✅ Switched to OAuth xAgent authentication.'));
     }
 
@@ -631,10 +628,10 @@ export class SlashCommandHandler {
       ]);
 
       if (confirm) {
-        await this.configManager.set('guiSubagentModel', '');
-        await this.configManager.set('guiSubagentBaseUrl', '');
-        await this.configManager.set('guiSubagentApiKey', '');
-        await this.configManager.save('global');
+        this.configManager.set('guiSubagentModel', '');
+        this.configManager.set('guiSubagentBaseUrl', '');
+        this.configManager.set('guiSubagentApiKey', '');
+        this.configManager.save('global');
         console.log(chalk.green('✅ VLM configuration removed successfully!'));
       }
       return;
@@ -656,11 +653,10 @@ export class SlashCommandHandler {
       const vlmConfig = await authService.configureAndValidateVLM();
 
       if (vlmConfig) {
-        // Save VLM configuration
-        await this.configManager.set('guiSubagentModel', vlmConfig.model);
-        await this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
-        await this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
-        await this.configManager.save('global');
+        this.configManager.set('guiSubagentModel', vlmConfig.model);
+        this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
+        this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
+        this.configManager.save('global');
         console.log(chalk.green('✅ VLM configuration saved successfully!'));
         console.log(chalk.cyan(`   Model: ${vlmConfig.model}`));
         console.log(chalk.cyan(`   Base URL: ${vlmConfig.baseUrl}`));
@@ -722,8 +718,7 @@ export class SlashCommandHandler {
         // Update in-memory config
         await this.configManager.set('remote_llmProvider', defaults.llm.provider);
         await this.configManager.set('remote_vlmProvider', defaults.vlm.provider);
-        // Save to file
-        await this.configManager.save('global');
+        this.configManager.save('global');
 
         console.log(chalk.green('\n✅ Default configuration applied!'));
         console.log(`   LLM: ${defaults.llm.providerDisplay}`);
@@ -764,10 +759,9 @@ export class SlashCommandHandler {
         }
       ]);
 
-      // 7. Save config (immediate in-memory + persistent)
       const configKey = action === 'llm' ? 'remote_llmProvider' : 'remote_vlmProvider';
-      await this.configManager.set(configKey, selectedProvider);
-      await this.configManager.save('global');
+      this.configManager.set(configKey, selectedProvider);
+      this.configManager.save('global');
 
       // Clear conversation history to avoid tool call ID conflicts between providers
       // Different models generate different tool_call_id, mixing them causes "tool id not found" errors
@@ -798,7 +792,7 @@ export class SlashCommandHandler {
       const newMode = args[0].toLowerCase();
       if (modes.includes(newMode as ExecutionMode)) {
         this.configManager.setApprovalMode(newMode as ExecutionMode);
-        await this.configManager.save('global');
+        this.configManager.save('global');
         console.log(chalk.green(`✅ Approval mode changed to: ${newMode}`));
       } else {
         console.log(chalk.red(`❌ Invalid mode: ${newMode}`));
@@ -835,12 +829,12 @@ export class SlashCommandHandler {
       if (action === 'on' || action === 'true' || action === '1') {
         thinkingConfig.enabled = true;
         this.configManager.setThinkingConfig(thinkingConfig);
-        await this.configManager.save('global');
+        this.configManager.save('global');
         console.log(chalk.green('✅ Thinking mode enabled'));
       } else if (action === 'off' || action === 'false' || action === '0') {
         thinkingConfig.enabled = false;
         this.configManager.setThinkingConfig(thinkingConfig);
-        await this.configManager.save('global');
+        this.configManager.save('global');
         console.log(chalk.green('✅ Thinking mode disabled'));
       } else if (action === 'display' && args[1]) {
         const displayMode = args[1].toLowerCase();
@@ -848,9 +842,9 @@ export class SlashCommandHandler {
 
         if (validModes.includes(displayMode)) {
           thinkingConfig.displayMode = displayMode as 'full' | 'compact' | 'indicator';
-          thinkingConfig.enabled = true; // Auto-enable when setting display mode
+          thinkingConfig.enabled = true;
           this.configManager.setThinkingConfig(thinkingConfig);
-          await this.configManager.save('global');
+          this.configManager.save('global');
           console.log(chalk.green(`✅ Thinking display mode set to: ${displayMode}`));
         } else {
           console.log(chalk.red(`❌ Invalid display mode: ${displayMode}`));
@@ -1087,23 +1081,19 @@ export class SlashCommandHandler {
     }
 
     try {
-      // Save to config file
       this.configManager.addMcpServer(name, config);
-      await this.configManager.save('global');
+      this.configManager.save('global');
 
-      // Register to MCP Manager
       this.mcpManager.registerServer(name, config);
 
-      // Connect to server (with error handling)
       let connected = false;
       try {
         await this.mcpManager.connectServer(name);
         connected = true;
       } catch (error: any) {
-        // Connection failed - cleanup
         this.mcpManager.disconnectServer(name);
         this.configManager.removeMcpServer(name);
-        await this.configManager.save('global');
+        this.configManager.save('global');
         throw new Error(`Connection failed: ${error.message}`);
       }
 
@@ -1168,7 +1158,7 @@ export class SlashCommandHandler {
 
       // Remove from config
       this.configManager.removeMcpServer(serverName);
-      await this.configManager.save('global');
+      this.configManager.save('global');
 
       // Update system prompt to reflect removed MCP tools
       if (this.onSystemPromptUpdate) {
@@ -1423,11 +1413,11 @@ export class SlashCommandHandler {
 
     if (mode === 'verbose' || mode === 'detail' || mode === 'true' || mode === 'on') {
       this.configManager.set('showToolDetails', true);
-      await this.configManager.save('global');
+      this.configManager.save('global');
       logger.success('Tool display mode switched to verbose mode', 'Will show complete tool call information');
     } else if (mode === 'simple' || mode === 'concise' || mode === 'false' || mode === 'off') {
       this.configManager.set('showToolDetails', false);
-      await this.configManager.save('global');
+      this.configManager.save('global');
       logger.success('Tool display mode switched to simple mode', 'Only show tool execution status');
     } else {
       logger.warn('Invalid mode', 'Use verbose or simple');
@@ -1563,14 +1553,14 @@ export class SlashCommandHandler {
       case 'on':
         config.enabled = true;
         this.configManager.setContextCompressionConfig(config);
-        await this.configManager.save('global');
+        this.configManager.save('global');
         console.log(chalk.green('✅ Context compression enabled'));
         break;
 
       case 'off':
         config.enabled = false;
         this.configManager.setContextCompressionConfig(config);
-        await this.configManager.save('global');
+        this.configManager.save('global');
         console.log(chalk.green('✅ Context compression disabled'));
         break;
 

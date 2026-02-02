@@ -1576,7 +1576,7 @@ export class TaskTool implements Tool {
         isFirstVlmCallRef,
         remoteVlmCaller,
         isLocalMode: !isRemoteMode,
-        maxLoopCount: 30,
+        maxLoopCount: 100,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
       });

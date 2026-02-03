@@ -118,11 +118,9 @@ export class SlashCommandHandler {
       case 'mcp':
         await this.handleMcp(args);
         break;
-      case 'vlm':
-        await this.handleVlm();
-        break;
-      case 'provider':
-        await this.handleProvider();
+
+      case 'model':
+        await this.handleModel();
         break;
       case 'memory':
         await this.handleMemory(args);
@@ -269,11 +267,12 @@ export class SlashCommandHandler {
         example: '/mcp list\n/mcp add server-name'
       },
       {
-        cmd: '/vlm',
-        desc: 'Configure VLM for GUI Agent',
-        detail: 'Configure Vision-Language Model for browser/desktop automation',
-        example: '/vlm'
+        cmd: '/model',
+        desc: 'Configure LLM/VLM models',
+        detail: 'Configure or switch LLM and VLM models for remote mode',
+        example: '/model'
       },
+
       {
         cmd: '/tools [verbose|simple]',
         desc: 'Manage tool display',
@@ -576,100 +575,10 @@ export class SlashCommandHandler {
     }
   }
 
-  private async handleVlm(): Promise<void> {
-    // Check if local mode (remote mode uses backend VLM config)
-    const authConfig = this.configManager.getAuthConfig();
-    if (authConfig.type === AuthType.OAUTH_XAGENT) {
-      console.log(chalk.yellow('\n⚠️  This command is only available in local mode (third-party API).'));
-      console.log(chalk.cyan('   In remote mode, VLM configuration is managed by /provider.'));
-      return;
-    }
-
-    logger.section('VLM Configuration for GUI Agent');
-
-    // Show current VLM config
-    const currentVlmConfig = {
-      model: this.configManager.get('guiSubagentModel'),
-      baseUrl: this.configManager.get('guiSubagentBaseUrl'),
-      apiKey: this.configManager.get('guiSubagentApiKey') ? '***' : ''
-    };
-
-    console.log(chalk.cyan('\n📊 Current VLM Configuration:\n'));
-    console.log(`  Model: ${chalk.yellow(currentVlmConfig.model || 'Not configured')}`);
-    console.log(`  Base URL: ${chalk.yellow(currentVlmConfig.baseUrl || 'Not configured')}`);
-    console.log(`  API Key: ${chalk.yellow(currentVlmConfig.apiKey || 'Not configured')}`);
-    console.log();
-
-    const { action } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'action',
-        message: 'Select action:',
-        choices: [
-          { name: 'Configure VLM', value: 'configure' },
-          { name: 'Remove VLM configuration', value: 'remove' },
-          { name: 'Back', value: 'back' }
-        ]
-      }
-    ]);
-
-    if (action === 'back') {
-      return;
-    }
-
-    if (action === 'remove') {
-      const { confirm } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'confirm',
-          message: 'Are you sure you want to remove VLM configuration?',
-          default: false
-        }
-      ]);
-
-      if (confirm) {
-        this.configManager.set('guiSubagentModel', '');
-        this.configManager.set('guiSubagentBaseUrl', '');
-        this.configManager.set('guiSubagentApiKey', '');
-        this.configManager.save('global');
-        console.log(chalk.green('✅ VLM configuration removed successfully!'));
-      }
-      return;
-    }
-
-    if (action === 'configure') {
-      // Use AuthService to configure VLM
-      // Get xagentApiBaseUrl from config (respects XAGENT_BASE_URL env var)
-      const config = this.configManager.getAuthConfig();
-
-      const authService = new AuthService({
-        type: 'openai_compatible' as any,
-        apiKey: '',
-        baseUrl: '',
-        modelName: '',
-        xagentApiBaseUrl: config.xagentApiBaseUrl
-      });
-
-      const vlmConfig = await authService.configureAndValidateVLM();
-
-      if (vlmConfig) {
-        this.configManager.set('guiSubagentModel', vlmConfig.model);
-        this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
-        this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
-        this.configManager.save('global');
-        console.log(chalk.green('✅ VLM configuration saved successfully!'));
-        console.log(chalk.cyan(`   Model: ${vlmConfig.model}`));
-        console.log(chalk.cyan(`   Base URL: ${vlmConfig.baseUrl}`));
-      } else {
-        console.log(chalk.red('❌ VLM configuration failed or cancelled'));
-      }
-    }
-  }
-
   /**
-   * Handle /provider command - Configure LLM/VLM providers for remote mode
+   * Handle /model command - Configure LLM/VLM models for remote mode
    */
-  private async handleProvider(): Promise<void> {
+  private async handleModel(): Promise<void> {
     const authConfig = this.configManager.getAuthConfig();
 
     // 1. Check if remote mode
@@ -689,9 +598,9 @@ export class SlashCommandHandler {
     const currentLlm = authConfig.remote_llmProvider || 'Not set';
     const currentVlm = authConfig.remote_vlmProvider || 'Not set';
 
-    console.log(chalk.cyan('\n📊 Current Provider Configuration:\n'));
-    console.log(`  ${chalk.yellow('LLM Provider:')} ${currentLlm}`);
-    console.log(`  ${chalk.yellow('VLM Provider:')} ${currentVlm}`);
+    console.log(chalk.cyan('\n📊 Current Model Configuration:\n'));
+    console.log(`  ${chalk.yellow('LLM Model:')} ${currentLlm}`);
+    console.log(`  ${chalk.yellow('VLM Model:')} ${currentVlm}`);
     console.log('');
 
     // 4. Main menu
@@ -701,38 +610,14 @@ export class SlashCommandHandler {
         name: 'action',
         message: 'Select action:',
         choices: [
-          { name: 'Use default llm/vlm config', value: 'default' },
-          { name: 'Change LLM config', value: 'llm' },
-          { name: 'Change VLM config', value: 'vlm' },
+          { name: 'Change LLM model', value: 'llm' },
+          { name: 'Change VLM model', value: 'vlm' },
           { name: 'Back', value: 'back' }
         ]
       }
     ]);
 
     if (action === 'back') return;
-
-    // 5. Get default configuration
-    if (action === 'default') {
-      try {
-        const defaults = await remoteClient.getDefaultModels();
-        // Update in-memory config
-        await this.configManager.set('remote_llmProvider', defaults.llm.provider);
-        await this.configManager.set('remote_vlmProvider', defaults.vlm.provider);
-        this.configManager.save('global');
-
-        console.log(chalk.green('\n✅ Default configuration applied!'));
-        console.log(`   LLM: ${defaults.llm.providerDisplay}`);
-        console.log(`   VLM: ${defaults.vlm.providerDisplay}`);
-
-        // 通知 InteractiveSession 更新 aiClient config
-        if (this.onConfigUpdate) {
-          this.onConfigUpdate();
-        }
-      } catch (error: any) {
-        console.log(chalk.red(`\n❌ Failed to get default models: ${error.message}`));
-      }
-      return;
-    }
 
     // 6. Get and display provider list
     try {
@@ -769,7 +654,7 @@ export class SlashCommandHandler {
       // Clear conversation history to avoid tool call ID conflicts between providers
       if (this.onClearCallback) {
         this.onClearCallback();
-        console.log(chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between providers.'));
+        console.log(chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between models.'));
       }
 
       // Notify InteractiveSession to update aiClient config
@@ -777,7 +662,7 @@ export class SlashCommandHandler {
         this.onConfigUpdate();
       }
 
-      console.log(chalk.green('\n✅ Provider updated successfully!'));
+      console.log(chalk.green('\n✅ Model updated successfully!'));
       console.log(`   ${action === 'llm' ? 'LLM' : 'VLM'}: ${selectedProvider}`);
     } catch (error: any) {
       console.log(chalk.red(`\n❌ Failed to get models: ${error.message}`));

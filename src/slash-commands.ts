@@ -266,6 +266,12 @@ export class SlashCommandHandler {
         detail: 'Manage Model Context Protocol servers',
         example: '/mcp list\n/mcp add server-name'
       },
+      {
+        cmd: '/model',
+        desc: 'Configure LLM/VLM models',
+        detail: 'Configure or switch LLM and VLM models for remote mode',
+        example: '/model'
+      },
 
       {
         cmd: '/tools [verbose|simple]',

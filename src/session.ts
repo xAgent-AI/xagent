@@ -1183,6 +1183,10 @@ export class InteractiveSession {
         ...this.conversation,
       ];
 
+      // [Solution A - Enhanced] Clean all orphaned tool messages before sending
+      // Ensure no orphaned tool messages in conversation (tool_call_id doesn't match any assistant.tool_calls)
+      this.cleanOrphanedToolMessagesEnhanced();
+
       const operationId = `ai-response-${Date.now()}`;
       const response = await this.cancellationManager.withCancellation(
         chatCompletion(messages, {
@@ -1713,12 +1717,24 @@ export class InteractiveSession {
         // Unified message format with tool name and params
         // Format: OpenAI-compatible tool result with plain text content
         // MiniMax requires content to be plain text, not JSON string
-        this.conversation.push({
-          role: 'tool',
+        const toolMessage = {
+          role: 'tool' as const,
           content: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
           tool_call_id: toolCall.id,
           timestamp: Date.now(),
-        });
+        };
+        this.conversation.push(toolMessage);
+
+        // [Solution A] Fix subagent tool message pollution in main conversation
+        // When executing task tool (subagent), internal tool messages should not appear in main conversation
+        // Subagent uses independent local messages array, tool messages reference subagent's internal assistant
+        // These messages cause backend validation failure if added to main conversation (invalid tool_call_id)
+        // Fix: Check for orphaned tool messages (tool_call_id doesn't match any assistant.tool_calls)
+        // If found, subagent tool messages leaked to main conversation and need cleanup
+        if (tool === 'task' && params?.subagent_type) {
+          // console.log(`[Solution A] Detected task tool (subagent_type: ${params.subagent_type}), calling cleanOrphanedToolMessages`);
+          this.cleanOrphanedToolMessages();
+        }
       }
     }
 
@@ -1941,6 +1957,119 @@ export class InteractiveSession {
    */
   getTaskId(): string | null {
     return this.currentTaskId;
+  }
+
+  /**
+   * [Solution A] Clean orphaned tool messages from the conversation
+   *
+   * Problem: When a subagent (e.g., explore-agent) executes tools, those tool messages
+   * may leak into the main conversation. These messages have tool_call_id values that
+   * reference the subagent's internal assistant messages, not any assistant messages
+   * in the main conversation.
+   *
+   * When these orphaned tool messages are sent to the backend, MiniMax API rejects them
+   * with error 2013 "tool result's tool id not found" because the tool_call_id doesn't
+   * match any assistant.tool_calls in the conversation.
+   *
+   * This method removes such orphaned tool messages to keep the conversation clean.
+   */
+  private cleanOrphanedToolMessages(): void {
+    // [Solution A] Clean orphaned tool messages from conversation
+    // These messages are tool execution results from subagent, their tool_call_id points to subagent's assistant
+    // Main conversation doesn't have matching assistant messages, causing backend validation failure
+    // console.log('[Solution A] cleanOrphanedToolMessages called');
+
+    // [DEBUG] Print conversation structure before cleanup
+    // console.log('[Solution A] Conversation structure before cleanup:');
+    this.conversation.forEach((msg: any, idx: number) => {
+      const tc = msg.tool_calls;
+      // console.log(`  [${idx}] role="${msg.role}"${tc ? `, tool_calls_count=${tc.length}` : ''}${msg.tool_call_id ? `, tool_call_id="${msg.tool_call_id}"` : ''}`);
+    });
+
+    // Collect all valid tool_call_id values from assistant messages
+    const validToolCallIds = new Set<string>();
+    for (const msg of this.conversation) {
+      if (msg.role === 'assistant' && (msg as any).tool_calls) {
+        const toolCalls = (msg as any).tool_calls;
+        for (const call of toolCalls) {
+          if (call.id) {
+            validToolCallIds.add(call.id);
+          }
+        }
+      }
+    }
+
+    // Find and count orphaned tool messages
+    const orphanedMessages: { index: number; tool_call_id: string }[] = [];
+    for (let i = this.conversation.length - 1; i >= 0; i--) {
+      const msg = this.conversation[i];
+      if (msg.role === 'tool' && (msg as any).tool_call_id) {
+        const toolCallId = (msg as any).tool_call_id;
+        if (!validToolCallIds.has(toolCallId)) {
+          orphanedMessages.push({ index: i, tool_call_id: toolCallId });
+        }
+      }
+    }
+
+    // Remove orphaned tool messages (in reverse order to maintain indices)
+    if (orphanedMessages.length > 0) {
+      // console.log(`[Solution A] Cleaned ${orphanedMessages.length} orphaned tool message(s):`);
+      for (const { index, tool_call_id } of orphanedMessages.reverse()) {
+        // console.log(`  - Removed: tool_call_id="${tool_call_id}"`);
+        this.conversation.splice(index, 1);
+      }
+    } else {
+      // console.log('[Solution A] No orphaned tool messages found');
+    }
+  }
+
+  /**
+   * [Solution A - Enhanced] Clean all orphaned tool messages before sending to backend
+   *
+   * This method is called before each message is sent to backend, ensuring no orphaned
+   * tool messages in conversation. Unlike cleanOrphanedToolMessages, this is called
+   * after all tool execution completes and before sending messages, not just after task tool.
+   */
+  private cleanOrphanedToolMessagesEnhanced(): void {
+    // console.log('[Solution A Enhanced] Cleaning orphaned tool messages (before send)');
+
+    // Collect all valid tool_call_id values from assistant.tool_calls
+    const validToolCallIds = new Set<string>();
+    for (const msg of this.conversation) {
+      if (msg.role === 'assistant' && (msg as any).tool_calls) {
+        const toolCalls = (msg as any).tool_calls;
+        for (const call of toolCalls) {
+          if (call.id) {
+            validToolCallIds.add(call.id);
+          }
+        }
+      }
+    }
+
+    // Count messages before cleanup
+    const beforeCount = this.conversation.length;
+
+    // Find all orphaned tool messages
+    const orphanedIndices: number[] = [];
+    for (let i = this.conversation.length - 1; i >= 0; i--) {
+      const msg = this.conversation[i];
+      if (msg.role === 'tool' && (msg as any).tool_call_id) {
+        const toolCallId = (msg as any).tool_call_id;
+        if (!validToolCallIds.has(toolCallId)) {
+          orphanedIndices.push(i);
+        }
+      }
+    }
+
+    // Remove orphaned tool messages (reverse order to maintain indices)
+    if (orphanedIndices.length > 0) {
+      // console.log(`[Solution A Enhanced] 清理 ${orphanedIndices.length} 条孤立 tool 消息`);
+      for (const index of orphanedIndices.reverse()) {
+        const msg = this.conversation[index] as any;
+        this.conversation.splice(index, 1);
+      }
+      // console.log(`[Solution A Enhanced] 消息: ${beforeCount} -> ${this.conversation.length}`);
+    }
   }
 }
 

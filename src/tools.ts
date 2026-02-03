@@ -2178,8 +2178,15 @@ export class TaskTool implements Tool {
         throw new Error(`Sub-agent ${subagent_type} response truncated due to length limits`);
       }
 
-      // Add assistant message to conversation
-      messages.push({ role: 'assistant', content: contentStr });
+      // Add assistant message to conversation (必须包含 tool_calls，否则 tool_result 无法匹配)
+      const assistantMessage: any = { role: 'assistant', content: contentStr };
+      if (toolCalls && toolCalls.length > 0) {
+        assistantMessage.tool_calls = toolCalls;
+      }
+      if (reasoningContent) {
+        assistantMessage.reasoning_content = reasoningContent;
+      }
+      messages.push(assistantMessage as Message);
 
       // Display reasoning content if present
       if (reasoningContent) {

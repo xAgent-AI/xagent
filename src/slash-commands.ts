@@ -157,6 +157,9 @@ export class SlashCommandHandler {
         logger.warn(`Unknown command: /${command}`, 'Type /help for available commands');
     }
 
+    // Ensure stdin is in raw mode for proper input handling after @clack/prompts usage
+    ensureTtySane();
+
     return true;
   }
 
@@ -680,9 +683,19 @@ export class SlashCommandHandler {
       ],
     });
 
-    if (action === 'back') return;
+    if (action === 'back') {
+      return;
+    }
 
+<<<<<<< Updated upstream
     // 6. Get and display model list
+=======
+    // Restore stdin raw mode after @clack/prompts interaction
+    // This is critical for the second select to work properly
+    ensureTtySane();
+
+    // Get and display provider list
+>>>>>>> Stashed changes
     try {
       const models = await remoteClient.getModels();
       const modelList = action === 'llm' ? models.llm : models.vlm;

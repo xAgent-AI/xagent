@@ -569,7 +569,7 @@ export class SmartApprovalEngine {
           type: 'confirm',
           name: 'confirmed',
           message: 'Continue execution?',
-          default: false
+          default: true
         }
       ]);
 

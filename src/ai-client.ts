@@ -50,7 +50,11 @@ export function renderMarkdown(text: string): string {
 }
 
 // Format message content
-function formatMessageContent(content: string | Array<any>): string {
+function formatMessageContent(content: string | Array<any> | undefined): string {
+  if (content === undefined || content === null) {
+    return '';
+  }
+  
   if (typeof content === 'string') {
     return renderMarkdown(content);
   }
@@ -289,7 +293,17 @@ export class AIClient {
     for (const msg of otherMessages) {
       const blocks: AnthropicContentBlock[] = [];
 
-      if (typeof msg.content === 'string') {
+      // For tool result messages, convert to tool_result block (Anthropic format)
+      // This is critical for APIs like MiniMax that use Anthropic format
+      if (msg.role === 'tool' && msg.tool_call_id) {
+        blocks.push({
+          type: 'tool_result',
+          tool_use_id: msg.tool_call_id,
+          content: typeof msg.content === 'string'
+            ? msg.content
+            : JSON.stringify(msg.content)
+        });
+      } else if (typeof msg.content === 'string') {
         blocks.push({ type: 'text', text: msg.content });
       } else if (Array.isArray(msg.content)) {
         for (const block of msg.content) {
@@ -344,13 +358,14 @@ export class AIClient {
     options: ChatCompletionOptions = {}
   ): Promise<ChatCompletionResponse> {
     const model = options.model || this.authConfig.modelName || 'gpt-4';
-    const isMiniMax = detectMiniMaxAPI(this.authConfig.baseUrl || '');
+    const baseUrl = this.authConfig.baseUrl || '';
+    const isMiniMax = detectMiniMaxAPI(baseUrl);
+    const isAnthropic = isAnthropicCompatible(baseUrl);
 
     if (isMiniMax) {
       return this.minimaxChatCompletion(messages, options);
     }
 
-    const isAnthropic = isAnthropicCompatible(this.authConfig.baseUrl || '');
     if (isAnthropic) {
       return this.anthropicNativeChatCompletion(messages, options);
     }
@@ -701,9 +716,9 @@ export class AIClient {
     options: ChatCompletionOptions = {}
   ): Promise<ChatCompletionResponse> {
     const { system, messages: anthropicMessages } = this.convertToAnthropicFormat(messages);
-    const { endpoint, format } = getMiniMaxEndpoint(this.authConfig.baseUrl || '');
-
-    const requestBody: any = {
+        const { endpoint, format } = getMiniMaxEndpoint(this.authConfig.baseUrl || '');
+    
+        const requestBody: any = {
       model: options.model || this.authConfig.modelName || 'MiniMax-M2',
       messages: format === 'anthropic' ? anthropicMessages : messages,
       temperature: options.temperature ?? 1.0,
@@ -863,10 +878,30 @@ export class AIClient {
   // Convert Anthropic native response to unified format
   private convertFromAnthropicNativeResponse(anthropicResponse: any): ChatCompletionResponse {
     const content = anthropicResponse.content || [];
+    const message = anthropicResponse.choices?.[0]?.message || {};
     let textContent = '';
     let reasoningContent = '';
     const toolCalls: any[] = [];
 
+    // 首先检查 OpenAI 格式的 tool_calls 字段（某些 API 可能同时返回）
+    if (message.tool_calls && Array.isArray(message.tool_calls)) {
+      for (const tc of message.tool_calls) {
+        toolCalls.push({
+          id: tc.id,
+          type: tc.type || 'function',
+          function: {
+            name: tc.function?.name || '',
+            arguments: tc.function?.arguments 
+              ? (typeof tc.function.arguments === 'string' 
+                  ? tc.function.arguments 
+                  : JSON.stringify(tc.function.arguments))
+              : '{}'
+          }
+        });
+      }
+    }
+
+    // 然后处理 content 数组（Anthropic 格式）
     for (const block of content) {
       if (block.type === 'text') {
         textContent += block.text || '';
@@ -898,7 +933,7 @@ export class AIClient {
           tool_calls: toolCalls.length > 0 ? toolCalls : undefined
         },
         finish_reason: anthropicResponse.stop_reason === 'end_turn' ? 'stop' : 
-                       anthropicResponse.stop_reason === 'max_tokens' ? 'length' : 'stop'
+                       anthropicResponse.stop_reason === 'max_tokens' ? 'length' : 'tool_calls'
       }],
       usage: anthropicResponse.usage ? {
         prompt_tokens: anthropicResponse.usage.input_tokens || 0,
@@ -916,6 +951,25 @@ export class AIClient {
     let reasoningContent = '';
     const toolCalls: any[] = [];
 
+    // 首先检查 OpenAI 格式的 tool_calls 字段
+    if (message?.tool_calls && Array.isArray(message.tool_calls)) {
+      for (const tc of message.tool_calls) {
+        toolCalls.push({
+          id: tc.id,
+          type: tc.type || 'function',
+          function: {
+            name: tc.function?.name || '',
+            arguments: tc.function?.arguments 
+              ? (typeof tc.function.arguments === 'string' 
+                  ? tc.function.arguments 
+                  : JSON.stringify(tc.function.arguments))
+              : '{}'
+          }
+        });
+      }
+    }
+
+    // 然后处理 content 数组（Anthropic 格式）
     if (typeof content === 'string') {
       textContent = content.trim();
     } else if (Array.isArray(content)) {
@@ -929,13 +983,24 @@ export class AIClient {
             id: block.id,
             type: 'function',
             function: {
-              name: block.name,
+              name: block.name || '',
               arguments: JSON.stringify(block.input || {})
             }
           });
         }
+        // 忽略其他类型的块（如 tool_result、image 等）
       }
     }
+
+    // 安全处理 usage
+    const usage = minimaxResponse.usage;
+    const normalizedUsage = usage ? {
+      prompt_tokens: usage.prompt_tokens || usage.completion_tokens ? (usage.prompt_tokens || 0) : undefined,
+      completion_tokens: usage.completion_tokens || usage.prompt_tokens ? (usage.completion_tokens || 0) : undefined,
+      total_tokens: usage.total_tokens || (usage.prompt_tokens && usage.completion_tokens) 
+        ? usage.prompt_tokens + usage.completion_tokens 
+        : undefined
+    } : undefined;
 
     return {
       id: minimaxResponse.id || `minimax-${Date.now()}`,
@@ -951,9 +1016,9 @@ export class AIClient {
           tool_calls: toolCalls.length > 0 ? toolCalls : undefined
         },
         finish_reason: minimaxResponse.stop_reason === 'end_turn' ? 'stop' : 
-                       minimaxResponse.stop_reason === 'max_tokens' ? 'length' : 'stop'
+                       minimaxResponse.stop_reason === 'max_tokens' ? 'length' : 'tool_calls'
       }],
-      usage: minimaxResponse.usage
+      usage: normalizedUsage
     };
   }
 

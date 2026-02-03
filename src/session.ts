@@ -1460,13 +1460,30 @@ export class InteractiveSession {
       this.executionMode
     );
 
-    // Process results and maintain order
-    let hasError = false;
-    for (const { tool, result, error } of results) {
-      const toolCall = preparedToolCalls.find((tc) => tc.name === tool);
-      if (!toolCall) continue;
+    // Create a map to store results by tool call index to maintain original order
+    const resultsByIndex = new Map<number, { tool: string; result: any; error?: string }>();
+    const usedIndices = new Set<number>();
+    
+    for (const result of results) {
+      // Find the first unused original index in preparedToolCalls that matches the tool name
+      const originalIndex = preparedToolCalls.findIndex((tc, idx) => 
+        tc.name === result.tool && !usedIndices.has(idx)
+      );
+      if (originalIndex !== -1) {
+        usedIndices.add(originalIndex);
+        resultsByIndex.set(originalIndex, result);
+      }
+    }
 
-      const { params } = toolCall;
+    // Process results in the original tool_calls order (critical for Anthropic format APIs)
+    let hasError = false;
+    for (let i = 0; i < preparedToolCalls.length; i++) {
+      const toolCall = preparedToolCalls[i];
+      const { name: tool, params } = toolCall;
+      
+      const resultData = resultsByIndex.get(i);
+      const result = resultData?.result;
+      const error = resultData?.error;
 
       if (error) {
         if (error === 'Operation cancelled by user') {

@@ -330,7 +330,7 @@ export class InteractiveSession {
           await this.setupAuthentication();
           authConfig = this.configManager.getAuthConfig();
 
-          // Recreate readline interface after inquirer
+          // Recreate readline interface after interactive prompt
           this.rl.close();
           this.rl = readline.createInterface({
             input: process.stdin,
@@ -349,7 +349,7 @@ export class InteractiveSession {
         selectedAuthType = this.configManager.get('selectedAuthType');
         logger.debug('[SESSION] selectedAuthType (after setup):', String(selectedAuthType));
 
-        // Recreate readline interface after inquirer
+        // Recreate readline interface after interactive prompt
         this.rl.close();
         this.rl = readline.createInterface({
           input: process.stdin,
@@ -1364,7 +1364,7 @@ export class InteractiveSession {
         logger.debug('[DEBUG generateRemoteResponse] After re-auth:');
         logger.debug('  - authConfig.apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
 
-        // Recreate readline interface after inquirer
+        // Recreate readline interface after interactive prompt
         this.rl.close();
         this.rl = readline.createInterface({
           input: process.stdin,

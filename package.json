@@ -47,7 +47,6 @@
     "docx": "^9.5.1",
     "eventemitter3": "^5.0.1",
     "glob": "^10.3.0",
-    "inquirer": "^13.2.2",
     "jimp": "^1.6.0",
     "lodash.isnumber": "^3.0.3",
     "marked": "^11.0.0",

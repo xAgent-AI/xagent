@@ -508,14 +508,14 @@ export class InteractiveSession {
     }
 
     this.configManager.setAuthConfig(authConfig);
-    
-    // Set default remote provider settings if not already set
+
+    // Set default remote model settings if not already set
     if (authType === AuthType.OAUTH_XAGENT) {
-      if (!this.configManager.get('remote_llmProvider')) {
-        this.configManager.set('remote_llmProvider', 'Default');
+      if (!this.configManager.get('remote_llmModelName')) {
+        this.configManager.set('remote_llmModelName', '');
       }
-      if (!this.configManager.get('remote_vlmProvider')) {
-        this.configManager.set('remote_vlmProvider', 'Default');
+      if (!this.configManager.get('remote_vlmModelName')) {
+        this.configManager.set('remote_vlmModelName', '');
       }
       this.configManager.save('global');
     }
@@ -576,6 +576,27 @@ export class InteractiveSession {
     console.log(colors.textMuted(`${icons.info} Current Mode:`));
     console.log(`  ${config.color(config.icon)} ${styleHelpers.text.bold(config.color(modeName))}`);
     console.log(`  ${colors.textDim(`  ${config.description}`)}`);
+    console.log('');
+
+    this.showRemoteModelInfo();
+  }
+
+  private showRemoteModelInfo(): void {
+    const authConfig = this.configManager.getAuthConfig();
+
+    if (authConfig.type === AuthType.OAUTH_XAGENT) {
+      const llmModel = authConfig.remote_llmModelName || 'Not set';
+      const vlmModel = authConfig.remote_vlmModelName || 'Not set';
+      console.log(colors.textMuted('Remote Models:'));
+      console.log(`  LLM: ${llmModel}`);
+      console.log(`  VLM: ${vlmModel}`);
+    } else {
+      const modelName = authConfig.modelName || 'Not set';
+      const guiSubagentModel = this.configManager.get('guiSubagentModel') || 'Not set';
+      console.log(colors.textMuted('Local Models:'));
+      console.log(`  LLM: ${modelName}`);
+      console.log(`  VLM: ${guiSubagentModel}`);
+    }
     console.log('');
   }
 
@@ -943,18 +964,18 @@ export class InteractiveSession {
    */
   private createRemoteCaller(taskId: string, status: 'begin' | 'continue') {
     const client = this.remoteAIClient!;
-    
+
     return {
       chatCompletion: (messages: ChatMessage[], options: any) => {
         // Must fetch authConfig inside the closure, otherwise it captures stale config
         const authConfig = this.configManager.getAuthConfig();
-        logger.debug(`[DEBUG] createRemoteCaller: llmProvider=${authConfig.remote_llmProvider}, vlmProvider=${authConfig.remote_vlmProvider}`);
+        logger.debug(`[DEBUG] createRemoteCaller: llmModelName=${authConfig.remote_llmModelName}, vlmModelName=${authConfig.remote_vlmModelName}`);
         return client.chatCompletion(messages, {
           ...options,
           taskId,
           status: options.isFirstApiCall ? 'begin' : 'continue',
-          llmProvider: authConfig.remote_llmProvider,
-          vlmProvider: authConfig.remote_vlmProvider
+          llmProvider: authConfig.remote_llmModelName,
+          vlmProvider: authConfig.remote_vlmModelName
         });
       },
       isRemote: true

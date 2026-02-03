@@ -52,8 +52,8 @@ const DEFAULT_SETTINGS: Settings = {
   showToolDetails: false,
   showAIDebugInfo: false,
   loggerLevel: LogLevel.INFO,
-  remote_llmProvider: '',   // Remote mode LLM Provider ID
-  remote_vlmProvider: ''    // Remote mode VLM Provider ID
+  remote_llmModelName: '',   // Remote mode LLM Model Name
+  remote_vlmModelName: ''    // Remote mode VLM Model Name
 };
 
 export class ConfigManager {
@@ -151,8 +151,8 @@ export class ConfigManager {
       modelName: this.settings.modelName,
       searchApiKey: this.settings.searchApiKey,
       showAIDebugInfo: this.settings.showAIDebugInfo,
-      remote_llmProvider: this.settings.remote_llmProvider || '',
-      remote_vlmProvider: this.settings.remote_vlmProvider || ''
+      remote_llmModelName: this.settings.remote_llmModelName || '',
+      remote_vlmModelName: this.settings.remote_vlmModelName || ''
     };
 
     logger.debug('[CONFIG] getAuthConfig() 返回:');
@@ -160,8 +160,8 @@ export class ConfigManager {
     // Removed: logging sensitive information (apiKey, refreshToken)
     logger.debug('  - baseUrl:', result.baseUrl);
     logger.debug('  - xagentApiBaseUrl:', result.xagentApiBaseUrl);
-    logger.debug(`[CONFIG] this.settings.remote_llmProvider=${this.settings.remote_llmProvider}, result.remote_llmProvider=${result.remote_llmProvider}`);
-    logger.debug(`[CONFIG] this.settings.remote_vlmProvider=${this.settings.remote_vlmProvider}, result.remote_vlmProvider=${result.remote_vlmProvider}`);
+    logger.debug(`[CONFIG] this.settings.remote_llmModelName=${this.settings.remote_llmModelName}, result.remote_llmModelName=${result.remote_llmModelName}`);
+    logger.debug(`[CONFIG] this.settings.remote_vlmModelName=${this.settings.remote_vlmModelName}, result.remote_vlmModelName=${result.remote_vlmModelName}`);
 
     return result;
   }

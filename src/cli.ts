@@ -2,6 +2,8 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
+import axios from 'axios';
+import https from 'https';
 import { startInteractiveSession } from './session.js';
 import { getConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
@@ -172,15 +174,37 @@ program
       }
       
       configManager.setAuthConfig(authConfig);
-      
-      // Set default remote provider settings if not already set
+
+      // Set default remote model settings if not already set
       if (authType === AuthType.OAUTH_XAGENT) {
-        if (!configManager.get('remote_llmProvider')) {
-          configManager.set('remote_llmProvider', 'Default');
+        const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
+        const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+        let defaultLlmName = '';
+        let defaultVlmName = '';
+
+        try {
+          console.log(colors.textMuted('   Fetching default models from remote server...'));
+          const defaultResponse = await axios.get(`${webBaseUrl}/api/models/default`, {
+            headers: { 'Authorization': `Bearer ${authConfig.apiKey}` },
+            httpsAgent,
+            timeout: 10000
+          });
+
+          if (defaultResponse.data?.llm?.name) {
+            defaultLlmName = defaultResponse.data.llm.name;
+            console.log(colors.textMuted(`   Default LLM: ${defaultResponse.data.llm.displayName || defaultLlmName}`));
+          }
+          if (defaultResponse.data?.vlm?.name) {
+            defaultVlmName = defaultResponse.data.vlm.name;
+            console.log(colors.textMuted(`   Default VLM: ${defaultResponse.data.vlm.displayName || defaultVlmName}`));
+          }
+        } catch (error: any) {
+          console.log(colors.textMuted(`   ⚠️  Failed to fetch default models: ${error.message}`));
+          console.log(colors.textMuted('   ⚠️  Use /model command to select models manually.'));
         }
-        if (!configManager.get('remote_vlmProvider')) {
-          configManager.set('remote_vlmProvider', 'Default');
-        }
+
+        configManager.set('remote_llmModelName', defaultLlmName);
+        configManager.set('remote_vlmModelName', defaultVlmName);
         configManager.save('global');
       }
 

@@ -3,6 +3,8 @@ import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'fs/promises';
 import path from 'path';
+import https from 'https';
+import axios from 'axios';
 import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { getToolRegistry } from './tools.js';
@@ -17,6 +19,7 @@ import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { AuthService, selectAuthType } from './auth.js';
+import { RemoteAIClient } from './remote-ai-client.js';
 
 const logger = getLogger();
 
@@ -460,13 +463,36 @@ export class SlashCommandHandler {
             guiSubagentBaseUrl: 'https://www.xagent-colife.net/v3',
             guiSubagentApiKey: ''
           });
-          // Set default remote provider settings if not already set
-          if (!this.configManager.get('remote_llmProvider')) {
-            this.configManager.set('remote_llmProvider', 'Default');
+          // Set default remote model settings if not already set
+          // Fetch default models from /models/default endpoint
+          const webBaseUrl = newAuthConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
+          const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+          let defaultLlmName = '';
+          let defaultVlmName = '';
+
+          try {
+            console.log(chalk.cyan('   Fetching default models from remote server...'));
+            const defaultResponse = await axios.get(`${webBaseUrl}/api/models/default`, {
+              headers: { 'Authorization': `Bearer ${newAuthConfig.apiKey}` },
+              httpsAgent,
+              timeout: 10000
+            });
+
+            if (defaultResponse.data?.llm?.name) {
+              defaultLlmName = defaultResponse.data.llm.name;
+              console.log(chalk.cyan(`   Default LLM: ${defaultResponse.data.llm.displayName || defaultLlmName}`));
+            }
+            if (defaultResponse.data?.vlm?.name) {
+              defaultVlmName = defaultResponse.data.vlm.name;
+              console.log(chalk.cyan(`   Default VLM: ${defaultResponse.data.vlm.displayName || defaultVlmName}`));
+            }
+          } catch (error: any) {
+            console.log(chalk.yellow(`   ⚠️  Failed to fetch default models: ${error.message}`));
+            console.log(chalk.yellow('   ⚠️  Use /model command to select models manually.'));
           }
-          if (!this.configManager.get('remote_vlmProvider')) {
-            this.configManager.set('remote_vlmProvider', 'Default');
-          }
+
+          this.configManager.set('remote_llmModelName', defaultLlmName);
+          this.configManager.set('remote_vlmModelName', defaultVlmName);
           this.configManager.save('global');
 
           // Notify InteractiveSession to update aiClient config
@@ -587,20 +613,65 @@ export class SlashCommandHandler {
       return;
     }
 
-    // 2. Get RemoteAIClient instance (from InteractiveSession)
-    const remoteClient = this.remoteAIClient;
-    if (!remoteClient) {
-      console.log(chalk.red('\n❌ Remote client not initialized. Please use /auth to configure remote mode first.'));
-      return;
+    // 2. Auto-fetch default models if not set
+    let currentLlm = authConfig.remote_llmModelName;
+    let currentVlm = authConfig.remote_vlmModelName;
+
+    if (!currentLlm || !currentVlm) {
+      console.log(chalk.cyan('\n📊 Fetching default models from remote server...'));
+      
+      // Try to use RemoteAIClient first, otherwise fetch directly
+      let defaults: { llm?: { name: string; displayName?: string }; vlm?: { name: string; displayName?: string } } | null = null;
+      
+      if (this.remoteAIClient) {
+        try {
+          defaults = await this.remoteAIClient.getDefaultModels();
+        } catch (error: any) {
+          console.log(chalk.yellow(`   ⚠️  Failed to get defaults from RemoteAIClient: ${error.message}`));
+        }
+      }
+      
+      // If RemoteAIClient failed or not available, fetch directly
+      if (!defaults) {
+        try {
+          const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
+          const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+          const response = await axios.get(`${webBaseUrl}/api/models/default`, {
+            headers: { 'Authorization': `Bearer ${authConfig.apiKey}` },
+            httpsAgent,
+            timeout: 10000
+          });
+          defaults = response.data;
+        } catch (error: any) {
+          console.log(chalk.yellow(`   ⚠️  Failed to fetch default models: ${error.message}`));
+        }
+      }
+      
+      if (defaults) {
+        if (!currentLlm && defaults.llm?.name) {
+          currentLlm = defaults.llm.name;
+          this.configManager.set('remote_llmModelName', currentLlm);
+          console.log(chalk.cyan(`   Default LLM: ${defaults.llm.displayName || currentLlm}`));
+        }
+        if (!currentVlm && defaults.vlm?.name) {
+          currentVlm = defaults.vlm.name;
+          this.configManager.set('remote_vlmModelName', currentVlm);
+          console.log(chalk.cyan(`   Default VLM: ${defaults.vlm.displayName || currentVlm}`));
+        }
+        this.configManager.save('global');
+      } else {
+        console.log(chalk.yellow('   ⚠️  Use /auth to configure remote mode first.'));
+        return;
+      }
     }
 
-    // 3. Display current configuration
-    const currentLlm = authConfig.remote_llmProvider || 'Not set';
-    const currentVlm = authConfig.remote_vlmProvider || 'Not set';
+    // 3. Get RemoteAIClient instance (from InteractiveSession) for model selection
+    const remoteClient = this.remoteAIClient;
 
+    // 4. Display current configuration
     console.log(chalk.cyan('\n📊 Current Model Configuration:\n'));
-    console.log(`  ${chalk.yellow('LLM Model:')} ${currentLlm}`);
-    console.log(`  ${chalk.yellow('VLM Model:')} ${currentVlm}`);
+    console.log(`  ${chalk.yellow('LLM Model:')} ${currentLlm || 'Not set'}`);
+    console.log(`  ${chalk.yellow('VLM Model:')} ${currentVlm || 'Not set'}`);
     console.log('');
 
     // 4. Main menu
@@ -619,33 +690,33 @@ export class SlashCommandHandler {
 
     if (action === 'back') return;
 
-    // 6. Get and display provider list
+    // 6. Get and display model list
     try {
       const models = await remoteClient.getModels();
-      const providers = action === 'llm' ? models.llm : models.vlm;
+      const modelList = action === 'llm' ? models.llm : models.vlm;
 
-      if (providers.length === 0) {
-        console.log(chalk.yellow('\n⚠️  No providers available.'));
+      if (modelList.length === 0) {
+        console.log(chalk.yellow('\n⚠️  No models available.'));
         return;
       }
 
       // Build choice list
-      const choices = providers.map((p: any) => ({
-        name: `${p.providerDisplay} (${p.provider})`,
-        value: p.provider
+      const choices = modelList.map((m: any) => ({
+        name: `${m.displayName} (${m.name})`,
+        value: m.name
       }));
 
-      const { selectedProvider } = await inquirer.prompt([
+      const { selectedModel } = await inquirer.prompt([
         {
           type: 'list',
-          name: 'selectedProvider',
-          message: action === 'llm' ? 'Select LLM Provider:' : 'Select VLM Provider:',
+          name: 'selectedModel',
+          message: action === 'llm' ? 'Select LLM Model:' : 'Select VLM Model:',
           choices
         }
       ]);
 
-      const configKey = action === 'llm' ? 'remote_llmProvider' : 'remote_vlmProvider';
-      this.configManager.set(configKey, selectedProvider);
+      const configKey = action === 'llm' ? 'remote_llmModelName' : 'remote_vlmModelName';
+      this.configManager.set(configKey, selectedModel);
       this.configManager.save('global');
 
       // Clear conversation history to avoid tool call ID conflicts between providers
@@ -663,7 +734,7 @@ export class SlashCommandHandler {
       }
 
       console.log(chalk.green('\n✅ Model updated successfully!'));
-      console.log(`   ${action === 'llm' ? 'LLM' : 'VLM'}: ${selectedProvider}`);
+      console.log(`   ${action === 'llm' ? 'LLM' : 'VLM'}: ${selectedModel}`);
     } catch (error: any) {
       console.log(chalk.red(`\n❌ Failed to get models: ${error.message}`));
     }

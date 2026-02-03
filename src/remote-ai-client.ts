@@ -45,8 +45,8 @@ export interface RemoteChatOptions {
     };
   }>;
   signal?: AbortSignal;
-  llmProvider?: string;
-  vlmProvider?: string;
+  llmModelName?: string;
+  vlmModelName?: string;
 }
 
 export interface RemoteChatResponse {
@@ -103,10 +103,10 @@ export class RemoteAIClient extends EventEmitter {
       context: remoteChatOptions.context,
       toolResults: remoteChatOptions.toolResults,
       tools: remoteChatOptions.tools,
-      // Pass provider info to backend
+      // Pass model name to backend
       options: {
-        llmProvider: (remoteChatOptions as any).llmProvider,
-        vlmProvider: (remoteChatOptions as any).vlmProvider
+        llmModelName: (remoteChatOptions as any).llmModelName,
+        vlmModelName: (remoteChatOptions as any).vlmModelName
       }
     };
 
@@ -437,8 +437,8 @@ export class RemoteAIClient extends EventEmitter {
       context: undefined,
       taskId: (options as any).taskId,
       status: (options as any).status || 'begin',  // Use status from options, default to 'begin'
-      llmProvider: (options as any).llmProvider,
-      vlmProvider: (options as any).vlmProvider
+      llmModelName: (options as any).llmModelName,
+      vlmModelName: (options as any).vlmModelName
     });
 
     // Debug output for response
@@ -775,6 +775,6 @@ export class RemoteAIClient extends EventEmitter {
 }
 
 export interface ModelInfo {
-  provider: string;
-  providerDisplay: string;
+  name: string;
+  displayName: string;
 }

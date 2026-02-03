@@ -338,13 +338,12 @@ This is useful when working with skills that have local dependencies.
     // Set up environment with NODE_PATH for node commands
     const builtinNodeModulesPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules');
 
-    // Get user skills path from config
+    // Get user skills path from config (unified path: ~/.xagent/skills)
     const { getConfigManager } = await import('./config.js');
     const configManager = getConfigManager();
     const userSkillsPath = configManager.getUserSkillsPath();
-    const builtinSkillsPath = configManager.getSkillsPath();
 
-    // Built-in deps path: ~/.xagent/builtin-deps/ (isolated from xAgent package)
+    // Skill deps path: ~/.xagent/skills/{skillName}/node_modules
     const builtinDepsPath = userSkillsPath ? path.join(userSkillsPath, 'builtin-deps') : null;
 
     // Determine which node_modules to use
@@ -353,28 +352,28 @@ This is useful when working with skills that have local dependencies.
     // Priority 1: skillPath parameter (workspace scenario - LLM works in workspace, not skill dir)
     if (skillPath) {
       if (skillPath.includes('/builtin-deps/')) {
-        // Built-in skill with deps in user directory
+        // Skill with deps in builtin-deps directory
         const match = skillPath.match(/\/builtin-deps\/([^/]+)/);
         if (match) {
           skillNodeModulesPath = path.join(builtinDepsPath!, match[1], 'node_modules');
         }
       } else {
-        // Regular skill (user or built-in)
+        // Regular skill
         skillNodeModulesPath = path.join(skillPath, 'node_modules');
       }
     }
-    // Priority 2: Check if we're inside a user skill directory
+    // Priority 2: Check if we're inside a skill directory
     else if (userSkillsPath && userSkillsPath.trim() && actualCwd.startsWith(userSkillsPath)) {
       const relativePath = actualCwd.substring(userSkillsPath.length);
       const pathParts = relativePath.split(path.sep).filter(Boolean);
 
       if (pathParts.length > 0) {
         if (pathParts[0] === 'builtin-deps' && pathParts.length > 1) {
-          // Built-in skill with local deps
+          // Skill with local deps in builtin-deps
           const skillName = pathParts[1];
           skillNodeModulesPath = path.join(builtinDepsPath!, skillName, 'node_modules');
         } else {
-          // Regular user skill
+          // Regular skill
           const skillName = pathParts[0];
           const skillRoot = path.join(userSkillsPath, skillName);
           try {
@@ -384,18 +383,6 @@ This is useful when working with skills that have local dependencies.
           } catch {
             // Not a skill directory, skip
           }
-        }
-      }
-    }
-    // Priority 3: Check if we're in a built-in skill directory (xAgent package)
-    else if (builtinSkillsPath && actualCwd.startsWith(builtinSkillsPath)) {
-      const relativePath = actualCwd.substring(builtinSkillsPath.length);
-      const pathParts = relativePath.split(path.sep).filter(Boolean);
-
-      if (pathParts.length > 0) {
-        const skillName = pathParts[0];
-        if (builtinDepsPath) {
-          skillNodeModulesPath = path.join(builtinDepsPath, skillName, 'node_modules');
         }
       }
     }

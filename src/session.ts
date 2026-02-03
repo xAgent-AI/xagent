@@ -666,19 +666,20 @@ export class InteractiveSession {
 
   private showRemoteModelInfo(): void {
     const authConfig = this.configManager.getAuthConfig();
+    const isRemote = authConfig.type === AuthType.OAUTH_XAGENT;
 
-    if (authConfig.type === AuthType.OAUTH_XAGENT) {
-      const llmModel = authConfig.remote_llmModelName || 'Not set';
-      const vlmModel = authConfig.remote_vlmModelName || 'Not set';
-      console.log(colors.textMuted('Remote Models:'));
-      console.log(`  LLM: ${llmModel}`);
-      console.log(`  VLM: ${vlmModel}`);
+    if (isRemote) {
+      const llmModel = authConfig.remote_llmModelName || colors.textMuted('Not set');
+      const vlmModel = authConfig.remote_vlmModelName || colors.textMuted('Not set');
+      console.log(colors.textMuted(`${icons.brain} Remote Models:`));
+      console.log(`  ${colors.primaryBright(icons.arrowRight)} ${colors.info('LLM:')} ${llmModel}`);
+      console.log(`  ${colors.primaryBright(icons.arrowRight)} ${colors.info('VLM:')} ${vlmModel}`);
     } else {
-      const modelName = authConfig.modelName || 'Not set';
-      const guiSubagentModel = this.configManager.get('guiSubagentModel') || 'Not set';
-      console.log(colors.textMuted('Local Models:'));
-      console.log(`  LLM: ${modelName}`);
-      console.log(`  VLM: ${guiSubagentModel}`);
+      const modelName = authConfig.modelName || colors.textMuted('Not set');
+      const guiSubagentModel = this.configManager.get('guiSubagentModel') || colors.textMuted('Not set');
+      console.log(colors.textMuted(`${icons.brain} Local Models:`));
+      console.log(`  ${colors.primaryBright(icons.arrowRight)} ${colors.info('LLM:')} ${modelName}`);
+      console.log(`  ${colors.primaryBright(icons.arrowRight)} ${colors.info('VLM:')} ${guiSubagentModel}`);
     }
     console.log('');
   }

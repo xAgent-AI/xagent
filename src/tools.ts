@@ -2,8 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'readline';
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
+import { spawn, ChildProcess } from 'child_process';
 import { glob } from 'glob';
 import axios from 'axios';
 import inquirer from 'inquirer';
@@ -13,10 +12,12 @@ import { colors, icons, styleHelpers } from './theme.js';
 import { getLogger } from './logger.js';
 import { getCancellationManager } from './cancellation.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
-import { InteractiveSession } from './session.js';
+import { getSingletonSession } from './session.js';
 import { ripgrep, fdFind } from './ripgrep.js';
-
-const execAsync = promisify(exec);
+import { getShellConfig, killProcessTree, quoteShellCommand } from './shell.js';
+import { truncateTail, buildTruncationNotice } from './truncate.js';
+import { createAIClient } from './ai-client-factory.js';
+import { AIClient } from './ai-client.js';
 
 //
 // Tool Description Pattern
@@ -303,9 +304,9 @@ export class BashTool implements Tool {
     description?: string;
     timeout?: number;
     run_in_bg?: boolean;
-  }): Promise<{ stdout: string; stderr: string; exitCode: number; taskId?: string }> {
+  }): Promise<{ stdout: string; stderr: string; exitCode: number; taskId?: string; truncated?: boolean; truncationNotice?: string }> {
     const { command, cwd, description, timeout = 120, run_in_bg = false } = params;
-    
+
     // Determine effective working directory
     // Only use cwd if the command doesn't contain 'cd' (let LLM control directory)
     let effectiveCwd: string | undefined;
@@ -382,46 +383,59 @@ export class BashTool implements Tool {
       finalCommand = command.replace(/\bnpm\s+install\b/i, `npm install --prefix "${skillNodeModulesPath}"`);
     }
 
-    // Only add NODE_PATH prefix for node commands
-    const isNodeCommand = /\bnode\b/.test(finalCommand);
-    if (isNodeCommand) {
-      finalCommand = `set NODE_PATH=${nodePath} && ${finalCommand}`;
+    // Get shell configuration (Windows Git Bash detection, etc.)
+    const { shell, args } = getShellConfig();
+    
+    // On Windows with PowerShell, we need to prepend the UTF-8 encoding setup
+    // to ensure proper output encoding for the user command
+    if (process.platform === 'win32') {
+      finalCommand = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${finalCommand}`;
     }
     
+    const shellArgs = [...args, quoteShellCommand(finalCommand)];
+
     try {
       if (run_in_bg) {
         const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        const childProcess = spawn(finalCommand, {
+
+        const spawnOptions: any = {
           cwd: effectiveCwd || process.cwd(),
-          shell: true,
-          detached: true,
-          env
-        });
-        
+          env,
+          stdio: ['pipe', 'pipe', 'pipe']
+        };
+
+        // On Windows, don't use detached mode for PowerShell as it breaks output piping
+        if (process.platform !== 'win32') {
+          spawnOptions.detached = true;
+        }
+
+        const childProcess = spawn(shell, shellArgs, spawnOptions);
+
         const output: string[] = [];
-        
+
         childProcess.stdout?.on('data', (data: Buffer) => {
           const text = data.toString();
           output.push(text);
         });
-        
+
         childProcess.stderr?.on('data', (data: Buffer) => {
           const text = data.toString();
           output.push(text);
         });
-        
+
         childProcess.on('close', (code: number) => {
-          console.log(`Background task ${taskId} exited with code ${code}`);
+          // Silent cleanup - don't log to avoid noise during normal operation
+          // Note: On Windows with PowerShell, the shell process exits after
+          // the command completes
         });
-        
+
         const toolRegistry = getToolRegistry();
         (toolRegistry as any).addBackgroundTask(taskId, {
           process: childProcess,
           startTime: Date.now(),
           output
         });
-        
+
         return {
           stdout: '',
           stderr: '',
@@ -429,26 +443,125 @@ export class BashTool implements Tool {
           taskId
         };
       } else {
-        const { stdout, stderr } = await execAsync(finalCommand, {
+        // Execute command with spawn for better control
+        const result = await this.spawnWithTimeout(shell, shellArgs, {
           cwd: effectiveCwd || process.cwd(),
-          maxBuffer: 1024 * 1024 * 10,
-          timeout: timeout * 1000,
-          env
+          env,
+          timeout
         });
+
+        // Apply truncation to stdout and stderr separately
+        const stdoutResult = truncateTail(result.stdout);
+        const stderrResult = truncateTail(result.stderr);
+
+        let stdout = stdoutResult.content;
+        let stderr = stderrResult.content;
+        let truncationNotice = '';
+
+        if (stdoutResult.truncated) {
+          truncationNotice += buildTruncationNotice(stdoutResult) + '\n';
+        }
+        if (stderrResult.truncated) {
+          truncationNotice += buildTruncationNotice(stderrResult) + '\n';
+        }
 
         return {
           stdout,
           stderr,
-          exitCode: 0
+          exitCode: result.exitCode,
+          truncated: stdoutResult.truncated || stderrResult.truncated,
+          truncationNotice: truncationNotice || undefined
         };
       }
     } catch (error: any) {
+      // Check if this was a timeout
+      if (error.message === 'timeout') {
+        return {
+          stdout: '',
+          stderr: 'Command timed out',
+          exitCode: -1,
+          truncated: false
+        };
+      }
       return {
         stdout: error.stdout || '',
         stderr: error.stderr || error.message,
         exitCode: error.code || 1
       };
     }
+  }
+
+  /**
+   * Execute a command with timeout support and proper process termination.
+   */
+  private spawnWithTimeout(
+    shell: string,
+    args: string[],
+    options: { cwd: string; env: NodeJS.ProcessEnv; timeout: number }
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    return new Promise((resolve, reject) => {
+      const { cwd, env, timeout } = options;
+      let timedOut = false;
+      let timeoutHandle: NodeJS.Timeout | undefined;
+
+      const spawnOptions: any = {
+        cwd,
+        env,
+        stdio: ['pipe', 'pipe', 'pipe']
+      };
+
+      // On Windows, don't use detached mode for PowerShell as it breaks output piping
+      if (process.platform !== 'win32') {
+        spawnOptions.detached = true;
+      }
+
+      const child = spawn(shell, args, spawnOptions);
+
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+
+      // Set timeout if provided
+      if (timeout > 0) {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          if (child.pid) {
+            killProcessTree(child.pid);
+          }
+        }, timeout * 1000);
+      }
+
+      // Stream stdout
+      child.stdout?.on('data', (data: Buffer) => {
+        stdoutChunks.push(data);
+      });
+
+      // Stream stderr
+      child.stderr?.on('data', (data: Buffer) => {
+        stderrChunks.push(data);
+      });
+
+      // Handle process exit
+      child.on('close', (code: number) => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+
+        if (timedOut) {
+          reject(new Error('timeout'));
+          return;
+        }
+
+        resolve({
+          stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
+          stderr: Buffer.concat(stderrChunks).toString('utf-8'),
+          exitCode: code ?? -1
+        });
+      });
+
+      // Handle spawn errors
+      child.on('error', (err) => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        reject(err);
+      });
+    });
   }
 }
 
@@ -1260,13 +1373,8 @@ export class TaskTool implements Tool {
       const { getConfigManager } = await import('./config.js');
       const config = getConfigManager();
       
-      const { AIClient } = await import('./ai-client.js');
-      const aiClient = new AIClient({
-        type: AuthType.OPENAI_COMPATIBLE,
-        apiKey: config.get('apiKey'),
-        baseUrl: config.get('baseUrl'),
-        modelName: config.get('modelName') || 'Qwen3-Coder'
-      });
+      const authConfig = config.getAuthConfig();
+      const aiClient = createAIClient(authConfig);
       
       const toolRegistry = getToolRegistry();
       
@@ -1320,16 +1428,22 @@ export class TaskTool implements Tool {
    * Create unified VLM caller
    * Uses remote VLM if remoteAIClient is provided, otherwise uses local VLM
    * Both modes receive full messages array for consistent behavior
+   * @param remoteAIClient - Remote AI client for VLM calls
+   * @param taskId - Task identifier for backend tracking
+   * @param localConfig - Local VLM configuration
+   * @param isFirstVlmCallRef - Reference to boolean tracking if this is the first VLM call
+   * @param signal - Abort signal for cancellation
    */
   private createRemoteVlmCaller(
     remoteAIClient: any,
     taskId: string | null,
     localConfig: { baseUrl: string; apiKey: string; modelName: string },
+    isFirstVlmCallRef: { current: boolean },
     signal?: AbortSignal
-  ): (messages: any[], systemPrompt: string) => Promise<string> {
+  ): (messages: any[], systemPrompt: string, taskId: string, isFirstVlmCallRef: { current: boolean }) => Promise<string> {
     // Remote mode: use RemoteAIClient
     if (remoteAIClient) {
-      return this.createRemoteVLMCaller(remoteAIClient, taskId, signal);
+      return this.createRemoteVLMCaller(remoteAIClient, taskId, isFirstVlmCallRef, signal);
     }
 
     // Local mode: use local API
@@ -1339,11 +1453,25 @@ export class TaskTool implements Tool {
   /**
    * Create remote VLM caller using RemoteAIClient
    * Now receives full messages array for consistent behavior with local mode
+   * @param remoteAIClient - Remote AI client
+   * @param taskId - Task identifier for backend tracking
+   * @param isFirstVlmCallRef - Reference to boolean tracking if this is the first VLM call
+   * @param signal - Abort signal for cancellation
    */
-  private createRemoteVLMCaller(remoteAIClient: any, taskId: string | null, signal?: AbortSignal) {
-    return async (messages: any[], systemPrompt: string): Promise<string> => {
+  private createRemoteVLMCaller(
+    remoteAIClient: any,
+    taskId: string | null,
+    isFirstVlmCallRef: { current: boolean },
+    signal?: AbortSignal
+  ): (messages: any[], systemPrompt: string, taskId: string, isFirstVlmCallRef: { current: boolean }) => Promise<string> {
+    return async (messages: any[], systemPrompt: string, _taskId: string, _isFirstVlmCallRef: { current: boolean }): Promise<string> => {
       try {
-        return await remoteAIClient.invokeVLM(messages, systemPrompt, { signal, taskId });
+        // Use the ref to track first call status for the backend
+        const status = isFirstVlmCallRef.current ? 'begin' : 'continue';
+        const result = await remoteAIClient.invokeVLM(messages, systemPrompt, { signal, taskId, status });
+        // Update ref after call so subsequent calls use 'continue'
+        isFirstVlmCallRef.current = false;
+        return result;
       } catch (error: any) {
         throw new Error(`Remote VLM call failed: ${error.message}`);
       }
@@ -1415,10 +1543,11 @@ export class TaskTool implements Tool {
     console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
     console.log('');
 
-    // Get VLM configuration (used for local mode fallback)
-    const baseUrl = config.get('guiSubagentBaseUrl') || config.get('baseUrl') || '';
-    const apiKey = config.get('guiSubagentApiKey') || config.get('apiKey') || '';
-    const modelName = config.get('guiSubagentModel') || config.get('modelName') || '';
+    // Get VLM configuration for local mode
+    // NOTE: guiSubagentBaseUrl must be explicitly configured, NOT fallback to baseUrl
+    const baseUrl = config.get('guiSubagentBaseUrl') || '';
+    const apiKey = config.get('guiSubagentApiKey') || '';
+    const modelName = config.get('guiSubagentModel') || '';
 
     // Determine mode: remote if remoteAIClient exists, otherwise local
     const isRemoteMode = !!remoteAIClient;
@@ -1428,11 +1557,11 @@ export class TaskTool implements Tool {
       console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
     } else {
       console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
-      // Local mode requires configuration check
-      if (!baseUrl) {
+      // Local mode requires explicit VLM configuration
+      if (!baseUrl || !apiKey || !modelName) {
         return {
           success: false,
-          message: `GUI task "${description}" failed: No valid API URL configured`
+          message: `GUI task "${description}" failed: VLM not configured. Please run /vlm to configure Vision-Language Model first.`
         };
       }
       console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
@@ -1452,8 +1581,11 @@ export class TaskTool implements Tool {
       }
     }
 
+    // Track first VLM call for proper status management
+    const isFirstVlmCallRef = { current: true };
+
     // Create remoteVlmCaller using the unified method (handles both local and remote modes)
-    const remoteVlmCaller = this.createRemoteVlmCaller(remoteAIClient, taskId, { baseUrl, apiKey, modelName });
+    const remoteVlmCaller = this.createRemoteVlmCaller(remoteAIClient, taskId, { baseUrl, apiKey, modelName }, isFirstVlmCallRef);
 
     // Set up stdin polling for ESC cancellation
     let rawModeEnabled = false;
@@ -1516,9 +1648,11 @@ export class TaskTool implements Tool {
         model: !isRemoteMode ? modelName : undefined,
         modelBaseUrl: !isRemoteMode ? baseUrl : undefined,
         modelApiKey: !isRemoteMode ? apiKey : undefined,
+        taskId: taskId || undefined,
+        isFirstVlmCallRef,
         remoteVlmCaller,
         isLocalMode: !isRemoteMode,
-        maxLoopCount: 30,
+        maxLoopCount: 100,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
       });
@@ -1553,26 +1687,65 @@ export class TaskTool implements Tool {
       process.stdout.write('\n');
 
       // Return result based on GUIAgent status
+      // Always return all info except screenshots (base64) to avoid huge payload
+      const conversationsWithoutScreenshots = result.conversations.map((conv: any) => ({
+        ...conv,
+        screenshotBase64: undefined  // Remove screenshots to avoid huge payload
+      }));
+
       if (result.status === 'end') {
-        const iterations = result.conversations.filter(c => c.from === 'human' && c.screenshotBase64).length;
+        const iterations = conversationsWithoutScreenshots.filter((c: any) => c.from === 'human' && c.screenshotContext).length;
         console.log(`${indent}${colors.success(`${icons.check} GUI task completed in ${iterations} iterations`)}`);
         return {
           success: true,
           message: `GUI task "${description}" completed`,
-          result: `Completed in ${iterations} iterations`
+          result: {
+            status: result.status,
+            iterations,
+            actions: conversationsWithoutScreenshots.filter((c: any) => c.from === 'assistant' && c.actionType).map((c: any) => c.actionType),
+            conversations: conversationsWithoutScreenshots,
+            error: result.error
+          }
+        };
+      } else if (result.status === 'call_llm') {
+        // Empty action or needs LLM decision - return to main agent with full context
+        console.log(`${indent}${colors.warning(`${icons.warning} GUI agent returned to main agent for LLM decision`)}`);
+        return {
+          success: true,
+          message: `GUI task "${description}" returned for LLM decision`,
+          result: {
+            status: result.status,
+            iterations: conversationsWithoutScreenshots.filter((c: any) => c.from === 'human' && c.screenshotContext).length,
+            actions: conversationsWithoutScreenshots.filter((c: any) => c.from === 'assistant' && c.actionType).map((c: any) => c.actionType),
+            conversations: conversationsWithoutScreenshots,
+            error: result.error
+          }
         };
       } else if (result.status === 'user_stopped') {
         return {
           success: true,
           message: `GUI task "${description}" stopped by user`,
-          result: 'User stopped'
+          result: {
+            status: result.status,
+            iterations: conversationsWithoutScreenshots.filter((c: any) => c.from === 'human' && c.screenshotContext).length,
+            actions: conversationsWithoutScreenshots.filter((c: any) => c.from === 'assistant' && c.actionType).map((c: any) => c.actionType),
+            conversations: conversationsWithoutScreenshots,
+            stopped: true
+          }
         };
       } else {
         // status is 'error' or other non-success status
         const errorMsg = result.error || 'Unknown error';
         return {
           success: false,
-          message: `GUI task "${description}" failed: ${errorMsg}`
+          message: `GUI task "${description}" failed: ${errorMsg}`,
+          result: {
+            status: result.status,
+            iterations: conversationsWithoutScreenshots.filter((c: any) => c.from === 'human' && c.screenshotContext).length,
+            actions: conversationsWithoutScreenshots.filter((c: any) => c.from === 'assistant' && c.actionType).map((c: any) => c.actionType),
+            conversations: conversationsWithoutScreenshots,
+            error: result.error
+          }
         };
       }
     } catch (error: any) {
@@ -1678,15 +1851,30 @@ export class TaskTool implements Tool {
       }
     }
 
-    // Create a new AIClient for this subagent with its specific model
-    const { AIClient: SubAgentAIClient } = await import('./ai-client.js');
-    const subAgentClient = new SubAgentAIClient({
-      type: AuthType.OPENAI_COMPATIBLE,
-      apiKey: apiKey,
-      baseUrl: baseUrl,
-      modelName: modelName,
-      showAIDebugInfo: config.get('showAIDebugInfo') || false
-    });
+    // Create AI client for this subagent
+    let subAgentClient;
+    const authConfig = config.getAuthConfig();
+    
+    if (authConfig.type === AuthType.OAUTH_XAGENT) {
+      // Remote mode: try to reuse session's RemoteAIClient first
+      const session = getSingletonSession();
+      const existingClient = session?.getRemoteAIClient();
+      
+      if (existingClient) {
+        subAgentClient = existingClient;
+      } else {
+        subAgentClient = createAIClient(authConfig);
+      }
+    } else {
+      // Local mode: create client with subagent-specific model config
+      subAgentClient = new AIClient({
+        type: AuthType.OPENAI_COMPATIBLE,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+        modelName: modelName,
+        showAIDebugInfo: config.get('showAIDebugInfo') || false
+      });
+    }
     
     const indent = '  '.repeat(indentLevel);
     const indentNext = '  '.repeat(indentLevel + 1);
@@ -2680,17 +2868,12 @@ export class ImageReadTool implements Tool {
         imageData = image_input;
       }
       
-      const { AIClient } = await import('./ai-client.js');
       const configManager = await import('./config.js');
       const { getConfigManager } = configManager;
       const config = getConfigManager();
+      const authConfig = config.getAuthConfig();
       
-      const aiClient = new AIClient({
-        type: AuthType.OPENAI_COMPATIBLE,
-        apiKey: config.get('apiKey'),
-        baseUrl: config.get('baseUrl'),
-        modelName: config.get('modelName') || 'Qwen3-Coder'
-      });
+      const aiClient = createAIClient(authConfig);
       
       const textContent = task_brief ? `${task_brief}\n\n${prompt}` : prompt;
       const messages: Message[] = [

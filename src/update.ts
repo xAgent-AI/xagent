@@ -240,7 +240,7 @@ export class UpdateManager {
 
     const configManager = getConfigManager();
     configManager.set('autoUpdate', enabled);
-    await configManager.save('global');
+    configManager.save('global');
 
     console.log(`✅ Auto-update ${enabled ? 'enabled' : 'disabled'}`);
   }

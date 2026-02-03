@@ -16,7 +16,7 @@ import { getContextCompressor, ContextCompressor, CompressionResult } from './co
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
-import { AuthService } from './auth.js';
+import { AuthService, selectAuthType } from './auth.js';
 
 const logger = getLogger();
 
@@ -31,6 +31,8 @@ export class SlashCommandHandler {
   private conversationHistory: ChatMessage[] = [];
   private onClearCallback: (() => void) | null = null;
   private onSystemPromptUpdate: (() => Promise<void>) | null = null;
+  private onConfigUpdate: (() => void) | null = null;
+  private remoteAIClient: any = null;  // Reference to InteractiveSession's remoteAIClient
 
   constructor() {
     this.configManager = getConfigManager(process.cwd());
@@ -40,6 +42,13 @@ export class SlashCommandHandler {
     this.checkpointManager = getCheckpointManager(process.cwd());
     this.contextCompressor = getContextCompressor();
     this.conversationManager = getConversationManager();
+  }
+
+  /**
+   * Set remote AI client reference (called from InteractiveSession)
+   */
+  setRemoteAIClient(client: any): void {
+    this.remoteAIClient = client;
   }
 
   /**
@@ -54,6 +63,13 @@ export class SlashCommandHandler {
    */
   setSystemPromptUpdateCallback(callback: () => Promise<void>): void {
     this.onSystemPromptUpdate = callback;
+  }
+
+  /**
+   * Set callback for config update (called after /auth changes config)
+   */
+  setConfigUpdateCallback(callback: () => void): void {
+    this.onConfigUpdate = callback;
   }
 
   /**
@@ -107,6 +123,9 @@ export class SlashCommandHandler {
         break;
       case 'vlm':
         await this.handleVlm();
+        break;
+      case 'provider':
+        await this.handleProvider();
         break;
       case 'memory':
         await this.handleMemory(args);
@@ -361,10 +380,10 @@ export class SlashCommandHandler {
     // Clear local conversation history
     this.conversationHistory = [];
 
-    // Clear ConversationManager 中的当前对话
+    // Clear current conversation in ConversationManager
     await this.conversationManager.clearCurrentConversation();
 
-    // Call callback to notify InteractiveSession 清空对话
+    // Call callback to notify InteractiveSession to clear conversation
     if (this.onClearCallback) {
       this.onClearCallback();
     }
@@ -380,14 +399,27 @@ export class SlashCommandHandler {
   private async handleAuth(): Promise<void> {
     logger.section('Authentication Management');
 
+    // Show current authentication configuration
+    const authConfig = this.configManager.getAuthConfig();
+    const currentType = authConfig.type === AuthType.OAUTH_XAGENT ? 'xAgent (Remote)' : 'Third-party API (Local)';
+
+    console.log(chalk.cyan('\n📋 Current Authentication Configuration:\n'));
+    console.log(`  ${chalk.yellow('Mode:')} ${currentType}`);
+    if (authConfig.baseUrl) {
+      console.log(`  ${chalk.yellow('API URL:')} ${authConfig.baseUrl}`);
+    }
+    if (authConfig.modelName) {
+      console.log(`  ${chalk.yellow('Model:')} ${authConfig.modelName}`);
+    }
+    console.log('');
+
     const { action } = await inquirer.prompt([
       {
         type: 'list',
         name: 'action',
         message: 'Select action:',
         choices: [
-          { name: 'Change authentication method', value: 'change' },
-          { name: 'Show current auth config', value: 'show' },
+          { name: 'Switch authentication method', value: 'switch' },
           { name: 'Back', value: 'back' }
         ]
       }
@@ -397,22 +429,96 @@ export class SlashCommandHandler {
       return;
     }
 
-    if (action === 'show') {
-      const authConfig = this.configManager.getAuthConfig();
-      logger.subsection('Current Authentication Configuration');
-      console.log(JSON.stringify(authConfig, null, 2));
-    } else if (action === 'change') {
-      const { selectAuthType } = await inquirer.prompt([
+    if (action === 'switch') {
+      // Use the same selection UI as initial setup
+      const { confirmSwitch } = await inquirer.prompt([
         {
           type: 'confirm',
-          name: 'selectAuthType',
-          message: 'Do you want to change authentication type?',
+          name: 'confirmSwitch',
+          message: `Switch from "${currentType}" to another authentication method?`,
           default: false
         }
       ]);
 
-      if (selectAuthType) {
-        logger.warn('Please restart xAgent CLI and run /auth again', 'Authentication changes require restart');
+      if (!confirmSwitch) {
+        return;
+      }
+
+      // Select authentication type (same as initial setup)
+      const authType = await selectAuthType();
+
+      if (authType === AuthType.OAUTH_XAGENT) {
+        // Switch to xAgent (Remote mode)
+        const authService = new AuthService({
+          type: AuthType.OAUTH_XAGENT,
+          apiKey: '',
+          baseUrl: '',
+          xagentApiBaseUrl: authConfig.xagentApiBaseUrl
+        });
+
+        const success = await authService.authenticate();
+        if (success) {
+          const newAuthConfig = authService.getAuthConfig();
+          this.configManager.setAuthConfig({
+            selectedAuthType: newAuthConfig.type,
+            apiKey: newAuthConfig.apiKey,
+            refreshToken: newAuthConfig.refreshToken,
+            baseUrl: newAuthConfig.baseUrl,
+            modelName: '',
+            xagentApiBaseUrl: newAuthConfig.xagentApiBaseUrl,
+            guiSubagentModel: '',
+            guiSubagentBaseUrl: 'https://www.xagent-colife.net/v3',
+            guiSubagentApiKey: ''
+          });
+          // Set default remote provider settings if not already set
+          if (!this.configManager.get('remote_llmProvider')) {
+            this.configManager.set('remote_llmProvider', 'Default');
+          }
+          if (!this.configManager.get('remote_vlmProvider')) {
+            this.configManager.set('remote_vlmProvider', 'Default');
+          }
+          this.configManager.save('global');
+
+          // Notify InteractiveSession to update aiClient config
+          if (this.onConfigUpdate) {
+            this.onConfigUpdate();
+          }
+
+          console.log(chalk.green('\n✅ Authentication switched to xAgent (Remote mode)!'));
+          // Removed: logging partial token for security
+        }
+      } else {
+        // Switch to Third-party API (Local mode)
+        const authService = new AuthService({
+          type: AuthType.OPENAI_COMPATIBLE,
+          apiKey: '',
+          baseUrl: '',
+          modelName: ''
+        });
+
+        const success = await authService.authenticate();
+        if (success) {
+          const newAuthConfig = authService.getAuthConfig();
+          this.configManager.setAuthConfig({
+            selectedAuthType: newAuthConfig.type,
+            apiKey: newAuthConfig.apiKey,
+            baseUrl: newAuthConfig.baseUrl,
+            modelName: newAuthConfig.modelName,
+            xagentApiBaseUrl: '',
+            refreshToken: '',
+            guiSubagentModel: '',
+            guiSubagentBaseUrl: '',
+            guiSubagentApiKey: ''
+          });
+          this.configManager.save('global');
+
+          // Notify InteractiveSession to update aiClient config
+          if (this.onConfigUpdate) {
+            this.onConfigUpdate();
+          }
+
+          console.log(chalk.green('\n✅ Authentication switched to Third-party API (Local mode)!'));
+        }
       }
     }
   }
@@ -439,13 +545,13 @@ export class SlashCommandHandler {
       }
 
       // Switch to OAuth xAgent
-      await this.configManager.setAuthConfig({
+      this.configManager.setAuthConfig({
         selectedAuthType: AuthType.OAUTH_XAGENT,
         apiKey: '',
         refreshToken: '',
         baseUrl: ''
       });
-      await this.configManager.save('global');
+      this.configManager.save('global');
       console.log(chalk.green('✅ Switched to OAuth xAgent authentication.'));
     }
 
@@ -453,11 +559,15 @@ export class SlashCommandHandler {
     console.log(chalk.gray('   A browser will open for you to complete authentication.\n'));
 
     try {
+      // Get xagentApiBaseUrl from config (respects XAGENT_BASE_URL env var)
+      const config = this.configManager.getAuthConfig();
+
       const authService = new AuthService({
         type: AuthType.OAUTH_XAGENT,
         apiKey: '',
         baseUrl: '',
-        refreshToken: ''
+        refreshToken: '',
+        xagentApiBaseUrl: config.xagentApiBaseUrl
       });
 
       const success = await authService.authenticate();
@@ -476,6 +586,14 @@ export class SlashCommandHandler {
   }
 
   private async handleVlm(): Promise<void> {
+    // Check if local mode (remote mode uses backend VLM config)
+    const authConfig = this.configManager.getAuthConfig();
+    if (authConfig.type === AuthType.OAUTH_XAGENT) {
+      console.log(chalk.yellow('\n⚠️  This command is only available in local mode (third-party API).'));
+      console.log(chalk.cyan('   In remote mode, VLM configuration is managed by /provider.'));
+      return;
+    }
+
     logger.section('VLM Configuration for GUI Agent');
 
     // Show current VLM config
@@ -519,10 +637,10 @@ export class SlashCommandHandler {
       ]);
 
       if (confirm) {
-        await this.configManager.set('guiSubagentModel', '');
-        await this.configManager.set('guiSubagentBaseUrl', '');
-        await this.configManager.set('guiSubagentApiKey', '');
-        await this.configManager.save('global');
+        this.configManager.set('guiSubagentModel', '');
+        this.configManager.set('guiSubagentBaseUrl', '');
+        this.configManager.set('guiSubagentApiKey', '');
+        this.configManager.save('global');
         console.log(chalk.green('✅ VLM configuration removed successfully!'));
       }
       return;
@@ -530,27 +648,148 @@ export class SlashCommandHandler {
 
     if (action === 'configure') {
       // Use AuthService to configure VLM
+      // Get xagentApiBaseUrl from config (respects XAGENT_BASE_URL env var)
+      const config = this.configManager.getAuthConfig();
+
       const authService = new AuthService({
         type: 'openai_compatible' as any,
         apiKey: '',
         baseUrl: '',
-        modelName: ''
+        modelName: '',
+        xagentApiBaseUrl: config.xagentApiBaseUrl
       });
 
       const vlmConfig = await authService.configureAndValidateVLM();
 
       if (vlmConfig) {
-        // Save VLM configuration
-        await this.configManager.set('guiSubagentModel', vlmConfig.model);
-        await this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
-        await this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
-        await this.configManager.save('global');
+        this.configManager.set('guiSubagentModel', vlmConfig.model);
+        this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
+        this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
+        this.configManager.save('global');
         console.log(chalk.green('✅ VLM configuration saved successfully!'));
         console.log(chalk.cyan(`   Model: ${vlmConfig.model}`));
         console.log(chalk.cyan(`   Base URL: ${vlmConfig.baseUrl}`));
       } else {
         console.log(chalk.red('❌ VLM configuration failed or cancelled'));
       }
+    }
+  }
+
+  /**
+   * Handle /provider command - Configure LLM/VLM providers for remote mode
+   */
+  private async handleProvider(): Promise<void> {
+    const authConfig = this.configManager.getAuthConfig();
+
+    // 1. Check if remote mode
+    if (authConfig.type !== AuthType.OAUTH_XAGENT) {
+      console.log(chalk.yellow('\n⚠️  This command is only available in remote mode.'));
+      return;
+    }
+
+    // 2. Get RemoteAIClient instance (from InteractiveSession)
+    const remoteClient = this.remoteAIClient;
+    if (!remoteClient) {
+      console.log(chalk.red('\n❌ Remote client not initialized. Please use /auth to configure remote mode first.'));
+      return;
+    }
+
+    // 3. Display current configuration
+    const currentLlm = authConfig.remote_llmProvider || 'Not set';
+    const currentVlm = authConfig.remote_vlmProvider || 'Not set';
+
+    console.log(chalk.cyan('\n📊 Current Provider Configuration:\n'));
+    console.log(`  ${chalk.yellow('LLM Provider:')} ${currentLlm}`);
+    console.log(`  ${chalk.yellow('VLM Provider:')} ${currentVlm}`);
+    console.log('');
+
+    // 4. Main menu
+    const { action } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'action',
+        message: 'Select action:',
+        choices: [
+          { name: 'Use default llm/vlm config', value: 'default' },
+          { name: 'Change LLM config', value: 'llm' },
+          { name: 'Change VLM config', value: 'vlm' },
+          { name: 'Back', value: 'back' }
+        ]
+      }
+    ]);
+
+    if (action === 'back') return;
+
+    // 5. Get default configuration
+    if (action === 'default') {
+      try {
+        const defaults = await remoteClient.getDefaultModels();
+        // Update in-memory config
+        await this.configManager.set('remote_llmProvider', defaults.llm.provider);
+        await this.configManager.set('remote_vlmProvider', defaults.vlm.provider);
+        this.configManager.save('global');
+
+        console.log(chalk.green('\n✅ Default configuration applied!'));
+        console.log(`   LLM: ${defaults.llm.providerDisplay}`);
+        console.log(`   VLM: ${defaults.vlm.providerDisplay}`);
+
+        // 通知 InteractiveSession 更新 aiClient config
+        if (this.onConfigUpdate) {
+          this.onConfigUpdate();
+        }
+      } catch (error: any) {
+        console.log(chalk.red(`\n❌ Failed to get default models: ${error.message}`));
+      }
+      return;
+    }
+
+    // 6. Get and display provider list
+    try {
+      const models = await remoteClient.getModels();
+      const providers = action === 'llm' ? models.llm : models.vlm;
+
+      if (providers.length === 0) {
+        console.log(chalk.yellow('\n⚠️  No providers available.'));
+        return;
+      }
+
+      // Build choice list
+      const choices = providers.map((p: any) => ({
+        name: `${p.providerDisplay} (${p.provider})`,
+        value: p.provider
+      }));
+
+      const { selectedProvider } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'selectedProvider',
+          message: action === 'llm' ? 'Select LLM Provider:' : 'Select VLM Provider:',
+          choices
+        }
+      ]);
+
+      const configKey = action === 'llm' ? 'remote_llmProvider' : 'remote_vlmProvider';
+      this.configManager.set(configKey, selectedProvider);
+      this.configManager.save('global');
+
+      // Clear conversation history to avoid tool call ID conflicts between providers
+      // Different models generate different tool_call_id, mixing them causes "tool id not found" errors
+
+      // Clear conversation history to avoid tool call ID conflicts between providers
+      if (this.onClearCallback) {
+        this.onClearCallback();
+        console.log(chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between providers.'));
+      }
+
+      // Notify InteractiveSession to update aiClient config
+      if (this.onConfigUpdate) {
+        this.onConfigUpdate();
+      }
+
+      console.log(chalk.green('\n✅ Provider updated successfully!'));
+      console.log(`   ${action === 'llm' ? 'LLM' : 'VLM'}: ${selectedProvider}`);
+    } catch (error: any) {
+      console.log(chalk.red(`\n❌ Failed to get models: ${error.message}`));
     }
   }
 
@@ -562,7 +801,7 @@ export class SlashCommandHandler {
       const newMode = args[0].toLowerCase();
       if (modes.includes(newMode as ExecutionMode)) {
         this.configManager.setApprovalMode(newMode as ExecutionMode);
-        await this.configManager.save('global');
+        this.configManager.save('global');
         console.log(chalk.green(`✅ Approval mode changed to: ${newMode}`));
       } else {
         console.log(chalk.red(`❌ Invalid mode: ${newMode}`));
@@ -599,12 +838,12 @@ export class SlashCommandHandler {
       if (action === 'on' || action === 'true' || action === '1') {
         thinkingConfig.enabled = true;
         this.configManager.setThinkingConfig(thinkingConfig);
-        await this.configManager.save('global');
+        this.configManager.save('global');
         console.log(chalk.green('✅ Thinking mode enabled'));
       } else if (action === 'off' || action === 'false' || action === '0') {
         thinkingConfig.enabled = false;
         this.configManager.setThinkingConfig(thinkingConfig);
-        await this.configManager.save('global');
+        this.configManager.save('global');
         console.log(chalk.green('✅ Thinking mode disabled'));
       } else if (action === 'display' && args[1]) {
         const displayMode = args[1].toLowerCase();
@@ -612,9 +851,9 @@ export class SlashCommandHandler {
 
         if (validModes.includes(displayMode)) {
           thinkingConfig.displayMode = displayMode as 'full' | 'compact' | 'indicator';
-          thinkingConfig.enabled = true; // Auto-enable when setting display mode
+          thinkingConfig.enabled = true;
           this.configManager.setThinkingConfig(thinkingConfig);
-          await this.configManager.save('global');
+          this.configManager.save('global');
           console.log(chalk.green(`✅ Thinking display mode set to: ${displayMode}`));
         } else {
           console.log(chalk.red(`❌ Invalid display mode: ${displayMode}`));
@@ -754,6 +993,9 @@ export class SlashCommandHandler {
           if (!input.trim()) {
             return 'Server name is required';
           }
+          if (!/^[a-zA-Z0-9_-]+$/.test(input)) {
+            return 'Server name must contain only alphanumeric characters, hyphens, and underscores';
+          }
           const servers = this.mcpManager.getAllServers();
           if (servers.some((s: MCPServer) => (s as any).config?.name === input)) {
             return 'Server with this name already exists';
@@ -791,7 +1033,17 @@ export class SlashCommandHandler {
         name: 'url',
         message: 'Enter server URL (for HTTP/SSE/HTTP transport):',
         when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http',
-        validate: (input: string) => input.trim() ? true : 'URL is required'
+        validate: (input: string) => {
+          if (!input.trim()) {
+            return 'URL is required';
+          }
+          try {
+            new URL(input);
+            return true;
+          } catch {
+            return 'Invalid URL format (e.g., https://example.com)';
+          }
+        }
       },
       {
         type: 'password',
@@ -826,32 +1078,44 @@ export class SlashCommandHandler {
       }
     } else {
       config.url = url;
-      if (authToken) {
-        config.authToken = authToken;
+
+      // Handle user input that mistakenly puts Bearer token in headers field
+      // Detect pattern: headers looks like "Bearer xxx.yyy.zzz" (JWT token)
+      let resolvedAuthToken = authToken;
+      let resolvedHeaders = headers;
+
+      if (headers && typeof headers === 'string' && !authToken) {
+        const trimmedHeaders = headers.trim();
+        if (trimmedHeaders.startsWith('Bearer ') && trimmedHeaders.split('.').length === 3) {
+          // User mistakenly put token in headers field - extract it
+          resolvedAuthToken = trimmedHeaders;
+          resolvedHeaders = undefined;
+          console.log('[MCP] Note: Detected Bearer token in headers field, moved to authToken');
+        }
       }
-      if (headers) {
-        config.headers = headers;
+
+      if (resolvedAuthToken) {
+        config.authToken = resolvedAuthToken;
+      }
+      if (resolvedHeaders) {
+        config.headers = resolvedHeaders;
       }
     }
 
     try {
-      // Save to config file
       this.configManager.addMcpServer(name, config);
-      await this.configManager.save('global');
+      this.configManager.save('global');
 
-      // Register to MCP Manager
       this.mcpManager.registerServer(name, config);
 
-      // Connect to server (with error handling)
       let connected = false;
       try {
         await this.mcpManager.connectServer(name);
         connected = true;
       } catch (error: any) {
-        // Connection failed - cleanup
         this.mcpManager.disconnectServer(name);
         this.configManager.removeMcpServer(name);
-        await this.configManager.save('global');
+        this.configManager.save('global');
         throw new Error(`Connection failed: ${error.message}`);
       }
 
@@ -916,7 +1180,7 @@ export class SlashCommandHandler {
 
       // Remove from config
       this.configManager.removeMcpServer(serverName);
-      await this.configManager.save('global');
+      this.configManager.save('global');
 
       // Update system prompt to reflect removed MCP tools
       if (this.onSystemPromptUpdate) {
@@ -1171,11 +1435,11 @@ export class SlashCommandHandler {
 
     if (mode === 'verbose' || mode === 'detail' || mode === 'true' || mode === 'on') {
       this.configManager.set('showToolDetails', true);
-      await this.configManager.save('global');
+      this.configManager.save('global');
       logger.success('Tool display mode switched to verbose mode', 'Will show complete tool call information');
     } else if (mode === 'simple' || mode === 'concise' || mode === 'false' || mode === 'off') {
       this.configManager.set('showToolDetails', false);
-      await this.configManager.save('global');
+      this.configManager.save('global');
       logger.success('Tool display mode switched to simple mode', 'Only show tool execution status');
     } else {
       logger.warn('Invalid mode', 'Use verbose or simple');
@@ -1184,6 +1448,8 @@ export class SlashCommandHandler {
 
   private async handleStats(): Promise<void> {
     logger.section('Session Statistics');
+    const authConfig = this.configManager.getAuthConfig();
+    logger.info(`  Base URL: ${authConfig.baseUrl}`);
     logger.info(`  Execution Mode: ${this.configManager.getExecutionMode()}`);
     logger.info(`  Language: ${this.configManager.getLanguage()}`);
     logger.info(`  Checkpointing: ${this.checkpointManager.isEnabled() ? 'Enabled' : 'Disabled'}`);
@@ -1241,16 +1507,12 @@ export class SlashCommandHandler {
     console.log(chalk.cyan('\n📦 Context Compression:\n'));
 
     console.log(`  Status: ${config.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`);
-    console.log(`  Max Messages: ${chalk.yellow(config.maxMessages.toString())}`);
-    console.log(`  Max Tokens: ${chalk.yellow(config.maxContextSize.toString())}`);
 
     console.log('');
     console.log(chalk.gray('Usage:'));
     console.log(chalk.gray('  /compress                 - Show current configuration'));
     console.log(chalk.gray('  /compress exec            - Execute compression now'));
     console.log(chalk.gray('  /compress on|off          - Enable/disable compression'));
-    console.log(chalk.gray('  /compress max_message <n> - Set max messages before compression'));
-    console.log(chalk.gray('  /compress max_token <n>   - Set max tokens before compression'));
     console.log('');
   }
 
@@ -1313,52 +1575,20 @@ export class SlashCommandHandler {
       case 'on':
         config.enabled = true;
         this.configManager.setContextCompressionConfig(config);
-        await this.configManager.save('global');
+        this.configManager.save('global');
         console.log(chalk.green('✅ Context compression enabled'));
         break;
 
       case 'off':
         config.enabled = false;
         this.configManager.setContextCompressionConfig(config);
-        await this.configManager.save('global');
+        this.configManager.save('global');
         console.log(chalk.green('✅ Context compression disabled'));
-        break;
-
-      case 'max_message':
-        if (args[1]) {
-          const maxMessages = parseInt(args[1], 10);
-          if (isNaN(maxMessages) || maxMessages < 1) {
-            console.log(chalk.red('❌ Invalid value for max_message. Must be a positive number.'));
-            return;
-          }
-          config.maxMessages = maxMessages;
-          this.configManager.setContextCompressionConfig(config);
-          await this.configManager.save('global');
-          console.log(chalk.green(`✅ Max messages set to: ${maxMessages}`));
-        } else {
-          console.log(chalk.gray('Usage: /compress max_message <number>'));
-        }
-        break;
-
-      case 'max_token':
-        if (args[1]) {
-          const maxContextSize = parseInt(args[1], 10);
-          if (isNaN(maxContextSize) || maxContextSize < 1000) {
-            console.log(chalk.red('❌ Invalid value for max_token. Must be at least 1000.'));
-            return;
-          }
-          config.maxContextSize = maxContextSize;
-          this.configManager.setContextCompressionConfig(config);
-          await this.configManager.save('global');
-          console.log(chalk.green(`✅ Max tokens set to: ${maxContextSize}`));
-        } else {
-          console.log(chalk.gray('Usage: /compress max_token <number>'));
-        }
         break;
 
       default:
         console.log(chalk.red(`❌ Unknown action: ${action}`));
-        console.log(chalk.gray('Available actions: on, off, max_message, max_token, exec'));
+        console.log(chalk.gray('Available actions: on, off, exec'));
     }
   }
 

@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { startInteractiveSession } from './session.js';
 import { getConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
+import { AuthType } from './types.js';
 import { getAgentManager } from './agents.js';
 import { getMCPManager } from './mcp.js';
 import { getLogger, setConfigProvider } from './logger.js';
@@ -148,7 +149,7 @@ program
       }
 
       configManager.setApprovalMode(options.approvalMode as any);
-      await configManager.save('global');
+      configManager.save('global');
       console.log('');
       console.log(colors.success(`✅ Approval mode set to: ${options.approvalMode}`));
       console.log('');
@@ -170,18 +171,39 @@ program
     const configManager = getConfigManager();
     configManager.set('selectedAuthType', authType);
 
+    // Get xagentApiBaseUrl from config (respects XAGENT_BASE_URL env var)
+    const config = configManager.getAuthConfig();
+
     const authService = new AuthService({
       type: authType,
       apiKey: '',
       baseUrl: '',
-      modelName: ''
+      modelName: '',
+      xagentApiBaseUrl: config.xagentApiBaseUrl
     });
 
     const success = await authService.authenticate();
 
     if (success) {
       const authConfig = authService.getAuthConfig();
-      await configManager.setAuthConfig(authConfig);
+      
+      // Clear modelName for remote mode
+      if (authType === AuthType.OAUTH_XAGENT) {
+        authConfig.modelName = '';
+      }
+      
+      configManager.setAuthConfig(authConfig);
+      
+      // Set default remote provider settings if not already set
+      if (authType === AuthType.OAUTH_XAGENT) {
+        if (!configManager.get('remote_llmProvider')) {
+          configManager.set('remote_llmProvider', 'Default');
+        }
+        if (!configManager.get('remote_vlmProvider')) {
+          configManager.set('remote_vlmProvider', 'Default');
+        }
+        configManager.save('global');
+      }
 
       console.log('');
       console.log(colors.success('Authentication configured successfully!'));
@@ -299,7 +321,7 @@ program
         mcpManager.disconnectServer(options.remove);
         const mcpServers = configManager.getMcpServers();
         delete mcpServers[options.remove];
-        await configManager.save(options.scope);
+        configManager.save(options.scope);
         console.log('');
         console.log(colors.success(`MCP server ${options.remove} removed successfully`));
         console.log('');
@@ -699,12 +721,16 @@ program
 
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
 
+      // Create ref for tracking first VLM call across loop iterations
+      const isFirstVlmCallRef = { current: true };
+
       // Create remoteVlmCaller for remote mode (uses full messages for consistent behavior)
-      let remoteVlmCaller: ((messages: any[], systemPrompt: string) => Promise<string>) | undefined;
+      let remoteVlmCaller: ((messages: any[], systemPrompt: string, taskId: string, isFirstVlmCallRef: { current: boolean }) => Promise<string>) | undefined;
 
       if (!isLocalMode && authConfig.baseUrl) {
         const remoteBaseUrl = `${authConfig.baseUrl}/api/agent/vlm`;
-        remoteVlmCaller = async (messages: any[], _systemPrompt: string): Promise<string> => {
+        remoteVlmCaller = async (messages: any[], _systemPrompt: string, _taskId: string, isFirstVlmCallRef: { current: boolean }): Promise<string> => {
+          const status = isFirstVlmCallRef.current ? 'begin' : 'continue';
           const response = await fetch(remoteBaseUrl, {
             method: 'POST',
             headers: {
@@ -712,7 +738,9 @@ program
               'Authorization': `Bearer ${authConfig.apiKey || ''}`,
             },
             body: JSON.stringify({
-              messages
+              messages,
+              taskId: _taskId,
+              status
             }),
           });
           if (!response.ok) {
@@ -720,6 +748,8 @@ program
             throw new Error(`Remote VLM error: ${response.status} - ${errorText}`);
           }
           const result = await response.json() as { response?: string; content?: string; message?: string };
+          // Update ref after call so subsequent calls use 'continue'
+          isFirstVlmCallRef.current = false;
           return result.response || result.content || result.message || '';
         };
       }
@@ -729,6 +759,7 @@ program
         model: isLocalMode ? modelName : undefined,
         modelBaseUrl: isLocalMode ? baseUrl : undefined,
         modelApiKey: isLocalMode ? apiKey : undefined,
+        isFirstVlmCallRef,
         remoteVlmCaller,
         isLocalMode,
       });

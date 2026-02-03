@@ -6,18 +6,24 @@ import { getLogger } from './logger.js';
 
 const logger = getLogger();
 
+// Environment variable support for backend URL configuration
+// Set these to use local development server instead of cloud
+const CLOUD_BASE_URL = 'https://www.xagent-colife.net';
+const LOCAL_BASE_URL = process.env.XAGENT_BASE_URL || CLOUD_BASE_URL;
+
 const DEFAULT_SETTINGS: Settings = {
   theme: 'Default',
   selectedAuthType: AuthType.OAUTH_XAGENT,
   apiKey: '',
   // LLM API - for main conversation and task processing (OpenAI compatible format)
-  baseUrl: 'https://www.xagent-colife.net:3000/v1',
+  baseUrl: `${CLOUD_BASE_URL}/v1`,
   modelName: 'Qwen3-Coder',
   // xAgent API - for token validation and other backend calls (without /v1)
-  xagentApiBaseUrl: 'https://www.xagent-colife.net:3000',
+  xagentApiBaseUrl: '',
   // VLM API - for GUI automation (browser/desktop operations)
-  guiSubagentModel: 'Qwen3-Coder',
-  guiSubagentBaseUrl: 'https://www.xagent-colife.net:3000/v3',
+  // NOTE: guiSubagent* fields are only set when user runs /vlm command
+  guiSubagentModel: '',
+  guiSubagentBaseUrl: '',
   guiSubagentApiKey: '',
   searchApiKey: '',
   skillsPath: '',  // Will be auto-detected if not set
@@ -37,11 +43,7 @@ const DEFAULT_SETTINGS: Settings = {
     displayMode: 'compact'
   },
   contextCompression: {
-    enabled: true,
-    maxMessages: 30,
-    maxContextSize: 1500000,
-    preserveRecentMessages: 0,
-    enableSummary: true
+    enabled: true
   },
   contextFileName: 'XAGENT.md',
   mcpServers: {},
@@ -51,7 +53,9 @@ const DEFAULT_SETTINGS: Settings = {
   telemetryEnabled: true,
   showToolDetails: false,
   showAIDebugInfo: false,
-  loggerLevel: LogLevel.INFO
+  loggerLevel: LogLevel.INFO,
+  remote_llmProvider: '',   // Remote mode LLM Provider ID
+  remote_vlmProvider: ''    // Remote mode VLM Provider ID
 };
 
 export class ConfigManager {
@@ -67,7 +71,7 @@ export class ConfigManager {
     this.settings = { ...DEFAULT_SETTINGS };
   }
 
-  async load(): Promise<Settings> {
+  load(): Settings {
     logger.debug('[CONFIG] ========== load() 开始 ==========');
     logger.debug('[CONFIG] globalConfigPath:', this.globalConfigPath);
     logger.debug('[CONFIG] projectConfigPath:', this.projectConfigPath);
@@ -86,8 +90,21 @@ export class ConfigManager {
         this.settings = { ...this.settings, ...projectConfig };
       }
 
-      logger.debug('[CONFIG] 最终 settings.apiKey:', this.settings.apiKey ? this.settings.apiKey.substring(0, 30) + '...' : 'empty');
-      logger.debug('[CONFIG] 最终 settings.refreshToken:', this.settings.refreshToken ? 'exists' : 'empty');
+      // Removed: logging sensitive information (apiKey, refreshToken)
+
+      // Apply environment variables AFTER loading saved config
+      // Only apply for remote mode (OAuth XAGENT) - local mode should use user-saved config
+      if (process.env.XAGENT_BASE_URL && this.settings.selectedAuthType === AuthType.OAUTH_XAGENT) {
+        const localBaseUrl = process.env.XAGENT_BASE_URL;
+        this.settings.baseUrl = `${localBaseUrl}/v1`;
+        this.settings.xagentApiBaseUrl = localBaseUrl;
+        logger.debug('[CONFIG] Applied XAGENT_BASE_URL for remote mode:', localBaseUrl);
+      }
+      if (process.env.XAGENT_GUI_BASE_URL) {
+        this.settings.guiSubagentBaseUrl = `${process.env.XAGENT_GUI_BASE_URL}/v3`;
+        logger.debug('[CONFIG] Applied XAGENT_GUI_BASE_URL:', process.env.XAGENT_GUI_BASE_URL);
+      }
+
       logger.debug('[CONFIG] ========== load() 结束 ==========');
 
       return this.settings;
@@ -98,7 +115,7 @@ export class ConfigManager {
     }
   }
 
-  async save(scope: 'global' | 'project' = 'global'): Promise<void> {
+  save(scope: 'global' | 'project' = 'global'): void {
     const configPath = scope === 'global' ? this.globalConfigPath : this.projectConfigPath;
     if (!configPath) {
       throw new Error('Project config path not set');
@@ -114,7 +131,7 @@ export class ConfigManager {
     fs.writeFileSync(
       configPath,
       JSON.stringify(configToSave, null, 2),
-      'utf-8'
+      { mode: 0o600, encoding: 'utf-8' }
     );
   }
 
@@ -135,24 +152,25 @@ export class ConfigManager {
       xagentApiBaseUrl: this.settings.xagentApiBaseUrl,
       modelName: this.settings.modelName,
       searchApiKey: this.settings.searchApiKey,
-      showAIDebugInfo: this.settings.showAIDebugInfo
+      showAIDebugInfo: this.settings.showAIDebugInfo,
+      remote_llmProvider: this.settings.remote_llmProvider || '',
+      remote_vlmProvider: this.settings.remote_vlmProvider || ''
     };
 
     logger.debug('[CONFIG] getAuthConfig() 返回:');
     logger.debug('  - type:', result.type);
-    logger.debug('  - apiKey:', result.apiKey ? result.apiKey.substring(0, 30) + '...' : 'empty');
-    logger.debug('  - refreshToken:', result.refreshToken ? 'exists' : 'empty');
+    // Removed: logging sensitive information (apiKey, refreshToken)
     logger.debug('  - baseUrl:', result.baseUrl);
     logger.debug('  - xagentApiBaseUrl:', result.xagentApiBaseUrl);
+    logger.debug(`[CONFIG] this.settings.remote_llmProvider=${this.settings.remote_llmProvider}, result.remote_llmProvider=${result.remote_llmProvider}`);
+    logger.debug(`[CONFIG] this.settings.remote_vlmProvider=${this.settings.remote_vlmProvider}, result.remote_vlmProvider=${result.remote_vlmProvider}`);
 
     return result;
   }
 
-  async setAuthConfig(config: Partial<Settings> & { xagentApiBaseUrl?: string }): Promise<void> {
-    // Extract xagentApiBaseUrl separately since it's not in Settings
+  setAuthConfig(config: Partial<Settings> & { xagentApiBaseUrl?: string }): void {
     const { xagentApiBaseUrl, type, ...otherConfig } = config as any;
     
-    // Map 'type' to 'selectedAuthType' (AuthConfig uses 'type', Settings uses 'selectedAuthType')
     if (type !== undefined) {
       this.settings.selectedAuthType = type;
     }
@@ -161,7 +179,7 @@ export class ConfigManager {
     if (xagentApiBaseUrl !== undefined) {
       this.settings.xagentApiBaseUrl = xagentApiBaseUrl;
     }
-    await this.save('global');
+    this.save('global');
   }
 
   getExecutionMode(): ExecutionMode {
@@ -274,7 +292,7 @@ export class ConfigManager {
       return JSON.parse(content);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        logger.error(`Error reading config file ${filePath}`, 'Check file permissions and format');
+        logger.error(`Error reading config file ${filePath}: ${error instanceof Error ? error.message : String(error)}`, 'Check file permissions and format');
       }
       return {};
     }
@@ -307,9 +325,9 @@ export class ConfigManager {
     return this.settings;
   }
 
-  async resetToDefaults(): Promise<void> {
+  resetToDefaults(): void {
     this.settings = { ...DEFAULT_SETTINGS };
-    await this.save('global');
+    this.save('global');
   }
 }
 

@@ -40,12 +40,46 @@ export class MCPServer {
         await this.connectStdio();
       }
 
+      // Wait for tools to be loaded (max 10 seconds)
+      await this.waitForTools(10000);
+
       this.isConnected = true;
       console.log(`✅ MCP Server connected`);
     } catch (error) {
-      console.error(`❌ Failed to connect MCP Server:`, error);
+      console.error(`❌ [mcp] Failed to connect MCP Server: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
+  }
+
+  /**
+   * Wait for tools to be loaded from MCP server
+   * @param timeoutMs Maximum time to wait in milliseconds
+   */
+  async waitForTools(timeoutMs: number = 10000): Promise<void> {
+    if (this.tools.size > 0) {
+      return;  // Tools already loaded
+    }
+
+    return new Promise((resolve, reject) => {
+      const checkInterval = 100;
+      const startTime = Date.now();
+
+      const check = () => {
+        if (this.tools.size > 0) {
+          clearInterval(checkInterval);
+          resolve();
+        } else if (Date.now() - startTime > timeoutMs) {
+          clearInterval(checkInterval);
+          console.warn(`[MCP] Timeout waiting for tools (${timeoutMs}ms), proceeding anyway`);
+          resolve();  // Don't reject, just proceed without tools
+        } else {
+          // Continue checking
+        }
+      };
+
+      const intervalId = setInterval(check, checkInterval);
+      check();  // Check immediately first
+    });
   }
 
   private async connectStdio(): Promise<void> {
@@ -54,9 +88,6 @@ export class MCPServer {
         reject(new Error('Command is required for stdio transport'));
         return;
       }
-
-      let toolsLoaded = false;
-      const toolsLoadTimeout = 5000; // 5 seconds max wait
 
       this.process = spawn(this.config.command, this.config.args || [], {
         env: { ...process.env, ...this.config.env },
@@ -77,10 +108,6 @@ export class MCPServer {
       if (this.process.stdout) {
         this.process.stdout.on('data', (data) => {
           this.handleMessage(data.toString());
-          // Check if tools have been loaded after each message
-          if (!toolsLoaded && this.tools.size > 0) {
-            toolsLoaded = true;
-          }
         });
       }
 
@@ -102,22 +129,8 @@ export class MCPServer {
         }
       });
 
-      // Wait for tools to be loaded or timeout
-      const checkInterval = setInterval(() => {
-        if (this.tools.size > 0) {
-          clearInterval(checkInterval);
-          clearTimeout(timeout);
-          resolve();
-        }
-      }, 100);
-
-      const timeout = setTimeout(() => {
-        clearInterval(checkInterval);
-        if (this.tools.size === 0) {
-          console.warn('MCP Server tools not loaded within timeout');
-        }
-        resolve();
-      }, toolsLoadTimeout);
+      // Connection established, tools loading is handled by waitForTools() in connect()
+      resolve();
     });
   }
 
@@ -278,7 +291,7 @@ export class MCPServer {
         const message = JSON.parse(line);
         this.handleJsonRpcMessage(message);
       } catch (error) {
-        console.warn('Failed to parse MCP message:', line);
+        console.warn(`[mcp] Failed to parse MCP message: ${error instanceof Error ? error.message : String(error)}`, line);
       }
     }
   }
@@ -516,9 +529,10 @@ export class MCPServer {
             }
           }
         } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
           console.error('\n========== MCP STDIO Parse Error ==========');
-            console.error('Raw data:', data.toString());
-          console.error('Error:', error);
+          console.error('Raw data:', data.toString());
+          console.error('Error:', errorMsg);
           console.error('==========================================\n');
           reject(error);
         }
@@ -573,7 +587,7 @@ export class MCPManager {
         try {
           await server.connect();
         } catch (error) {
-          console.error(`Failed to connect MCP server ${name}:`, error);
+          console.error(`[mcp] Failed to connect MCP server ${name}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     );

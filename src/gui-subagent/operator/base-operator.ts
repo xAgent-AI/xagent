@@ -54,7 +54,6 @@ export abstract class Operator {
         `scroll(start_box='[x1, y1, x2, y2]', direction='down or up or right or left')`,
         `wait()`,
         `finished()`,
-        `call_user()`,
       ],
     };
   }

@@ -19,9 +19,8 @@ export class TokenInvalidError extends Error {
 }
 
 export interface RemoteChatOptions {
-  model?: string;
   taskId?: string;
-  status?: 'begin' | 'continue' | 'end' | 'cancel';
+  status?: 'begin' | 'continue' | 'end' | 'cancel' | 'timeout' | 'failure';
   conversationId?: string;
   context?: {
     cwd?: string;
@@ -46,12 +45,14 @@ export interface RemoteChatOptions {
     };
   }>;
   signal?: AbortSignal;
+  llmProvider?: string;
+  vlmProvider?: string;
 }
 
 export interface RemoteChatResponse {
   content: string;
   reasoningContent?: string;
-  toolCalls?: ToolCall[];
+  tool_calls?: ToolCall[];
   conversationId: string;
 }
 
@@ -71,7 +72,7 @@ export class RemoteAIClient extends EventEmitter {
 
   constructor(authToken: string, webBaseUrl: string, showAIDebugInfo: boolean = false) {
     super();
-    logger.debug(`[RemoteAIClient] Constructor called, authToken: ${authToken ? authToken.substring(0, 30) + '...' : 'empty'}`);
+    // Removed: logging authToken for security
     this.authToken = authToken;
     this.webBaseUrl = webBaseUrl.replace(/\/$/, ''); // Remove trailing slash
     this.agentApi = `${this.webBaseUrl}/api/agent`;
@@ -90,7 +91,7 @@ export class RemoteAIClient extends EventEmitter {
    * Non-streaming chat - send messages and receive full response
    */
   async chat(
-    messages: ChatMessage[],
+    messages: Message[],
     remoteChatOptions: RemoteChatOptions = {}
   ): Promise<SessionOutput> {
     // Pass complete messages array to backend, backend forwards directly to LLM
@@ -100,17 +101,19 @@ export class RemoteAIClient extends EventEmitter {
       status: remoteChatOptions.status || 'begin',
       conversationId: remoteChatOptions.conversationId,
       context: remoteChatOptions.context,
-      options: {
-        model: remoteChatOptions.model
-      },
       toolResults: remoteChatOptions.toolResults,
-      tools: remoteChatOptions.tools
+      tools: remoteChatOptions.tools,
+      // Pass provider info to backend
+      options: {
+        llmProvider: (remoteChatOptions as any).llmProvider,
+        vlmProvider: (remoteChatOptions as any).vlmProvider
+      }
     };
 
     const url = `${this.agentApi}/chat`;
     if (this.showAIDebugInfo) {
       logger.debug(`[RemoteAIClient] Sending request to: ${url}`);
-      logger.debug(`[RemoteAIClient] Token prefix: ${this.authToken.substring(0, 20)}...`);
+      // Removed: logging token prefix for security
       logger.debug(`[RemoteAIClient] Message count: ${messages.length}`);
       if (remoteChatOptions.tools) {
         logger.debug(`[RemoteAIClient] Tool count: ${remoteChatOptions.tools.length}`);
@@ -123,7 +126,8 @@ export class RemoteAIClient extends EventEmitter {
       const response = await axios.post(url, requestBody, {
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.authToken}`
+          'Authorization': `Bearer ${this.authToken}`,
+          'xagent-cli-version': '1.0'
         },
         httpsAgent,
         timeout: 300000
@@ -138,14 +142,14 @@ export class RemoteAIClient extends EventEmitter {
       logger.debug('[RemoteAIClient] response received, status:', String(response.status));
       if (this.showAIDebugInfo) {
         console.log('[RemoteAIClient] Received response, content length:', data.content?.length || 0);
-        console.log('[RemoteAIClient] toolCalls count:', data.toolCalls?.length || 0);
+        console.log('[RemoteAIClient] tool_calls count:', data.tool_calls?.length || 0);
       }
 
       return {
         role: 'assistant',
         content: data.content || '',
         reasoningContent: data.reasoningContent || '',
-        toolCalls: data.toolCalls,
+        tool_calls: data.tool_calls,
         timestamp: Date.now()
       };
 
@@ -232,7 +236,8 @@ export class RemoteAIClient extends EventEmitter {
         const response = await axios.post(url, requestBody, {
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.authToken}`
+            'Authorization': `Bearer ${this.authToken}`,
+            'xagent-cli-version': '1.0'
           },
           httpsAgent,
           timeout: 300000
@@ -246,7 +251,7 @@ export class RemoteAIClient extends EventEmitter {
           role: 'assistant' as const,
           content: response.data.content || '',
           reasoningContent: response.data.reasoningContent || '',
-          toolCalls: response.data.toolCalls,
+          tool_calls: response.data.tool_calls,
           timestamp: Date.now()
         };
       }, { maxRetries: 3, baseDelay: 1000, maxDelay: 10000, jitter: true });
@@ -346,11 +351,45 @@ export class RemoteAIClient extends EventEmitter {
   }
 
   /**
+   * Mark task as failed with specific reason
+   * @param taskId - Task ID
+   * @param reason - Failure reason: 'timeout' (LLM timeout) or 'failure' (LLM/tool error)
+   */
+  async failTask(taskId: string, reason: 'timeout' | 'failure'): Promise<void> {
+    if (!taskId) return;
+
+    logger.debug(`[RemoteAIClient] failTask called: taskId=${taskId}, reason=${reason}`);
+
+    const url = `${this.agentApi}/chat`;
+    const requestBody = {
+      taskId,
+      status: reason,
+      messages: [],
+      options: {}
+    };
+
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+
+    try {
+      await axios.post(url, requestBody, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.authToken}`
+        },
+        httpsAgent
+      });
+      logger.debug(`[RemoteAIClient] failTask successfully: taskId=${taskId}, reason=${reason}`);
+    } catch (error) {
+      console.error(`[RemoteAIClient] Failed to mark task as ${reason}:`, error);
+    }
+  }
+
+  /**
    * Unified LLM call interface - same return type as aiClient.chatCompletion
    * Implements transparency: caller doesn't need to know remote vs local mode
    */
   async chatCompletion(
-    messages: ChatMessage[],
+    messages: Message[],
     options: ChatCompletionOptions = {}
   ): Promise<ChatCompletionResponse> {
     const model = options.model || 'remote-llm';
@@ -396,9 +435,10 @@ export class RemoteAIClient extends EventEmitter {
       tools: options.tools as any,
       toolResults: undefined,
       context: undefined,
-      model: options.model,
       taskId: (options as any).taskId,
-      status: (options as any).status || 'begin'  // Use status from options, default to 'begin'
+      status: (options as any).status || 'begin',  // Use status from options, default to 'begin'
+      llmProvider: (options as any).llmProvider,
+      vlmProvider: (options as any).vlmProvider
     });
 
     // Debug output for response
@@ -439,12 +479,12 @@ export class RemoteAIClient extends EventEmitter {
       console.log('└─────────────────────────────────────────────────────────────┘');
 
       // Display tool calls if present
-      if (response.toolCalls && response.toolCalls.length > 0) {
+      if (response.tool_calls && response.tool_calls.length > 0) {
         console.log('\n┌─────────────────────────────────────────────────────────────┐');
         console.log('│ 🔧 TOOL CALLS                                                │');
         console.log('├─────────────────────────────────────────────────────────────┤');
-        for (let i = 0; i < response.toolCalls.length; i++) {
-          const tc = response.toolCalls[i];
+        for (let i = 0; i < response.tool_calls.length; i++) {
+          const tc = response.tool_calls[i];
           console.log(`│ ${i + 1}. ${tc.function?.name || 'unknown'}`);
           if (tc.function?.arguments) {
             const args = typeof tc.function.arguments === 'string'
@@ -475,7 +515,7 @@ export class RemoteAIClient extends EventEmitter {
             role: 'assistant',
             content: response.content,
             reasoning_content: response.reasoningContent || '',
-            tool_calls: response.toolCalls
+            tool_calls: response.tool_calls
           },
           finish_reason: 'stop'
         }
@@ -500,10 +540,7 @@ export class RemoteAIClient extends EventEmitter {
       messages,  // Pass complete messages array
       taskId: remoteChatOptions.taskId,
       status: remoteChatOptions.status || 'begin',
-      context: remoteChatOptions.context,
-      options: {
-        model: remoteChatOptions.model
-      }
+      context: remoteChatOptions.context
     };
 
     if (this.showAIDebugInfo) {
@@ -661,4 +698,83 @@ export class RemoteAIClient extends EventEmitter {
       throw new Error('Failed to delete conversation');
     }
   }
+
+  /**
+   * Get available models from marketplace
+   */
+  async getModels(): Promise<{ llm: ModelInfo[]; vlm: ModelInfo[] }> {
+    const url = `${this.webBaseUrl}/api/models`;
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Getting models:', url);
+    }
+
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+    const response = await axios.get(url, {
+      headers: { 'Authorization': `Bearer ${this.authToken}` },
+      httpsAgent,
+      timeout: 10000
+    });
+
+    return response.data;
+  }
+
+  /**
+   * Get default models configuration
+   */
+  async getDefaultModels(): Promise<{ llm: ModelInfo; vlm: ModelInfo }> {
+    const url = `${this.webBaseUrl}/api/models/default`;
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Getting default models:', url);
+    }
+
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+    const response = await axios.get(url, {
+      headers: { 'Authorization': `Bearer ${this.authToken}` },
+      httpsAgent,
+      timeout: 10000
+    });
+
+    return response.data;
+  }
+
+  /**
+   * Compress context - generate summary for long conversations
+   * Uses separate /api/agent/compress endpoint that doesn't require taskId
+   */
+  async compress(
+    messages: Message[],
+    options: { maxTokens?: number; temperature?: number } = {}
+  ): Promise<ChatCompletionResponse> {
+    const url = `${this.agentApi}/compress`;
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Compressing context:', url);
+      console.log('[RemoteAIClient] Message count:', messages.length);
+    }
+
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+    const response = await axios.post(url, {
+      messages,
+      maxTokens: options.maxTokens || 4096,
+      temperature: options.temperature || 0.3
+    }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.authToken}`,
+        'xagent-cli-version': '1.0'
+      },
+      httpsAgent,
+      timeout: 60000
+    });
+
+    if (this.showAIDebugInfo) {
+      console.log('[RemoteAIClient] Compression complete');
+    }
+
+    return response.data;
+  }
+}
+
+export interface ModelInfo {
+  provider: string;
+  providerDisplay: string;
 }

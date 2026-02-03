@@ -3,6 +3,8 @@ import { ExecutionMode, AgentConfig } from './types.js';
 import { getAgentManager } from './agents.js';
 import { getSkillInvoker, SkillInfo } from './skill-invoker.js';
 import { MCPManager } from './mcp.js';
+import { getPowerShellVersion } from './shell.js';
+import os from 'os';
 
 export interface ToolParameter {
   type: string;
@@ -34,6 +36,59 @@ export class SystemPromptGenerator {
     this.mcpManager = mcpManager;
   }
 
+  /**
+   * Generate system environment information for the LLM
+   */
+  private generateEnvironmentInfo(): string {
+    const platform = os.platform();
+    const arch = os.arch();
+    const nodeVersion = process.version;
+    const cwd = process.cwd();
+    const homeDir = os.homedir();
+    const username = os.userInfo().username;
+    const currentDate = new Date().toISOString().split('T')[0];
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // Map platform to human-readable OS name
+    const osName: Record<string, string> = {
+      'win32': 'Windows',
+      'darwin': 'macOS',
+      'linux': 'Linux'
+    };
+
+    // Get PowerShell version for Windows
+    const psVersion = platform === 'win32' ? getPowerShellVersion() : 'N/A';
+    const psMajorVersion = parseInt(psVersion.split('.')[0], 10);
+    const psSupportsChaining = !isNaN(psMajorVersion) && psMajorVersion >= 7;
+
+    // Generate PowerShell syntax rules
+    let psSyntaxRules = '';
+    if (platform === 'win32') {
+      if (psSupportsChaining) {
+        psSyntaxRules = `
+**PowerShell Syntax** (v${psVersion}):
+- Supports \`&&\` and \`||\` for command chaining
+- Also supports \`;\` for sequential execution`;
+      } else {
+        psSyntaxRules = `
+**PowerShell Syntax** (v${psVersion}):
+- Does NOT support \`&&\` or \`||\` (use \`;\` instead)
+- Use \`if ($?) { cmd2 }\` for conditional execution
+- Common: \`ls\`→\`dir\`, \`cat\`→\`type\`, \`rm\`→\`Remove-Item\`, \`sleep\`→\`Start-Sleep\``;
+      }
+    }
+
+    return `
+## System Environment Information
+
+- **Operating System**: ${osName[platform] || platform} (${platform}) ${os.arch()}
+- **Node.js Version**: ${nodeVersion}
+- **Current Working Directory**: ${cwd}
+- **User Home Directory**: ${homeDir}
+- **Current User**: ${username}
+- **Current Date**: ${currentDate} (Timezone: ${timeZone})${psSyntaxRules}`;
+  }
+
   async generateEnhancedSystemPrompt(baseSystemPrompt: string): Promise<string> {
     let localTools = this.toolRegistry.getAll().filter(
       tool => tool.allowedModes.includes(this.executionMode)
@@ -49,6 +104,9 @@ export class SystemPromptGenerator {
     let allAvailableTools = localTools;
 
     let enhancedPrompt = baseSystemPrompt;
+
+    // Add system environment information
+    enhancedPrompt += this.generateEnvironmentInfo();
 
     // Only add tool-related content if tools are available
     if (allAvailableTools.length > 0) {

@@ -27,6 +27,9 @@ export interface AuthConfig {
   modelName?: string;
   searchApiKey?: string;
   showAIDebugInfo?: boolean;
+  xagentApiBaseUrl?: string;     // xAgent API base URL
+  remote_llmProvider?: string;   // Remote mode LLM Provider ID
+  remote_vlmProvider?: string;   // Remote mode VLM Provider ID
 }
 
 export interface Tool {
@@ -109,6 +112,8 @@ export interface Settings {
   showToolDetails: boolean;
   showAIDebugInfo: boolean;
   loggerLevel: LogLevel;
+  remote_llmProvider?: string;   // Remote 模式使用的 LLM Provider ID
+  remote_vlmProvider?: string;   // Remote 模式使用的 VLM Provider ID
 }
 
 export interface ChatMessage {
@@ -117,7 +122,7 @@ export interface ChatMessage {
   images?: string[];
   timestamp: number;
   reasoningContent?: string;
-  toolCalls?: any[];
+  tool_calls?: any[];
   tool_call_id?: string;
 }
 
@@ -142,7 +147,7 @@ export interface Checkpoint {
   description: string;
   gitSnapshot?: string;
   conversationSnapshot: ChatMessage[];
-  toolCalls: ToolCall[];
+  tool_calls: ToolCall[];
 }
 
 export interface InputType {
@@ -168,7 +173,7 @@ export interface SessionOutput {
   timestamp: number;
   duration?: number;
   reasoningContent?: string;
-  toolCalls?: any[];
+  tool_calls?: any[];
 }
 
 export interface Session {
@@ -186,10 +191,6 @@ export interface Session {
 
 export interface CompressionConfig {
   enabled: boolean;
-  maxMessages: number;
-  maxContextSize: number;
-  preserveRecentMessages: number;
-  enableSummary: boolean;
 }
 
 export interface CompressionStats {
@@ -197,4 +198,22 @@ export interface CompressionStats {
   totalCompressions: number;
   originalMessagesTotal: number;
   compressedMessagesTotal: number;
+}
+
+export interface Agent {
+  name: string;
+  description: string;
+  systemPrompt: string;
+  capabilities: string[];
+}
+
+export interface ToolCallFunction {
+  name: string;
+  arguments: string;
+}
+
+export interface ToolCallItem {
+  id?: string;
+  type?: string;
+  function: ToolCallFunction;
 }

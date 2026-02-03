@@ -94,7 +94,7 @@ export class WorkflowManager {
         console.log(`✅ Loaded ${workflows.length} skills from skills folder`);
       }
     } catch (error) {
-      // Skills folder is optional, so we silently ignore errors
+      console.warn(`[workflow] Failed to load skills: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -113,12 +113,31 @@ export class WorkflowManager {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error(`Failed to load workflows from ${dirPath}:`, error);
+        console.error(`[workflow] Failed to load workflows from ${dirPath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
 
+  /**
+   * Validate workflow ID format - only allow alphanumeric, hyphens, and underscores
+   * @returns validation error message, or null if valid
+   */
+  private validateWorkflowId(workflowId: string): string | null {
+    if (!workflowId || typeof workflowId !== 'string' || !workflowId.trim()) {
+      return 'Workflow ID is required';
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(workflowId)) {
+      return 'Workflow ID must contain only alphanumeric characters, hyphens, and underscores';
+    }
+    return null;
+  }
+
   async addWorkflow(workflowId: string, scope: 'global' | 'project' = 'project'): Promise<void> {
+    const validationError = this.validateWorkflowId(workflowId);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
     const workflowsPath = scope === 'global' ? this.globalWorkflowsPath : this.projectWorkflowsPath;
     
     if (!workflowsPath) {
@@ -158,8 +177,9 @@ export class WorkflowManager {
       
       return response.data;
     } catch (error) {
-      console.error('Failed to download workflow from marketplace');
-      throw new Error('Workflow download failed. Please check your network connection.');
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error(`[workflow] Failed to download workflow ${workflowId}: ${errorMsg}`);
+      throw new Error(`Workflow download failed: ${errorMsg}`);
     }
   }
 
@@ -222,11 +242,16 @@ export class WorkflowManager {
       }
     }
 
-    await configManager.save(scope);
+    configManager.save(scope);
     console.log(`✅ Installed ${Object.keys(workflow.mcpServers).length} MCP servers`);
   }
 
   async removeWorkflow(workflowId: string, scope: 'global' | 'project' = 'project'): Promise<void> {
+    const validationError = this.validateWorkflowId(workflowId);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
     const workflowsPath = scope === 'global' ? this.globalWorkflowsPath : this.projectWorkflowsPath;
     
     if (!workflowsPath) {
@@ -271,7 +296,7 @@ export class WorkflowManager {
       try {
         await fs.unlink(fullPath);
       } catch (error) {
-        console.warn(`Failed to remove file ${filePath}: ${error}`);
+        console.warn(`[workflow] Failed to remove file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
@@ -313,7 +338,7 @@ export class WorkflowManager {
       }
     }
 
-    await configManager.save(scope);
+    configManager.save(scope);
   }
 
   listWorkflows(): WorkflowConfig[] {
@@ -335,7 +360,7 @@ export class WorkflowManager {
         category: skill.category
       }));
     } catch (error) {
-      console.error('Failed to list skills:', error);
+      console.error(`[workflow] Failed to list skills: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
   }
@@ -365,7 +390,7 @@ export class WorkflowManager {
         category: skill.category
       };
     } catch (error) {
-      console.error(`Failed to get skill details for ${skillId}:`, error);
+      console.error(`[workflow] Failed to get skill details for ${skillId}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }
@@ -379,7 +404,7 @@ export class WorkflowManager {
       
       return response.data.workflows || [];
     } catch (error) {
-      console.error('Failed to fetch online workflows');
+      console.error(`[workflow] Failed to fetch online workflows: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
   }
@@ -397,6 +422,11 @@ export class WorkflowManager {
   }
 
   async executeWorkflow(workflowId: string, input: string): Promise<void> {
+    const validationError = this.validateWorkflowId(workflowId);
+    if (validationError) {
+      throw new Error(validationError);
+    }
+
     const workflow = this.getWorkflow(workflowId);
     
     if (!workflow) {
@@ -444,7 +474,8 @@ export class WorkflowManager {
       const content = await fs.readFile(workflowConfigPath, 'utf-8');
       workflowConfig = JSON.parse(content);
     } catch (error) {
-      throw new Error('workflow.json not found. Please create it first.');
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to read workflow.json: ${errorMsg}. Please ensure the file exists and is valid JSON.`);
     }
 
     const { getAgentManager } = await import('./agents.js');

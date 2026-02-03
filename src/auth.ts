@@ -7,9 +7,14 @@ import { getLogger } from './logger.js';
 
 const logger = getLogger();
 
+// Debug: Log environment variable at module load time
+logger.debug('[AUTH-MODULE] XAGENT_BASE_URL:', process.env.XAGENT_BASE_URL || '(not set)');
+
 // Extended AuthConfig for xAgent with additional fields
 interface XAgentAuthConfig extends AuthConfig {
   xagentApiBaseUrl?: string;
+  remote_llmProvider?: string;   // Remote mode LLM Provider ID
+  remote_vlmProvider?: string;   // Remote mode VLM Provider ID
 }
 
 interface VLMProviderInfo {
@@ -135,7 +140,7 @@ const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
 export class AuthService {
   private authConfig: XAgentAuthConfig;
 
-  constructor(authConfig: AuthConfig) {
+  constructor(authConfig: XAgentAuthConfig) {
     this.authConfig = authConfig;
   }
 
@@ -171,7 +176,7 @@ export class AuthService {
       });
 
       // 3. Set authentication configuration
-      this.authConfig.baseUrl = 'https://www.xagent-colife.net/v1';
+      this.authConfig.baseUrl = `${xagentApiBaseUrl}/v1`;
       this.authConfig.xagentApiBaseUrl = xagentApiBaseUrl;
       this.authConfig.apiKey = token;
     this.authConfig.type = AuthType.OAUTH_XAGENT;
@@ -375,24 +380,44 @@ export class AuthService {
   }
 
   private async retrieveXAgentToken(): Promise<string> {
+    // Debug: Log environment variable at method call time
+    logger.debug('[AUTH-METHOD] XAGENT_BASE_URL:', process.env.XAGENT_BASE_URL || '(not set)');
+    
     // Use xagentApiBaseUrl from config, fallback to default
     const webBaseUrl = this.authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-    const authUrl = `${webBaseUrl}/login`;
-    // Callback URL tells frontend where to store token
-    const callbackUrl = 'https://www.xagent-colife.net/callback';
+    logger.debug('[AUTH] authConfig.xagentApiBaseUrl:', this.authConfig.xagentApiBaseUrl);
+    logger.debug('[AUTH] webBaseUrl:', webBaseUrl);
+
+    // Determine if we're in local development mode
+    const isLocalDev = webBaseUrl.includes('localhost') || webBaseUrl.includes('127.0.0.1');
+
+    // Use frontend URL for login - both local dev and production use frontend routing
+    // Local dev: frontend runs on port 3000
+    // Production: frontend is served via nginx reverse proxy at the same domain
+    let loginUrl: string;
+    let callbackUrl: string;
+
+    // Always use frontend URL for login page
+    const frontendUrl = isLocalDev
+      ? (process.env.FRONTEND_URL || 'http://localhost:3000')
+      : webBaseUrl;
+
+    callbackUrl = `${webBaseUrl}/callback`;
+    loginUrl = `${frontendUrl}/login?callback=${encodeURIComponent(callbackUrl)}`;
 
     // 如果已有保存的token，通过URL参数传给Web页面
     const existingToken = this.authConfig.apiKey;
     const existingRefreshToken = this.authConfig.refreshToken;
 
     // 构建登录URL - 如果已有token也传给Web
-    let loginUrl = `${authUrl}?callback=${encodeURIComponent(callbackUrl)}`;
     if (existingToken) {
       loginUrl += `&existingToken=${encodeURIComponent(existingToken)}`;
       if (existingRefreshToken) {
         loginUrl += `&existingRefreshToken=${encodeURIComponent(existingRefreshToken)}`;
       }
     }
+
+    logger.debug('[AUTH] Opening login URL:', loginUrl);
 
     // Open browser for login, then poll server for token
     await open(loginUrl);

@@ -1,9 +1,18 @@
-import inquirer from 'inquirer';
+import { select, confirm, text } from '@clack/prompts';
 import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'fs/promises';
 import path from 'path';
-import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
+import {
+  ExecutionMode,
+  ChatMessage,
+  InputType,
+  ToolCall,
+  Checkpoint,
+  AgentConfig,
+  CompressionConfig,
+  AuthType,
+} from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { getToolRegistry } from './tools.js';
 import { getAgentManager } from './agents.js';
@@ -12,7 +21,11 @@ import { getMCPManager, MCPServer } from './mcp.js';
 import { getCheckpointManager } from './checkpoint.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { getLogger } from './logger.js';
-import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
+import {
+  getContextCompressor,
+  ContextCompressor,
+  CompressionResult,
+} from './context-compressor.js';
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
@@ -32,7 +45,7 @@ export class SlashCommandHandler {
   private onClearCallback: (() => void) | null = null;
   private onSystemPromptUpdate: (() => Promise<void>) | null = null;
   private onConfigUpdate: (() => void) | null = null;
-  private remoteAIClient: any = null;  // Reference to InteractiveSession's remoteAIClient
+  private remoteAIClient: any = null; // Reference to InteractiveSession's remoteAIClient
 
   constructor() {
     this.configManager = getConfigManager(process.cwd());
@@ -157,18 +170,29 @@ export class SlashCommandHandler {
     const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80));
 
     console.log('');
-    console.log(colors.primaryBright('╔════════════════════════════════════════════════════════════╗'));
+    console.log(
+      colors.primaryBright('╔════════════════════════════════════════════════════════════╗')
+    );
     console.log(colors.primaryBright('║') + ' '.repeat(56) + colors.primaryBright('║'));
-    console.log(' '.repeat(14) + colors.gradient('📚 XAGENT CLI Help') + ' '.repeat(31) + colors.primaryBright('║'));
+    console.log(
+      ' '.repeat(14) +
+        colors.gradient('📚 XAGENT CLI Help') +
+        ' '.repeat(31) +
+        colors.primaryBright('║')
+    );
     console.log(colors.primaryBright('║') + ' '.repeat(56) + colors.primaryBright('║'));
-    console.log(colors.primaryBright('╚════════════════════════════════════════════════════════════╝'));
+    console.log(
+      colors.primaryBright('╚════════════════════════════════════════════════════════════╝')
+    );
     console.log('');
 
     // Shortcuts
     console.log(colors.accent('Shortcuts'));
     console.log(colors.border(separator));
     console.log('');
-    console.log(colors.textDim(`  ${colors.accent('!')}  - ${colors.textMuted('Enter bash mode')}`));
+    console.log(
+      colors.textDim(`  ${colors.accent('!')}  - ${colors.textMuted('Enter bash mode')}`)
+    );
     console.log(colors.textDim(`  ${colors.accent('/')}  - ${colors.textMuted('Commands')}`));
     console.log(colors.textDim(`  ${colors.accent('@')}  - ${colors.textMuted('File paths')}`));
     console.log('');
@@ -179,20 +203,20 @@ export class SlashCommandHandler {
         cmd: '/help [command]',
         desc: 'Show help information',
         detail: 'View all available commands or detailed description of specific command',
-        example: '/help\n/help mode'
+        example: '/help\n/help mode',
       },
       {
         cmd: '/clear',
         desc: 'Clear conversation history',
         detail: 'Clear all conversation records of current session, start new conversation',
-        example: '/clear'
+        example: '/clear',
       },
       {
         cmd: '/exit',
         desc: 'Exit program',
         detail: 'Safely exit XAGENT CLI',
-        example: '/exit'
-      }
+        example: '/exit',
+      },
     ]);
 
     // Project Management
@@ -200,15 +224,16 @@ export class SlashCommandHandler {
       {
         cmd: '/init',
         desc: 'Initialize project context',
-        detail: 'Create XAGENT.md file in current directory, used to store project context information',
-        example: '/init'
+        detail:
+          'Create XAGENT.md file in current directory, used to store project context information',
+        example: '/init',
       },
       {
         cmd: '/memory [show|clear]',
         desc: 'Manage project memory',
         detail: 'View or clear memory (global, current, all, or filename)',
-        example: '/memory show\n/memory clear\n/memory clear global\n/memory clear all'
-      }
+        example: '/memory show\n/memory clear\n/memory clear global\n/memory clear all',
+      },
     ]);
 
     // Authentication & Configuration
@@ -217,7 +242,7 @@ export class SlashCommandHandler {
         cmd: '/auth',
         desc: 'Configure authentication information',
         detail: 'Change or view current authentication configuration',
-        example: '/auth'
+        example: '/auth',
       },
       {
         cmd: '/mode [mode]',
@@ -229,14 +254,14 @@ export class SlashCommandHandler {
           'accept_edits - Automatically accept edit operations',
           'plan - Plan before executing',
           'default - Safe execution, requires confirmation',
-          'smart - Smart approval (recommended)'
-        ]
+          'smart - Smart approval (recommended)',
+        ],
       },
       {
         cmd: '/think [on|off|display]',
         desc: 'Control thinking mode',
         detail: 'Enable/disable AI thinking process display',
-        example: '/think on\n/think off\n/think display compact'
+        example: '/think on\n/think off\n/think display compact',
       },
       // {
       //   cmd: '/language [zh|en]',
@@ -248,8 +273,8 @@ export class SlashCommandHandler {
         cmd: '/theme',
         desc: 'Switch theme',
         detail: 'Change UI theme style',
-        example: '/theme'
-      }
+        example: '/theme',
+      },
     ]);
 
     // Feature Extensions
@@ -258,27 +283,27 @@ export class SlashCommandHandler {
         cmd: '/agents [list|online|install|remove]',
         desc: 'Manage sub-agents',
         detail: 'View, install or remove specialized AI sub-agents',
-        example: '/agents list\n/agents online\n/agents install explore-agent'
+        example: '/agents list\n/agents online\n/agents install explore-agent',
       },
       {
         cmd: '/mcp [list|add|remove|refresh]',
         desc: 'Manage MCP servers',
         detail: 'Manage Model Context Protocol servers',
-        example: '/mcp list\n/mcp add server-name'
+        example: '/mcp list\n/mcp add server-name',
       },
       {
         cmd: '/model',
         desc: 'Configure LLM/VLM models',
         detail: 'Configure or switch LLM and VLM models for remote mode',
-        example: '/model'
+        example: '/model',
       },
 
       {
         cmd: '/tools [verbose|simple]',
         desc: 'Manage tool display',
         detail: 'View available tools or switch tool call display mode',
-        example: '/tools\n/tools verbose\n/tools simple'
-      }
+        example: '/tools\n/tools verbose\n/tools simple',
+      },
     ]);
 
     // Advanced Features
@@ -287,26 +312,27 @@ export class SlashCommandHandler {
         cmd: '/restore',
         desc: 'Restore from checkpoint',
         detail: 'Restore conversation state from historical checkpoints',
-        example: '/restore'
+        example: '/restore',
       },
       {
         cmd: '/compress [on|off|max_message|max_token|exec]',
         desc: 'Manage context compression',
         detail: 'Configure compression settings or execute compression manually',
-        example: '/compress\n/compress exec\n/compress on\n/compress max_message 50\n/compress max_token 1500000'
+        example:
+          '/compress\n/compress exec\n/compress on\n/compress max_message 50\n/compress max_token 1500000',
       },
       {
         cmd: '/stats',
         desc: 'Show session statistics',
         detail: 'View statistics information of current session',
-        example: '/stats'
+        example: '/stats',
       },
       {
         cmd: '/about',
         desc: 'Show version information',
         detail: 'View version and related information of XAGENT CLI',
-        example: '/about'
-      }
+        example: '/about',
+      },
     ]);
 
     // Keyboard Shortcuts
@@ -320,13 +346,16 @@ export class SlashCommandHandler {
     console.log('');
   }
 
-  private showHelpCategory(title: string, commands: Array<{
-    cmd: string;
-    desc: string;
-    detail: string;
-    example: string;
-    modes?: string[];
-  }>): void {
+  private showHelpCategory(
+    title: string,
+    commands: Array<{
+      cmd: string;
+      desc: string;
+      detail: string;
+      example: string;
+      modes?: string[];
+    }>
+  ): void {
     const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80));
 
     console.log('');
@@ -335,20 +364,20 @@ export class SlashCommandHandler {
     console.log(colors.border(separator));
     console.log('');
 
-    commands.forEach(cmd => {
+    commands.forEach((cmd) => {
       console.log(colors.primaryBright(`  ${cmd.cmd}`));
       console.log(colors.textDim(`    ${cmd.desc}`));
       console.log(colors.textMuted(`    ${cmd.detail}`));
 
       if (cmd.modes) {
         console.log(colors.textDim(`    Available modes:`));
-        cmd.modes.forEach(mode => {
+        cmd.modes.forEach((mode) => {
           console.log(colors.textDim(`      • ${mode}`));
         });
       }
 
       console.log(colors.accent(`    Examples:`));
-      cmd.example.split('\n').forEach(ex => {
+      cmd.example.split('\n').forEach((ex) => {
         console.log(colors.codeText(`      ${ex}`));
       });
       console.log('');
@@ -391,7 +420,8 @@ export class SlashCommandHandler {
 
     // Show current authentication configuration
     const authConfig = this.configManager.getAuthConfig();
-    const currentType = authConfig.type === AuthType.OAUTH_XAGENT ? 'xAgent (Remote)' : 'Third-party API (Local)';
+    const currentType =
+      authConfig.type === AuthType.OAUTH_XAGENT ? 'xAgent (Remote)' : 'Third-party API (Local)';
 
     console.log(chalk.cyan('\n📋 Current Authentication Configuration:\n'));
     console.log(`  ${chalk.yellow('Mode:')} ${currentType}`);
@@ -403,17 +433,13 @@ export class SlashCommandHandler {
     }
     console.log('');
 
-    const { action } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'action',
-        message: 'Select action:',
-        choices: [
-          { name: 'Switch authentication method', value: 'switch' },
-          { name: 'Back', value: 'back' }
-        ]
-      }
-    ]);
+    const action = await select({
+      message: 'Select action:',
+      options: [
+        { value: 'switch', label: 'Switch authentication method' },
+        { value: 'back', label: 'Back' },
+      ],
+    });
 
     if (action === 'back') {
       return;
@@ -421,16 +447,11 @@ export class SlashCommandHandler {
 
     if (action === 'switch') {
       // Use the same selection UI as initial setup
-      const { confirmSwitch } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'confirmSwitch',
-          message: `Switch from "${currentType}" to another authentication method?`,
-          default: false
-        }
-      ]);
+      const confirmSwitch = await confirm({
+        message: `Switch from "${currentType}" to another authentication method?`,
+      });
 
-      if (!confirmSwitch) {
+      if (confirmSwitch === false || confirmSwitch === undefined) {
         return;
       }
 
@@ -443,7 +464,7 @@ export class SlashCommandHandler {
           type: AuthType.OAUTH_XAGENT,
           apiKey: '',
           baseUrl: '',
-          xagentApiBaseUrl: authConfig.xagentApiBaseUrl
+          xagentApiBaseUrl: authConfig.xagentApiBaseUrl,
         });
 
         const success = await authService.authenticate();
@@ -458,7 +479,7 @@ export class SlashCommandHandler {
             xagentApiBaseUrl: newAuthConfig.xagentApiBaseUrl,
             guiSubagentModel: '',
             guiSubagentBaseUrl: 'https://www.xagent-colife.net/v3',
-            guiSubagentApiKey: ''
+            guiSubagentApiKey: '',
           });
           // Set default remote provider settings if not already set
           if (!this.configManager.get('remote_llmProvider')) {
@@ -483,7 +504,7 @@ export class SlashCommandHandler {
           type: AuthType.OPENAI_COMPATIBLE,
           apiKey: '',
           baseUrl: '',
-          modelName: ''
+          modelName: '',
         });
 
         const success = await authService.authenticate();
@@ -498,7 +519,7 @@ export class SlashCommandHandler {
             refreshToken: '',
             guiSubagentModel: '',
             guiSubagentBaseUrl: '',
-            guiSubagentApiKey: ''
+            guiSubagentApiKey: '',
           });
           this.configManager.save('global');
 
@@ -521,16 +542,11 @@ export class SlashCommandHandler {
 
     if (currentAuthType !== AuthType.OAUTH_XAGENT) {
       console.log(chalk.yellow('\n⚠️  Current authentication type is not OAuth xAgent.'));
-      const { proceed } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'proceed',
-          message: 'Do you want to switch to OAuth xAgent authentication?',
-          default: false
-        }
-      ]);
+      const proceed = await confirm({
+        message: 'Do you want to switch to OAuth xAgent authentication?',
+      });
 
-      if (!proceed) {
+      if (proceed === false || proceed === undefined) {
         return;
       }
 
@@ -539,7 +555,7 @@ export class SlashCommandHandler {
         selectedAuthType: AuthType.OAUTH_XAGENT,
         apiKey: '',
         refreshToken: '',
-        baseUrl: ''
+        baseUrl: '',
       });
       this.configManager.save('global');
       console.log(chalk.green('✅ Switched to OAuth xAgent authentication.'));
@@ -557,7 +573,7 @@ export class SlashCommandHandler {
         apiKey: '',
         baseUrl: '',
         refreshToken: '',
-        xagentApiBaseUrl: config.xagentApiBaseUrl
+        xagentApiBaseUrl: config.xagentApiBaseUrl,
       });
 
       const success = await authService.authenticate();
@@ -590,7 +606,11 @@ export class SlashCommandHandler {
     // 2. Get RemoteAIClient instance (from InteractiveSession)
     const remoteClient = this.remoteAIClient;
     if (!remoteClient) {
-      console.log(chalk.red('\n❌ Remote client not initialized. Please use /auth to configure remote mode first.'));
+      console.log(
+        chalk.red(
+          '\n❌ Remote client not initialized. Please use /auth to configure remote mode first.'
+        )
+      );
       return;
     }
 
@@ -604,18 +624,14 @@ export class SlashCommandHandler {
     console.log('');
 
     // 4. Main menu
-    const { action } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'action',
-        message: 'Select action:',
-        choices: [
-          { name: 'Change LLM model', value: 'llm' },
-          { name: 'Change VLM model', value: 'vlm' },
-          { name: 'Back', value: 'back' }
-        ]
-      }
-    ]);
+    const action = await select({
+      message: 'Select action:',
+      options: [
+        { value: 'llm', label: 'Change LLM model' },
+        { value: 'vlm', label: 'Change VLM model' },
+        { value: 'back', label: 'Back' },
+      ],
+    });
 
     if (action === 'back') return;
 
@@ -630,19 +646,15 @@ export class SlashCommandHandler {
       }
 
       // Build choice list
-      const choices = providers.map((p: any) => ({
-        name: `${p.providerDisplay} (${p.provider})`,
-        value: p.provider
+      const providerOptions = providers.map((p: any) => ({
+        value: p.provider,
+        label: `${p.providerDisplay} (${p.provider})`,
       }));
 
-      const { selectedProvider } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'selectedProvider',
-          message: action === 'llm' ? 'Select LLM Provider:' : 'Select VLM Provider:',
-          choices
-        }
-      ]);
+      const selectedProvider = (await select({
+        message: action === 'llm' ? 'Select LLM Provider:' : 'Select VLM Provider:',
+        options: providerOptions,
+      })) as string;
 
       const configKey = action === 'llm' ? 'remote_llmProvider' : 'remote_vlmProvider';
       this.configManager.set(configKey, selectedProvider);
@@ -654,7 +666,9 @@ export class SlashCommandHandler {
       // Clear conversation history to avoid tool call ID conflicts between providers
       if (this.onClearCallback) {
         this.onClearCallback();
-        console.log(chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between models.'));
+        console.log(
+          chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between models.')
+        );
       }
 
       // Notify InteractiveSession to update aiClient config
@@ -671,7 +685,8 @@ export class SlashCommandHandler {
 
   private async handleMode(args: string[]): Promise<void> {
     const modes = Object.values(ExecutionMode);
-    const currentMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
+    const currentMode =
+      this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
 
     if (args.length > 0) {
       const newMode = args[0].toLowerCase();
@@ -692,7 +707,7 @@ export class SlashCommandHandler {
         { mode: 'accept_edits', desc: 'Accept all edits automatically' },
         { mode: 'plan', desc: 'Plan before executing' },
         { mode: 'default', desc: 'Safe execution with confirmations' },
-        { mode: 'smart', desc: 'Smart approval with intelligent security checks' }
+        { mode: 'smart', desc: 'Smart approval with intelligent security checks' },
       ];
 
       descriptions.forEach(({ mode, desc }) => {
@@ -741,7 +756,9 @@ export class SlashCommandHandler {
       }
     } else {
       console.log(chalk.cyan('\n🧠 Thinking Mode:\n'));
-      console.log(`  Status: ${thinkingConfig.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`);
+      console.log(
+        `  Status: ${thinkingConfig.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`
+      );
       console.log(`  Mode: ${chalk.yellow(thinkingConfig.mode)}`);
       console.log(`  Display: ${chalk.yellow(thinkingConfig.displayMode)}\n`);
 
@@ -766,13 +783,19 @@ export class SlashCommandHandler {
         logger.warn('Online marketplace not implemented yet', 'Check back later for updates');
         break;
       case 'install':
-        logger.warn('Agent installation wizard not implemented yet', 'Use /agents install in interactive mode');
+        logger.warn(
+          'Agent installation wizard not implemented yet',
+          'Use /agents install in interactive mode'
+        );
         break;
       case 'remove':
         logger.warn('Agent removal not implemented yet', 'Use /agents remove in interactive mode');
         break;
       default:
-        logger.warn(`Unknown agents action: ${action}`, 'Use /agents list to see available actions');
+        logger.warn(
+          `Unknown agents action: ${action}`,
+          'Use /agents list to see available actions'
+        );
     }
   }
 
@@ -839,112 +862,118 @@ export class SlashCommandHandler {
 
     logger.section('MCP Servers');
 
-    serverConfigs.forEach(({ name: serverName, config: serverConfig }: { name: string; config: any }) => {
-      const server = this.mcpManager.getServer(serverName);
-      const isConnected = server?.isServerConnected() || false;
-      const status = isConnected ? chalk.green('✓ Connected') : chalk.red('✗ Disconnected');
-      const tools = server?.getToolNames() || [];
-      const transport = serverConfig?.transport || serverConfig?.type || 'unknown';
-      const command = serverConfig?.command ? `${serverConfig.command} ${(serverConfig.args || []).join(' ')}` : serverConfig?.url || 'N/A';
+    serverConfigs.forEach(
+      ({ name: serverName, config: serverConfig }: { name: string; config: any }) => {
+        const server = this.mcpManager.getServer(serverName);
+        const isConnected = server?.isServerConnected() || false;
+        const status = isConnected ? chalk.green('✓ Connected') : chalk.red('✗ Disconnected');
+        const tools = server?.getToolNames() || [];
+        const transport = serverConfig?.transport || serverConfig?.type || 'unknown';
+        const command = serverConfig?.command
+          ? `${serverConfig.command} ${(serverConfig.args || []).join(' ')}`
+          : serverConfig?.url || 'N/A';
 
-      console.log('');
-      console.log(`  ${chalk.cyan(serverName)} ${status}`);
-      console.log(`    Transport: ${transport}`);
-      console.log(`    Command: ${command}`);
-      console.log(`    Tools: ${isConnected ? tools.length : 'N/A'} (${isConnected ? tools.join(', ') : 'wait for connection'})`);
-    });
+        console.log('');
+        console.log(`  ${chalk.cyan(serverName)} ${status}`);
+        console.log(`    Transport: ${transport}`);
+        console.log(`    Command: ${command}`);
+        console.log(
+          `    Tools: ${isConnected ? tools.length : 'N/A'} (${isConnected ? tools.join(', ') : 'wait for connection'})`
+        );
+      }
+    );
 
     console.log('');
     logger.info(`Total: ${serverConfigs.length} server(s)`);
   }
 
   private async addMcpServerInteractive(serverName?: string): Promise<void> {
-    const { name, command, args: serverArgs, transport, url, authToken, headers } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'name',
-        message: 'Enter MCP server name:',
-        default: serverName,
-        validate: (input: string) => {
-          if (!input.trim()) {
-            return 'Server name is required';
-          }
-          if (!/^[a-zA-Z0-9_-]+$/.test(input)) {
-            return 'Server name must contain only alphanumeric characters, hyphens, and underscores';
-          }
-          const servers = this.mcpManager.getAllServers();
-          if (servers.some((s: MCPServer) => (s as any).config?.name === input)) {
-            return 'Server with this name already exists';
-          }
-          return true;
+    let name = (await text({
+      message: 'Enter MCP server name:',
+      defaultValue: serverName,
+      validate: (value: string | undefined) => {
+        if (!value || !value.trim()) {
+          return 'Server name is required';
         }
+        if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
+          return 'Server name must contain only alphanumeric characters, hyphens, and underscores';
+        }
+        const servers = this.mcpManager.getAllServers();
+        if (servers.some((s: MCPServer) => (s as any).config?.name === value)) {
+          return 'Server with this name already exists';
+        }
+        return undefined;
       },
-      {
-        type: 'list',
-        name: 'transport',
-        message: 'Select transport type:',
-        choices: [
-          { name: 'Stdio (stdin/stdout)', value: 'stdio' },
-          { name: 'HTTP/SSE', value: 'sse' },
-          { name: 'HTTP (POST)', value: 'http' }
-        ],
-        default: 'stdio'
-      },
-      {
-        type: 'input',
-        name: 'command',
+    })) as string;
+
+    const transport = await select({
+      message: 'Select transport type:',
+      options: [
+        { value: 'stdio', label: 'Stdio (stdin/stdout)' },
+        { value: 'sse', label: 'HTTP/SSE' },
+        { value: 'http', label: 'HTTP (POST)' },
+      ],
+    });
+
+    let command = '';
+    let serverArgs: string[] = [];
+    let url = '';
+    let authToken = '';
+    let headers: Record<string, string> | string | undefined;
+
+    if (transport === 'stdio') {
+      command = (await text({
         message: 'Enter command (for stdio transport):',
-        when: (answers: any) => answers.transport === 'stdio',
-        validate: (input: string) => input.trim() ? true : 'Command is required'
-      },
-      {
-        type: 'input',
-        name: 'args',
+        validate: (value: string | undefined) =>
+          value && value.trim() ? undefined : 'Command is required',
+      })) as string;
+
+      const argsInput = (await text({
         message: 'Enter arguments (comma-separated, for stdio transport):',
-        when: (answers: any) => answers.transport === 'stdio',
-        filter: (input: string) => input ? input.split(',').map((a: string) => a.trim()) : []
-      },
-      {
-        type: 'input',
-        name: 'url',
+        defaultValue: '',
+      })) as string;
+
+      if (argsInput.trim()) {
+        serverArgs = argsInput.split(',').map((a: string) => a.trim());
+      }
+    } else {
+      url = (await text({
         message: 'Enter server URL (for HTTP/SSE/HTTP transport):',
-        when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http',
-        validate: (input: string) => {
-          if (!input.trim()) {
+        validate: (value: string | undefined) => {
+          if (!value || !value.trim()) {
             return 'URL is required';
           }
           try {
-            new URL(input);
-            return true;
+            new URL(value);
+            return undefined;
           } catch {
             return 'Invalid URL format (e.g., https://example.com)';
           }
-        }
-      },
-      {
-        type: 'password',
-        name: 'authToken',
+        },
+      })) as string;
+
+      authToken = (await text({
         message: 'Enter authentication token (optional):',
-        when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http'
-      },
-      {
-        type: 'input',
-        name: 'headers',
-        message: 'Enter custom headers as JSON (optional, e.g., {"Authorization": "Bearer token"}):',
-        when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http',
-        filter: (input: string) => {
-          if (!input.trim()) return undefined;
-          try {
-            return JSON.parse(input);
-          } catch {
-            return undefined;
-          }
+        defaultValue: '',
+      })) as string;
+
+      const headersInput = (await text({
+        message:
+          'Enter custom headers as JSON (optional, e.g., {"Authorization": "Bearer token"}):',
+        defaultValue: '',
+      })) as string;
+
+      if (headersInput.trim()) {
+        try {
+          headers = JSON.parse(headersInput);
+        } catch {
+          headers = undefined;
         }
       }
-    ]);
+    }
 
     const config: any = {
-      transport: transport as 'stdio' | 'sse' | 'http'
+      transport: transport as 'stdio' | 'sse' | 'http',
     };
 
     if (transport === 'stdio') {
@@ -1019,23 +1048,19 @@ export class SlashCommandHandler {
       return;
     }
 
-    const serverNames = servers.map((s: MCPServer) => {
+    const serverOptions = servers.map((s: MCPServer) => {
       const tools = s.getToolNames();
       const status = s.isServerConnected() ? '✓' : '✗';
       return {
-        name: `${status} ${(s as any).config?.name || 'unknown'} (${tools.length} tools)`,
-        value: (s as any).config?.name
+        value: (s as any).config?.name,
+        label: `${status} ${(s as any).config?.name || 'unknown'} (${tools.length} tools)`,
       };
     });
 
-    const { serverName } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'serverName',
-        message: 'Select MCP server to remove:',
-        choices: serverNames
-      }
-    ]);
+    const serverName = (await select({
+      message: 'Select MCP server to remove:',
+      options: serverOptions,
+    })) as string;
 
     await this.removeMcpServer(serverName);
   }
@@ -1080,7 +1105,7 @@ export class SlashCommandHandler {
       await this.mcpManager.connectAllServers();
 
       spinner.succeed('MCP servers refreshed successfully');
-      
+
       // Show current server status
       await this.listMcpServers();
     } catch (error: any) {
@@ -1095,7 +1120,10 @@ export class SlashCommandHandler {
     try {
       await this.memoryManager.loadMemory();
     } catch (error) {
-      logger.error('Failed to load memory files', error instanceof Error ? error.message : String(error));
+      logger.error(
+        'Failed to load memory files',
+        error instanceof Error ? error.message : String(error)
+      );
       return;
     }
 
@@ -1107,7 +1135,10 @@ export class SlashCommandHandler {
         await this.clearMemory(args[1]);
         break;
       default:
-        logger.warn(`Unknown memory action: ${action}`, 'Use /memory show to see available actions');
+        logger.warn(
+          `Unknown memory action: ${action}`,
+          'Use /memory show to see available actions'
+        );
     }
   }
 
@@ -1138,7 +1169,10 @@ export class SlashCommandHandler {
       logger.success(`Cleared ${cleared} memory file(s)`);
 
       // Recreate global memory
-      await this.memoryManager.saveMemory('# Global Context\n\nGlobal preferences and settings will be added here.', 'global');
+      await this.memoryManager.saveMemory(
+        '# Global Context\n\nGlobal preferences and settings will be added here.',
+        'global'
+      );
       logger.info('Recreated global memory');
       logger.info('Use /init to initialize project memory if needed');
       return;
@@ -1152,7 +1186,10 @@ export class SlashCommandHandler {
         logger.success('Global memory cleared');
 
         // Recreate global memory
-        await this.memoryManager.saveMemory('# Global Context\n\nGlobal preferences and settings will be added here.', 'global');
+        await this.memoryManager.saveMemory(
+          '# Global Context\n\nGlobal preferences and settings will be added here.',
+          'global'
+        );
         logger.info('Recreated with default content');
       } else {
         logger.warn('No global memory found');
@@ -1161,9 +1198,8 @@ export class SlashCommandHandler {
     }
 
     // Clear specific file by filename or path
-    const targetMemory = memoryFiles.find((m: MemoryFile) =>
-      path.basename(m.path) === target ||
-      m.path === target
+    const targetMemory = memoryFiles.find(
+      (m: MemoryFile) => path.basename(m.path) === target || m.path === target
     );
 
     if (targetMemory) {
@@ -1174,13 +1210,19 @@ export class SlashCommandHandler {
 
         // Recreate global memory, not project memory
         if (targetMemory.level === 'global') {
-          await this.memoryManager.saveMemory('# Global Context\n\nGlobal preferences and settings will be added here.', 'global');
+          await this.memoryManager.saveMemory(
+            '# Global Context\n\nGlobal preferences and settings will be added here.',
+            'global'
+          );
           logger.info('Recreated with default content');
         } else {
           logger.info('Use /init to initialize if needed');
         }
       } catch (error) {
-        logger.error('Failed to clear memory', error instanceof Error ? error.message : String(error));
+        logger.error(
+          'Failed to clear memory',
+          error instanceof Error ? error.message : String(error)
+        );
       }
     } else {
       logger.warn(`Memory file not found: ${target}`, 'Use /memory show to see available files');
@@ -1201,9 +1243,12 @@ export class SlashCommandHandler {
     console.log('');
 
     memoryFiles.forEach((file: MemoryFile) => {
-      const level = file.level === 'global' ? chalk.blue('[global]') :
-                     file.level === 'project' ? chalk.green('[project]') :
-                     chalk.yellow('[subdirectory]');
+      const level =
+        file.level === 'global'
+          ? chalk.blue('[global]')
+          : file.level === 'project'
+            ? chalk.green('[project]')
+            : chalk.yellow('[subdirectory]');
       logger.info(`  ${level} ${path.basename(file.path)}`);
     });
 
@@ -1212,13 +1257,9 @@ export class SlashCommandHandler {
   }
 
   private async addMemory(): Promise<void> {
-    const { entry } = await inquirer.prompt([
-      {
-        type: 'editor',
-        name: 'entry',
-        message: 'Enter memory entry (opens editor):'
-      }
-    ]);
+    const entry = (await text({
+      message: 'Enter memory entry (opens editor):',
+    })) as string;
 
     if (entry && entry.trim()) {
       await this.memoryManager.addMemoryEntry(entry.trim());
@@ -1259,19 +1300,15 @@ export class SlashCommandHandler {
         logger.error(error.message, 'Check if checkpoint ID is valid');
       }
     } else {
-      const choices = checkpoints.map((cp: Checkpoint) => ({
-        name: `${new Date(cp.timestamp).toLocaleString()} - ${cp.description}`,
-        value: cp.id
+      const checkpointOptions = checkpoints.map((cp: Checkpoint) => ({
+        value: cp.id,
+        label: `${new Date(cp.timestamp).toLocaleString()} - ${cp.description}`,
       }));
 
-      const { checkpointId } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'checkpointId',
-          message: 'Select checkpoint to restore:',
-          choices
-        }
-      ]);
+      const checkpointId = await select({
+        message: 'Select checkpoint to restore:',
+        options: checkpointOptions,
+      });
 
       try {
         await this.checkpointManager.restoreCheckpoint(checkpointId);
@@ -1288,7 +1325,7 @@ export class SlashCommandHandler {
 
     logger.section('Available Tools');
 
-    tools.forEach(tool => {
+    tools.forEach((tool) => {
       logger.info(`  ${tool.name}`);
       logger.info(`    ${tool.description}`);
     });
@@ -1312,11 +1349,17 @@ export class SlashCommandHandler {
     if (mode === 'verbose' || mode === 'detail' || mode === 'true' || mode === 'on') {
       this.configManager.set('showToolDetails', true);
       this.configManager.save('global');
-      logger.success('Tool display mode switched to verbose mode', 'Will show complete tool call information');
+      logger.success(
+        'Tool display mode switched to verbose mode',
+        'Will show complete tool call information'
+      );
     } else if (mode === 'simple' || mode === 'concise' || mode === 'false' || mode === 'off') {
       this.configManager.set('showToolDetails', false);
       this.configManager.save('global');
-      logger.success('Tool display mode switched to simple mode', 'Only show tool execution status');
+      logger.success(
+        'Tool display mode switched to simple mode',
+        'Only show tool execution status'
+      );
     } else {
       logger.warn('Invalid mode', 'Use verbose or simple');
     }
@@ -1338,20 +1381,19 @@ export class SlashCommandHandler {
   }
 
   private async handleLanguage(): Promise<void> {
-    const { language } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'language',
-        message: 'Select language:',
-        choices: [
-          { name: 'Chinese', value: 'zh' },
-          { name: 'English', value: 'en' }
-        ]
-      }
-    ]);
+    const language = (await select({
+      message: 'Select language:',
+      options: [
+        { value: 'zh', label: 'Chinese' },
+        { value: 'en', label: 'English' },
+      ],
+    })) as 'zh' | 'en';
 
     this.configManager.setLanguage(language);
-    logger.success(`Language changed to: ${language === 'zh' ? 'Chinese' : 'English'}`, 'Restart CLI to apply changes');
+    logger.success(
+      `Language changed to: ${language === 'zh' ? 'Chinese' : 'English'}`,
+      'Restart CLI to apply changes'
+    );
   }
 
   private async handleAbout(): Promise<void> {
@@ -1369,12 +1411,12 @@ export class SlashCommandHandler {
     // If there are arguments, process config or execute
     if (args.length > 0) {
       const action = args[0].toLowerCase();
-      
+
       if (action === 'exec' || action === 'run' || action === 'now') {
         await this.executeCompression(config);
         return;
       }
-      
+
       await this.setCompressConfig(args);
       return;
     }
@@ -1400,10 +1442,7 @@ export class SlashCommandHandler {
       return;
     }
 
-    const { needsCompression, reason } = this.contextCompressor.needsCompression(
-      messages,
-      config
-    );
+    const { needsCompression, reason } = this.contextCompressor.needsCompression(messages, config);
 
     if (!needsCompression) {
       console.log(chalk.green('✅ No compression needed'));
@@ -1416,7 +1455,7 @@ export class SlashCommandHandler {
     const spinner = ora({
       text: 'Compressing context...',
       spinner: 'dots',
-      color: 'cyan'
+      color: 'cyan',
     }).start();
 
     try {
@@ -1429,13 +1468,23 @@ export class SlashCommandHandler {
       spinner.succeed(chalk.green('✅ Compression complete'));
 
       console.log('');
-      console.log(`  ${chalk.cyan('Original:')} ${chalk.yellow(result.originalMessageCount.toString())} messages (${result.originalSize} chars)`);
-      console.log(`  ${chalk.cyan('Compressed:')} ${chalk.yellow(result.compressedMessageCount.toString())} messages (${result.compressedSize} chars)`);
-      console.log(`  ${chalk.cyan('Reduction:')} ${chalk.green(Math.round((1 - result.compressedSize / result.originalSize) * 100) + '%')}`);
+      console.log(
+        `  ${chalk.cyan('Original:')} ${chalk.yellow(result.originalMessageCount.toString())} messages (${result.originalSize} chars)`
+      );
+      console.log(
+        `  ${chalk.cyan('Compressed:')} ${chalk.yellow(result.compressedMessageCount.toString())} messages (${result.compressedSize} chars)`
+      );
+      console.log(
+        `  ${chalk.cyan('Reduction:')} ${chalk.green(Math.round((1 - result.compressedSize / result.originalSize) * 100) + '%')}`
+      );
       console.log(`  ${chalk.cyan('Method:')} ${chalk.yellow(result.compressionMethod)}`);
 
       console.log('');
-      console.log(chalk.gray('Use /clear to start a new conversation, or continue chatting to see the compressed summary.'));
+      console.log(
+        chalk.gray(
+          'Use /clear to start a new conversation, or continue chatting to see the compressed summary.'
+        )
+      );
       console.log('');
     } catch (error: any) {
       spinner.fail(chalk.red('Compression failed'));

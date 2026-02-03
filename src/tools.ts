@@ -331,11 +331,16 @@ export class BashTool implements Tool {
     // Get shell configuration (Windows Git Bash detection, etc.)
     const { shell, args } = getShellConfig();
     
-    // On Windows with PowerShell, we need to prepend the UTF-8 encoding setup
-    // to ensure proper output encoding for the user command
+    // Set up cross-platform encoding environment for command execution
     let fullCommand = command;
     if (process.platform === 'win32') {
-      fullCommand = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
+      // Windows: set code page to UTF-8 and ensure console output encoding
+      // chcp 65001 sets the console code page to UTF-8
+      // Use *>$null to suppress output (PowerShell-style, not CMD-style)
+      fullCommand = `chcp 65001 *>$null; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [System.Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
+    } else {
+      // Unix/macOS: set locale to UTF-8 for proper encoding handling
+      fullCommand = `export LC_ALL=C.UTF-8; export LANG=C.UTF-8; export PYTHONIOENCODING=utf-8; ${command}`;
     }
     
     const shellArgs = [...args, quoteShellCommand(fullCommand)];

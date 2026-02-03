@@ -687,15 +687,11 @@ export class SlashCommandHandler {
       return;
     }
 
-<<<<<<< Updated upstream
-    // 6. Get and display model list
-=======
     // Restore stdin raw mode after @clack/prompts interaction
     // This is critical for the second select to work properly
     ensureTtySane();
 
     // Get and display provider list
->>>>>>> Stashed changes
     try {
       const models = await remoteClient.getModels();
       const modelList = action === 'llm' ? models.llm : models.vlm;

@@ -1799,15 +1799,20 @@ export class TaskTool implements Tool {
 
     // Create AI client for this subagent
     let subAgentClient;
+    let isRemoteMode = false;
+    let mainTaskId: string | null = null;
     const authConfig = config.getAuthConfig();
-    
+
     if (authConfig.type === AuthType.OAUTH_XAGENT) {
       // Remote mode: try to reuse session's RemoteAIClient first
       const session = getSingletonSession();
       const existingClient = session?.getRemoteAIClient();
-      
+
       if (existingClient) {
         subAgentClient = existingClient;
+        isRemoteMode = true;
+        // Get the main taskId from session - subagent shares the same taskId as the parent task
+        mainTaskId = session?.getTaskId() || null;
       } else {
         subAgentClient = createAIClient(authConfig);
       }
@@ -1943,13 +1948,23 @@ export class TaskTool implements Tool {
       
       // Check for cancellation before each iteration
       checkCancellation();
-      
+
+      // Prepare chat options with taskId for remote mode
+      const chatOptions: any = {
+        tools: toolDefinitions,
+        temperature: 0.7
+      };
+
+      // Pass taskId and status for remote mode subagent calls
+      // Subagent shares the same taskId as the main task
+      if (isRemoteMode && mainTaskId) {
+        chatOptions.taskId = mainTaskId;
+        chatOptions.status = iteration === 1 ? 'begin' : 'continue';
+      }
+
       // Use withCancellation to make API call cancellable
       const result = await cancellationManager.withCancellation(
-        subAgentClient.chatCompletion(messages, {
-          tools: toolDefinitions,
-          temperature: 0.7
-        }),
+        subAgentClient.chatCompletion(messages, chatOptions),
         `api-${subagent_type}-${iteration}`
       ) as any;
 

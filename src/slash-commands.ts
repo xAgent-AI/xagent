@@ -3,7 +3,6 @@ import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'fs/promises';
 import path from 'path';
-import inquirer from 'inquirer';
 import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { RemoteAIClient } from './remote-ai-client.js';
@@ -697,14 +696,14 @@ export class SlashCommandHandler {
         value: m.name
       }));
 
-      const { selectedModel } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'selectedModel',
-          message: action === 'llm' ? 'Select LLM Model:' : 'Select VLM Model:',
-          choices
-        }
-      ]);
+      const selectedModel = await select({
+        message: action === 'llm' ? 'Select LLM Model:' : 'Select VLM Model:',
+        options: choices
+      });
+
+      if (typeof selectedModel !== 'string') {
+        return;
+      }
 
       const configKey = action === 'llm' ? 'remote_llmModelName' : 'remote_vlmModelName';
       this.configManager.set(configKey, selectedModel);

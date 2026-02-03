@@ -1088,8 +1088,8 @@ export class InteractiveSession {
           ...options,
           taskId,
           status: options.isFirstApiCall ? 'begin' : 'continue',
-          llmProvider: authConfig.remote_llmModelName,
-          vlmProvider: authConfig.remote_vlmModelName
+          llmModelName: authConfig.remote_llmModelName,
+          vlmModelName: authConfig.remote_vlmModelName
         });
       },
       isRemote: true,

@@ -19,7 +19,7 @@ export class UpdateManager {
 
   constructor() {
     this.packageVersion = packageJson.version;
-    this.registryUrl = 'https://registry.npmjs.org/@xagent-ai/xagent-cli';
+    this.registryUrl = 'https://registry.npmjs.org/@xagent-ai/cli';
     this.checkInterval = 24 * 60 * 60 * 1000;
   }
 

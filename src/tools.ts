@@ -282,10 +282,18 @@ export class BashTool implements Tool {
 - \`description\`: (Optional) Description of what the command does
 - \`timeout\`: (Optional) Timeout in seconds, default: 120
 - \`run_in_bg\`: (Optional) Run in background, default: false
+- \`skillPath\`: (Optional) Skill directory path - when provided, NODE_PATH will include the skill's node_modules for dependency resolution
 
 # Examples
-- Install dependencies to user directory: Bash(command="XAGENT_USER_NPM=1 npm install package-name", description="Install npm package to user directory")
 - Install dependencies: Bash(command="npm install", description="Install npm dependencies")
+- Run in skill directory with local deps: Bash(command="npm install docx", skillPath="~/.xagent/skills/docx")
+
+# NODE_PATH Resolution
+When \`skillPath\` is provided, the command will have access to:
+- \`<skillPath>/node_modules\` (skill's local dependencies)
+- xAgent's global node_modules
+
+This is useful when working with skills that have local dependencies.
 - Run tests: Bash(command="npm test", description="Run unit tests")
 - Build project: Bash(command="npm run build", description="Build the project")
 
@@ -304,8 +312,9 @@ export class BashTool implements Tool {
     description?: string;
     timeout?: number;
     run_in_bg?: boolean;
+    skillPath?: string;  // Skill directory path for NODE_PATH resolution
   }): Promise<{ stdout: string; stderr: string; exitCode: number; taskId?: string; truncated?: boolean; truncationNotice?: string }> {
-    const { command, cwd, description, timeout = 120, run_in_bg = false } = params;
+    const { command, cwd, description, timeout = 120, run_in_bg = false, skillPath } = params;
 
     // Determine effective working directory
     // Only use cwd if the command doesn't contain 'cd' (let LLM control directory)
@@ -327,43 +336,74 @@ export class BashTool implements Tool {
     const actualCwd = effectiveCwd || process.cwd();
 
     // Set up environment with NODE_PATH for node commands
-    // Dynamic NODE_PATH based on current working directory
     const builtinNodeModulesPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules');
 
     // Get user skills path from config
     const { getConfigManager } = await import('./config.js');
     const configManager = getConfigManager();
     const userSkillsPath = configManager.getUserSkillsPath();
+    const builtinSkillsPath = configManager.getSkillsPath();
+
+    // Built-in deps path: ~/.xagent/builtin-deps/ (isolated from xAgent package)
+    const builtinDepsPath = userSkillsPath ? path.join(userSkillsPath, 'builtin-deps') : null;
 
     // Determine which node_modules to use
     let skillNodeModulesPath: string | null = null;
 
-    // Check if we're inside a user skill directory
-    if (userSkillsPath && actualCwd.startsWith(userSkillsPath)) {
-      // Find the skill root directory
+    // Priority 1: skillPath parameter (workspace scenario - LLM works in workspace, not skill dir)
+    if (skillPath) {
+      if (skillPath.includes('/builtin-deps/')) {
+        // Built-in skill with deps in user directory
+        const match = skillPath.match(/\/builtin-deps\/([^/]+)/);
+        if (match) {
+          skillNodeModulesPath = path.join(builtinDepsPath!, match[1], 'node_modules');
+        }
+      } else {
+        // Regular skill (user or built-in)
+        skillNodeModulesPath = path.join(skillPath, 'node_modules');
+      }
+    }
+    // Priority 2: Check if we're inside a user skill directory
+    else if (userSkillsPath && userSkillsPath.trim() && actualCwd.startsWith(userSkillsPath)) {
       const relativePath = actualCwd.substring(userSkillsPath.length);
       const pathParts = relativePath.split(path.sep).filter(Boolean);
 
       if (pathParts.length > 0) {
-        // Assume first part is the skill name
-        const skillName = pathParts[0];
-        const skillRoot = path.join(userSkillsPath, skillName);
+        if (pathParts[0] === 'builtin-deps' && pathParts.length > 1) {
+          // Built-in skill with local deps
+          const skillName = pathParts[1];
+          skillNodeModulesPath = path.join(builtinDepsPath!, skillName, 'node_modules');
+        } else {
+          // Regular user skill
+          const skillName = pathParts[0];
+          const skillRoot = path.join(userSkillsPath, skillName);
+          try {
+            const skillMdPath = path.join(skillRoot, 'SKILL.md');
+            await fs.access(skillMdPath);
+            skillNodeModulesPath = path.join(skillRoot, 'node_modules');
+          } catch {
+            // Not a skill directory, skip
+          }
+        }
+      }
+    }
+    // Priority 3: Check if we're in a built-in skill directory (xAgent package)
+    else if (builtinSkillsPath && actualCwd.startsWith(builtinSkillsPath)) {
+      const relativePath = actualCwd.substring(builtinSkillsPath.length);
+      const pathParts = relativePath.split(path.sep).filter(Boolean);
 
-        // Check if this looks like a skill directory (has SKILL.md)
-        try {
-          const skillMdPath = path.join(skillRoot, 'SKILL.md');
-          await fs.access(skillMdPath);
-          skillNodeModulesPath = path.join(skillRoot, 'node_modules');
-        } catch {
-          // Not a skill directory, skip
+      if (pathParts.length > 0) {
+        const skillName = pathParts[0];
+        if (builtinDepsPath) {
+          skillNodeModulesPath = path.join(builtinDepsPath, skillName, 'node_modules');
         }
       }
     }
 
-    // Build NODE_PATH - skill's node_modules takes precedence if available
+    // Build NODE_PATH - skill's node_modules takes precedence (last-wins)
     let nodePath: string;
     if (skillNodeModulesPath) {
-      nodePath = `${skillNodeModulesPath};${builtinNodeModulesPath}`;
+      nodePath = `${skillNodeModulesPath}${path.delimiter}${builtinNodeModulesPath}`;
     } else {
       nodePath = builtinNodeModulesPath;
     }
@@ -3020,6 +3060,8 @@ export class InvokeSkillTool implements Tool {
       reason: string;
     }>;
     guidance?: string;
+    /** Skill directory path for dependency management */
+    skillPath?: string;
   }> {
     const { skillId, taskDescription, inputFile, outputFile, options } = params;
 
@@ -3078,7 +3120,8 @@ export class InvokeSkillTool implements Tool {
           task: taskDescription,
           result: result.output,
           files: result.files,
-          nextSteps: result.nextSteps
+          nextSteps: result.nextSteps,
+          skillPath: result.skillPath
         };
       } else {
         throw new Error(result.error);

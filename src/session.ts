@@ -6,7 +6,7 @@ import crypto from 'crypto';
 import ora from 'ora';
 import inquirer from 'inquirer';
 import { createRequire } from 'module';
-import { dirname, join } from 'path';
+import path from 'path';
 import { fileURLToPath } from 'url';
 
 const require = createRequire(import.meta.url);
@@ -153,6 +153,10 @@ export class InteractiveSession {
    * Update system prompt to reflect MCP changes (called after add/remove MCP)
    */
   async updateSystemPrompt(): Promise<void> {
+    // Reload skills to pick up any newly added/removed skills
+    const skillInvoker = (await import('./skill-invoker.js')).getSkillInvoker();
+    await skillInvoker.reload();
+
     const toolRegistry = getToolRegistry();
     const promptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
 
@@ -170,6 +174,49 @@ export class InteractiveSession {
 
     // Sync to slashCommandHandler
     this.slashCommandHandler.setConversationHistory(this.conversation);
+  }
+
+  /**
+   * Watch for skill updates from CLI and update system prompt accordingly
+   */
+  private startSkillUpdateWatcher(): void {
+    const SKILL_STATE_FILE = '.skill-state.json';
+    const configManager = getConfigManager();
+    const userSkillsPath = configManager.getUserSkillsPath();
+    const stateFilePath = userSkillsPath 
+      ? path.join(userSkillsPath, SKILL_STATE_FILE)
+      : null;
+    
+    if (!stateFilePath) {
+      return; // No user skills path configured
+    }
+
+    let lastUpdateTime = 0;
+
+    // Check for updates every 2 seconds
+    const checkInterval = setInterval(async () => {
+      try {
+        const { existsSync, readFileSync } = await import('fs');
+        if (existsSync(stateFilePath)) {
+          const content = readFileSync(stateFilePath, 'utf-8');
+          const state = JSON.parse(content);
+          
+          if (state.lastSkillUpdate && state.lastSkillUpdate > lastUpdateTime) {
+            lastUpdateTime = state.lastSkillUpdate;
+            
+            // Update system prompt with new skills
+            await this.updateSystemPrompt();
+            
+            console.log(colors.textMuted('  🔄 Skills updated from CLI'));
+          }
+        }
+      } catch (error) {
+        // Silent fail - watcher is optional
+      }
+    }, 2000);
+
+    // Clean up on session end
+    (this as any)._skillWatcherInterval = checkInterval;
   }
 
   setAgent(agent: AgentConfig): void {
@@ -196,6 +243,9 @@ export class InteractiveSession {
 
     await this.initialize();
     this.showWelcomeMessage();
+
+    // Start watching for skill updates from CLI
+    this.startSkillUpdateWatcher();
 
     // Track if an operation is in progress
     (this as any)._isOperationInProgress = false;

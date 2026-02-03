@@ -11,7 +11,7 @@ import { getMCPManager } from './mcp.js';
 import { getLogger, setConfigProvider } from './logger.js';
 import { theme, icons, colors } from './theme.js';
 import { getCancellationManager } from './cancellation.js';
-import { readFileSync, promises as fs } from 'fs';
+import { readFileSync, promises as fs, writeFileSync, existsSync } from 'fs';
 import path from 'path';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -20,6 +20,27 @@ import { glob } from 'glob';
 // Get current directory
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// State file for skill updates (used to notify running xAgent)
+const SKILL_STATE_FILE = '.skill-state.json';
+
+function getSkillStateFilePath(userSkillsPath: string): string {
+  return path.join(userSkillsPath, SKILL_STATE_FILE);
+}
+
+async function notifySkillUpdate(userSkillsPath: string): Promise<void> {
+  try {
+    const stateFilePath = getSkillStateFilePath(userSkillsPath);
+    const timestamp = Date.now();
+    const state = { lastSkillUpdate: timestamp };
+    
+    await fs.writeFile(stateFilePath, JSON.stringify(state, null, 2), 'utf-8');
+    
+    console.log(colors.textMuted('  ℹ️  Skills updated for running xAgent sessions'));
+  } catch (error) {
+    // Silent fail - notification is optional
+  }
+}
 
 // Read package.json
 const packageJsonPath = join(__dirname, '../package.json');
@@ -111,6 +132,9 @@ async function copyDirectory(src: string, dest: string): Promise<void> {
   await fs.mkdir(dest, { recursive: true });
 
   for (const entry of entries) {
+    // Skip node_modules to keep dependencies isolated
+    // if (entry.name === 'node_modules') continue;
+
     const srcPath = path.join(src, entry.name);
     const destPath = path.join(dest, entry.name);
 
@@ -479,85 +503,45 @@ program
           process.exit(1);
         }
 
-        // Check if skill already exists
-        try {
-          await fs.access(destPath);
-          console.log(colors.warning(`Skill "${skillName}" already installed`));
-          console.log(colors.textMuted(`Use "xagent skill -r ${skillName}" to remove it first`));
-          console.log('');
-          process.exit(1);
-        } catch {
-          // Doesn't exist, proceed
-        }
-
+              // Check if skill already exists in user skills path
+              try {
+                await fs.access(destPath);
+                console.log(colors.warning(`Skill "${skillName}" already installed`));
+                console.log(colors.textMuted(`Use "xagent skill -r ${skillName}" to remove it first`));
+                console.log('');
+                process.exit(1);
+              } catch {
+                // Doesn't exist, proceed
+              }
+        
+              // Check if a built-in skill with the same name exists
+              const builtinSkillsPath = configManager.getSkillsPath();
+              if (builtinSkillsPath) {
+                const builtinSkillPath = path.join(builtinSkillsPath, skillName);
+                try {
+                  await fs.access(builtinSkillPath);
+                  console.log(colors.warning(`⚠️  A built-in skill "${skillName}" already exists`));
+                  console.log(colors.textMuted(`Your version will override the built-in skill`));
+                  console.log(colors.textMuted(`Use "xagent skill -r ${skillName}" to revert to built-in`));
+                  console.log('');
+                } catch {
+                  // No built-in skill with this name
+                }
+              }
         // Ensure user skills directory exists
         await fs.mkdir(userSkillsPath, { recursive: true });
 
         // Copy the skill
         await copyDirectory(sourcePath, destPath);
+        console.log('');
         console.log(colors.success(`✅ Skill "${skillName}" installed successfully`));
         console.log(colors.textMuted(`  Location: ${destPath}`));
         console.log('');
+        // console.log(colors.textMuted('Note: Dependencies will be installed automatically when needed'));
+        // console.log('');
 
-        // Check for package.json and install dependencies to skill's own node_modules
-        const packageJsonPath = pathModule.join(destPath, 'package.json');
-        const skillNodeModulesPath = pathModule.join(destPath, 'node_modules');
-
-        try {
-          await fs.access(packageJsonPath);
-          console.log(colors.textMuted('Processing dependencies...'));
-
-          // Read package.json to get dependencies
-          const packageJsonContent = await fs.readFile(packageJsonPath, 'utf-8');
-          const packageJson = JSON.parse(packageJsonContent);
-          const dependencies = packageJson.dependencies || {};
-          const devDependencies = packageJson.devDependencies || {};
-          const allDependencies = { ...dependencies, ...devDependencies };
-
-          if (Object.keys(allDependencies).length === 0) {
-            console.log(colors.textMuted('No dependencies defined'));
-          } else {
-            // Ensure skill's node_modules exists
-            await fs.mkdir(skillNodeModulesPath, { recursive: true });
-
-            // Get built-in node_modules path
-            const builtinNodeModulesPath = pathModule.resolve(pathModule.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules');
-
-            // Install dependencies to skill's own node_modules
-            // Note: Each skill has its own isolated node_modules
-            const depList = Object.entries(allDependencies)
-              .map(([dep, version]) => `${dep}@${version}`);
-
-            if (depList.length > 0) {
-              console.log(colors.textMuted(`Installing ${depList.length} dependency(ies) to skill's node_modules...`));
-
-              try {
-                await execAsync(`npm install ${depList.join(' ')} --no-save`, {
-                  cwd: destPath,
-                  env: {
-                    ...process.env,
-                    NODE_PATH: `${skillNodeModulesPath};${builtinNodeModulesPath}`
-                  },
-                  timeout: 180000 // 3 minutes
-                });
-
-                for (const dep of depList) {
-                  console.log(colors.success(`  ✓ ${dep} installed`));
-                }
-              } catch (err: any) {
-                console.log(colors.warning(`  ⚠️  Some dependencies failed to install: ${err.message}`));
-              }
-            }
-
-            console.log(colors.success(`✅ Dependencies installed (isolated to skill)`));
-          }
-        } catch {
-          // No package.json, skip
-        }
-
-        console.log('');
-        console.log(colors.textMuted('You can now use this skill in xAgent'));
-        console.log(colors.textMuted(`Restart xAgent if it's already running`));
+        // Notify running xAgent to update system prompt
+        await notifySkillUpdate(userSkillsPath);
         console.log('');
       } catch (error: any) {
         const { message, suggestion } = formatError(error);
@@ -616,20 +600,39 @@ program
 
       try {
         await fs.access(skillPath);
-        // Check if it's a user skill (not built-in)
-        const builtinSkillsPath = configManager.getSkillsPath();
-        if (builtinSkillsPath && skillPath.startsWith(builtinSkillsPath)) {
+        // Verify it's in user skills path (not built-in)
+        if (!skillPath.startsWith(userSkillsPath)) {
           console.log('');
-          console.log(colors.error(`Cannot remove built-in skill: ${options.remove}`));
-          console.log(colors.textMuted('This is a pre-installed skill'));
+          console.log(colors.error(`Cannot remove skill outside user directory: ${options.remove}`));
           console.log('');
           process.exit(1);
+        }
+
+        // Check if a built-in skill with the same name exists
+        const builtinSkillsPath = configManager.getSkillsPath();
+        let hasBuiltinVersion = false;
+        if (builtinSkillsPath) {
+          const builtinSkillPath = path.join(builtinSkillsPath, options.remove);
+          try {
+            await fs.access(builtinSkillPath);
+            hasBuiltinVersion = true;
+          } catch {
+            // No built-in skill
+          }
         }
 
         // Remove the skill directory
         await fs.rm(skillPath, { recursive: true, force: true });
         console.log('');
-        console.log(colors.success(`✅ Skill ${options.remove} removed successfully`));
+        if (hasBuiltinVersion) {
+          console.log(colors.success(`✅ Skill ${options.remove} removed successfully`));
+          console.log(colors.textMuted(`Reverted to built-in version`));
+        } else {
+          console.log(colors.success(`✅ Skill ${options.remove} removed successfully`));
+        }
+
+        // Notify running xAgent to update system prompt
+        await notifySkillUpdate(userSkillsPath);
         console.log('');
       } catch (error) {
         console.log('');

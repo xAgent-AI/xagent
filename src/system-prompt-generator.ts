@@ -589,14 +589,20 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
         ]
       },
       InvokeSkill: (() => {
-        // Build skills list string from the provided skills, including description
+        // Build skills list string from the available skills (no path/source info)
         const skillsList = skills && skills.length > 0
           ? skills.map(skill => `- ${skill.name}: ${skill.description}`).join('\n')
           : 'No skills available';
 
         return {
           name: 'InvokeSkill',
-          description: 'Invoke a specialized skill to get execution guidance for complex tasks. The skill will analyze your request and provide a step-by-step execution plan - you must follow these steps to complete the task.\n\n**Workflow**: Invoke skill → Receive guidance with nextSteps → Execute each step using appropriate tools → Complete the task.\n\n**Available Skills**:\n' + skillsList,
+          description: 'Invoke a specialized skill to get execution guidance for complex tasks. The skill will analyze your request and provide a step-by-step execution plan - you must follow these steps to complete the task.\n\n' +
+            '**Workflow**: Invoke skill → Receive result with nextSteps → Execute each step → Complete the task.\n\n' +
+            '**Dependency Management**: If a skill requires dependencies:\n' +
+            '  1. Use the skillPath from the result in BashTool\'s skillPath parameter\n' +
+            '  2. Install: `npm install <package>` with skillPath set\n' +
+            '  3. Dependencies are installed to the skill\'s local node_modules\n\n' +
+            '**Available Skills**:\n' + skillsList,
           parameters: {
             skillId: {
               type: 'string',
@@ -618,7 +624,9 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
           bestPractices: [
             'Invoke skill to get step-by-step execution guidance',
             'Follow the nextSteps provided by the skill in order',
-            'Use appropriate tools (Read/Write/Run) to execute each step'
+            'Use appropriate tools (Read/Write/Bash) to execute each step',
+            'When installing dependencies for a skill, use BashTool with skillPath parameter',
+            'Dependencies are installed to the skill\'s local node_modules directory'
           ]
         };
       })()

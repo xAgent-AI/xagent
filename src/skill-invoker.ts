@@ -91,6 +91,8 @@ export interface SkillExecutionResult {
   workspaceDir?: string;
   /** Files to preserve (relative paths), skipped during cleanup */
   preserveFiles?: string[];
+  /** Skill directory path - for dependency management and file operations */
+  skillPath?: string;
 }
 
 export interface SkillMatcherResult {
@@ -475,7 +477,7 @@ export class SkillInvoker {
   private skillLoader: SkillLoader;
   private initialized: boolean = false;
   private skillCache: Map<string, SkillInfo> = new Map(); // Stores metadata only
-  private skillContentCache: Map<string, string> = new Map(); // Stores full SKILL.md content
+  // private skillContentCache: Map<string, string> = new Map(); // Stores full SKILL.md content - UNUSED
 
   constructor(skillLoader?: SkillLoader) {
     this.skillLoader = skillLoader || getSkillLoader();
@@ -539,7 +541,7 @@ export class SkillInvoker {
       }
 
       skill.markdown = content; // Now we have the full content
-      this.skillContentCache.set(skillId, content);
+      // this.skillContentCache.set(skillId, content); // UNUSED
     } catch (error) {
       console.warn(`[SkillInvoker] Failed to load metadata for skill ${skillId}:`, error);
     }
@@ -557,6 +559,19 @@ export class SkillInvoker {
     }
 
     return Array.from(this.skillCache.values());
+  }
+
+  /**
+   * Reload all skills (e.g., after adding/removing a skill via CLI)
+   * Clears the cache and re-discovers all skills
+   */
+  async reload(): Promise<void> {
+    // Reset initialization state to allow re-discovery
+    this.initialized = false;
+    this.skillCache.clear();
+    
+    // Re-initialize
+    await this.initialize();
   }
 
   /**
@@ -605,10 +620,14 @@ export class SkillInvoker {
       const executor = this.getSkillExecutor(skill.id);
       const result = await executor.execute(skill, { ...params, taskId });
 
-      // Add workspaceDir to result
-      if (result.success && result.nextSteps && result.nextSteps.length > 0) {
-        result.workspaceDir = getWorkspaceDir(taskId);
-        await ensureWorkspaceDir(result.workspaceDir);
+      // Add skillPath and workspaceDir to result
+      if (result.success) {
+        // Get skillPath directly from skillDirectories (more reliable)
+        result.skillPath = this.skillLoader.getSkillDirectory?.(params.skillId) || skill.skillsPath || '';
+        if (result.nextSteps && result.nextSteps.length > 0) {
+          result.workspaceDir = getWorkspaceDir(taskId);
+          await ensureWorkspaceDir(result.workspaceDir);
+        }
       }
 
       return result;

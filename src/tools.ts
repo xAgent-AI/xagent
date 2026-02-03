@@ -2117,17 +2117,20 @@ export class TaskTool implements Tool {
       // Check for cancellation before each iteration
       checkCancellation();
 
-      // Prepare chat options with taskId for remote mode
+      // Prepare chat options with taskId and model names for remote mode
       const chatOptions: any = {
         tools: toolDefinitions,
         temperature: 0.7,
       };
 
-      // Pass taskId and status for remote mode subagent calls
+      // Pass taskId, status, and model names for remote mode subagent calls
       // Subagent shares the same taskId as the main task
       if (isRemoteMode && mainTaskId) {
         chatOptions.taskId = mainTaskId;
         chatOptions.status = iteration === 1 ? 'begin' : 'continue';
+        // Pass model names to ensure subagent uses the same models as main task
+        chatOptions.llmModelName = config.get('remote_llmModelName');
+        chatOptions.vlmModelName = config.get('remote_vlmModelName');
       }
 
       // Use withCancellation to make API call cancellable

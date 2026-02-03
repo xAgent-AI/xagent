@@ -121,8 +121,8 @@ export class SlashCommandHandler {
       case 'vlm':
         await this.handleVlm();
         break;
-      case 'provider':
-        await this.handleProvider();
+      case 'model':
+        await this.handleModel();
         break;
       case 'memory':
         await this.handleMemory(args);
@@ -581,7 +581,7 @@ export class SlashCommandHandler {
     const authConfig = this.configManager.getAuthConfig();
     if (authConfig.type === AuthType.OAUTH_XAGENT) {
       console.log(chalk.yellow('\n⚠️  This command is only available in local mode (third-party API).'));
-      console.log(chalk.cyan('   In remote mode, VLM configuration is managed by /provider.'));
+      console.log(chalk.cyan('   In remote mode, VLM configuration is managed by /model.'));
       return;
     }
 
@@ -667,9 +667,9 @@ export class SlashCommandHandler {
   }
 
   /**
-   * Handle /provider command - Configure LLM/VLM providers for remote mode
+   * Handle /model command - Configure LLM/VLM models for remote mode
    */
-  private async handleProvider(): Promise<void> {
+  private async handleModel(): Promise<void> {
     const authConfig = this.configManager.getAuthConfig();
 
     // 1. Check if remote mode
@@ -689,9 +689,9 @@ export class SlashCommandHandler {
     const currentLlm = authConfig.remote_llmProvider || 'Not set';
     const currentVlm = authConfig.remote_vlmProvider || 'Not set';
 
-    console.log(chalk.cyan('\n📊 Current Provider Configuration:\n'));
-    console.log(`  ${chalk.yellow('LLM Provider:')} ${currentLlm}`);
-    console.log(`  ${chalk.yellow('VLM Provider:')} ${currentVlm}`);
+    console.log(chalk.cyan('\n📊 Current Model Configuration:\n'));
+    console.log(`  ${chalk.yellow('LLM Model:')} ${currentLlm}`);
+    console.log(`  ${chalk.yellow('VLM Model:')} ${currentVlm}`);
     console.log('');
 
     // 4. Main menu
@@ -701,38 +701,14 @@ export class SlashCommandHandler {
         name: 'action',
         message: 'Select action:',
         choices: [
-          { name: 'Use default llm/vlm config', value: 'default' },
-          { name: 'Change LLM config', value: 'llm' },
-          { name: 'Change VLM config', value: 'vlm' },
+          { name: 'Change LLM model', value: 'llm' },
+          { name: 'Change VLM model', value: 'vlm' },
           { name: 'Back', value: 'back' }
         ]
       }
     ]);
 
     if (action === 'back') return;
-
-    // 5. Get default configuration
-    if (action === 'default') {
-      try {
-        const defaults = await remoteClient.getDefaultModels();
-        // Update in-memory config
-        await this.configManager.set('remote_llmProvider', defaults.llm.provider);
-        await this.configManager.set('remote_vlmProvider', defaults.vlm.provider);
-        this.configManager.save('global');
-
-        console.log(chalk.green('\n✅ Default configuration applied!'));
-        console.log(`   LLM: ${defaults.llm.providerDisplay}`);
-        console.log(`   VLM: ${defaults.vlm.providerDisplay}`);
-
-        // 通知 InteractiveSession 更新 aiClient config
-        if (this.onConfigUpdate) {
-          this.onConfigUpdate();
-        }
-      } catch (error: any) {
-        console.log(chalk.red(`\n❌ Failed to get default models: ${error.message}`));
-      }
-      return;
-    }
 
     // 6. Get and display provider list
     try {
@@ -769,7 +745,7 @@ export class SlashCommandHandler {
       // Clear conversation history to avoid tool call ID conflicts between providers
       if (this.onClearCallback) {
         this.onClearCallback();
-        console.log(chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between providers.'));
+        console.log(chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between models.'));
       }
 
       // Notify InteractiveSession to update aiClient config
@@ -777,7 +753,7 @@ export class SlashCommandHandler {
         this.onConfigUpdate();
       }
 
-      console.log(chalk.green('\n✅ Provider updated successfully!'));
+      console.log(chalk.green('\n✅ Model updated successfully!'));
       console.log(`   ${action === 'llm' ? 'LLM' : 'VLM'}: ${selectedProvider}`);
     } catch (error: any) {
       console.log(chalk.red(`\n❌ Failed to get models: ${error.message}`));

@@ -273,9 +273,9 @@ export class SlashCommandHandler {
       },
       {
         cmd: '/skills [list|add|remove]',
-        desc: 'Manage user skills',
-        detail: 'Install, list, or remove user skills from ~/.xagent/skills',
-        example: '/skills list\n/skills add ./my-skill\n/skills remove my-skill'
+        desc: 'Manage skills',
+        detail: 'Install, list, or remove skills from ~/.xagent/skills',
+        example: '/skills list\n/skills add ./my-skill\n/skills add owner/repo\n/skills remove my-skill'
       },
       {
         cmd: '/vlm',
@@ -1612,27 +1612,32 @@ export class SlashCommandHandler {
         await this.removeSkill(args[1], userSkillsPath, fs, path);
         break;
       default:
-        console.log(chalk.cyan('\n🔧 User Skills Management:\n'));
+        console.log(chalk.cyan('\n🔧 Skills:\n'));
         console.log(`  Skills directory: ${chalk.yellow(userSkillsPath)}\n`);
         console.log(chalk.gray('Available commands:'));
-        console.log(chalk.gray('  /skills list              - List installed skills'));
-        console.log(chalk.gray('  /skills add <path>        - Add a skill from local path'));
-        console.log(chalk.gray('  /skills remove <name>     - Remove a user-installed skill'));
+        console.log(chalk.gray('  /skills list                   - List installed skills'));
+        console.log(chalk.gray('  /skills add <source>           - Add a skill (local path or remote URL)'));
+        console.log(chalk.gray('  /skills remove <name>          - Remove a user-installed skill'));
+        console.log();
+        console.log(chalk.gray('Examples:'));
+        console.log(chalk.gray('  /skills add ./my-skill                    - Local path'));
+        console.log(chalk.gray('  /skills add owner/repo                     - GitHub shorthand'));
+        console.log(chalk.gray('  /skills add https://github.com/owner/repo  - GitHub URL'));
         console.log();
     }
   }
 
   private async listUserSkills(userSkillsPath: string, fs: any, path: any): Promise<void> {
-    console.log(chalk.cyan('\n🔧 User-Installed Skills:\n'));
+    console.log(chalk.cyan('\n🔧 Skills:\n'));
 
     try {
       const entries = await fs.readdir(userSkillsPath, { withFileTypes: true });
       const skills = entries.filter((e: any) => e.isDirectory());
 
       if (skills.length === 0) {
-        console.log(chalk.gray('  No user skills installed'));
+        console.log(chalk.gray('  No skills installed'));
         console.log(chalk.cyan('\n  To add a skill, use:'));
-        console.log(chalk.cyan('    xagent skill --add <path-to-skill>\n'));
+        console.log(chalk.cyan('    /skills add <path-to-skill>\n'));
         return;
       }
 
@@ -1661,84 +1666,106 @@ export class SlashCommandHandler {
       console.log();
     } catch (error: any) {
       if (error.code === 'ENOENT') {
-        console.log(chalk.gray('  No user skills installed'));
+        console.log(chalk.gray('  No skills installed'));
         console.log(chalk.cyan('\n  To add a skill, use:'));
-        console.log(chalk.cyan('    xagent skill --add <path-to-skill>\n'));
+        console.log(chalk.cyan('    /skills add <path-to-skill>\n'));
       } else {
         console.log(chalk.red(`  Error: ${error.message}`));
       }
     }
   }
 
-  private async addSkill(sourcePath: string, userSkillsPath: string, fs: any, path: any): Promise<void> {
-    if (!sourcePath) {
-      console.log(chalk.yellow('\n⚠️  Please specify a skill path'));
-      console.log(chalk.cyan('  Usage: /skills add <path-to-skill>\n'));
+  private async addSkill(source: string, userSkillsPath: string, fs: any, path: any): Promise<void> {
+    if (!source) {
+      console.log(chalk.yellow('\n⚠️  Please specify a skill source'));
+      console.log(chalk.cyan('  Usage: /skills add <source>\n'));
+      console.log(chalk.gray('  Examples:'));
+      console.log(chalk.gray('    /skills add ./my-skill           - Local path'));
+      console.log(chalk.gray('    /skills add owner/repo            - GitHub shorthand'));
+      console.log(chalk.gray('    /skills add https://github.com/owner/repo'));
+      console.log();
       return;
     }
 
-    const resolvedPath = path.resolve(sourcePath);
-    const skillName = path.basename(resolvedPath);
-    const destPath = path.join(userSkillsPath, skillName);
+    const { parseSource, installSkill } = await import('./skill-installer.js');
+    const parsed = parseSource(source.trim());
+    const isLocal = parsed.type === 'local';
 
-    try {
-      // Check if source exists
-      await fs.access(resolvedPath);
+    if (isLocal) {
+      // Local installation
+      const resolvedPath = path.resolve(source);
+      const skillName = path.basename(resolvedPath);
+      const destPath = path.join(userSkillsPath, skillName);
 
-      // Check if SKILL.md exists
-      const skillMdPath = path.join(resolvedPath, 'SKILL.md');
       try {
-        await fs.access(skillMdPath);
-      } catch {
-        console.log(chalk.red(`\n❌ SKILL.md not found in ${resolvedPath}`));
-        console.log(chalk.gray('  Each skill must have a SKILL.md file\n'));
-        return;
-      }
+        // Check if source exists
+        await fs.access(resolvedPath);
 
-      // Check if skill already exists in user skills path
-      try {
-        await fs.access(destPath);
-        console.log(chalk.yellow(`\n⚠️  Skill "${skillName}" already installed`));
-        console.log(chalk.cyan(`  Use: /skills remove ${skillName} to remove it first\n`));
-        return;
-      } catch {
-        // Doesn't exist, proceed
-      }
-
-      // Check if a built-in skill with the same name exists
-      const builtinSkillsPath = this.configManager.getSkillsPath();
-      let hasBuiltinVersion = false;
-      if (builtinSkillsPath) {
-        const builtinSkillPath = path.join(builtinSkillsPath, skillName);
+        // Check if SKILL.md exists
+        const skillMdPath = path.join(resolvedPath, 'SKILL.md');
         try {
-          await fs.access(builtinSkillPath);
-          hasBuiltinVersion = true;
+          await fs.access(skillMdPath);
         } catch {
-          // No built-in skill with this name
+          console.log(chalk.red(`\n❌ SKILL.md not found in ${resolvedPath}`));
+          console.log(chalk.gray('  Each skill must have a SKILL.md file\n'));
+          return;
+        }
+
+        // Check if skill already exists
+        try {
+          await fs.access(destPath);
+          console.log(chalk.yellow(`\n⚠️  Skill "${skillName}" already installed`));
+          console.log(chalk.cyan(`  Use: /skills remove ${skillName} to remove it first\n`));
+          return;
+        } catch {
+          // Doesn't exist, proceed
+        }
+
+        // Ensure skills directory exists
+        await fs.mkdir(userSkillsPath, { recursive: true });
+
+        // Copy the skill
+        await this.copyDirectory(resolvedPath, destPath);
+
+        console.log(chalk.green('\n✅ Skill installed successfully'));
+        console.log(chalk.gray(`  Name: ${skillName}`));
+        console.log(chalk.gray(`  Location: ${destPath}`));
+        console.log(chalk.gray(`  Type: Local`));
+        console.log();
+
+        // Trigger system prompt update
+        this.onSystemPromptUpdate?.();
+      } catch (error: any) {
+        if (error.code === 'ENOENT') {
+          console.log(chalk.red(`\n❌ Skill not found: ${source}\n`));
+        } else {
+          console.log(chalk.red(`\n❌ Error installing skill: ${error.message}\n`));
         }
       }
-
-      // Ensure user skills directory exists
-      await fs.mkdir(userSkillsPath, { recursive: true });
-
-      // Copy the skill
-      await this.copyDirectory(resolvedPath, destPath);
-
-      console.log(chalk.green('\n✅ Skill installed successfully'));
-      console.log(chalk.gray(`  Name: ${skillName}`));
-      console.log(chalk.gray(`  Location: ${destPath}`));
-      if (hasBuiltinVersion) {
-        console.log(chalk.cyan('  Note: This overrides a built-in skill with the same name'));
-      }
-      // console.log(chalk.gray('  Dependencies will be installed automatically when needed'));
+    } else {
+      // Remote installation
+      console.log(chalk.cyan('\n📦 Installing skill from remote source...\n'));
+      console.log(chalk.gray(`  Source: ${source}`));
+      console.log(chalk.gray(`  Type: Remote`));
       console.log();
 
-      // Trigger system prompt update
-      this.onSystemPromptUpdate?.();
-    } catch (error: any) {
-      if (error.code === 'ENOENT') {
-        console.log(chalk.red(`\n❌ Skill not found: ${sourcePath}\n`));
-      } else {
+      try {
+        const result = await installSkill(source);
+
+        if (result.success) {
+          console.log(chalk.green('✅ Skill installed successfully'));
+          console.log(chalk.gray(`  Name: ${result.skillName}`));
+          console.log(chalk.gray(`  Location: ${result.skillPath}`));
+          console.log(chalk.gray('  Type: Remote'));
+          console.log();
+          console.log(chalk.cyan('  Note: Run "xagent start" to use the new skill\n'));
+
+          // Trigger system prompt update
+          this.onSystemPromptUpdate?.();
+        } else {
+          console.log(chalk.red(`\n❌ Failed to install skill: ${result.error}\n`));
+        }
+      } catch (error: any) {
         console.log(chalk.red(`\n❌ Error installing skill: ${error.message}\n`));
       }
     }
@@ -1751,37 +1778,28 @@ export class SlashCommandHandler {
       return;
     }
 
+    // Protect find-skills from deletion
+    if (skillName === 'find-skills') {
+      console.log(chalk.red('\n❌ Cannot remove protected skill: find-skills'));
+      console.log(chalk.gray('  find-skills is a built-in skill that helps you discover and install other skills.\n'));
+      return;
+    }
+
     const skillPath = path.join(userSkillsPath, skillName);
 
     try {
       await fs.access(skillPath);
 
-      // Verify it's in user skills path (not outside)
+      // Verify it's in skills path
       if (!skillPath.startsWith(userSkillsPath)) {
         console.log(chalk.red(`\n❌ Cannot remove skill outside user directory\n`));
         return;
-      }
-
-      // Check if a built-in skill with the same name exists
-      const builtinSkillsPath = this.configManager.getSkillsPath();
-      let hasBuiltinVersion = false;
-      if (builtinSkillsPath) {
-        const builtinSkillPath = path.join(builtinSkillsPath, skillName);
-        try {
-          await fs.access(builtinSkillPath);
-          hasBuiltinVersion = true;
-        } catch {
-          // No built-in skill
-        }
       }
 
       // Remove the skill directory
       await fs.rm(skillPath, { recursive: true, force: true });
 
       console.log(chalk.green('\n✅ Skill removed successfully'));
-      if (hasBuiltinVersion) {
-        console.log(chalk.cyan('  Reverted to built-in version'));
-      }
       console.log();
 
       // Trigger system prompt update

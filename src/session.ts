@@ -8,6 +8,8 @@ import inquirer from 'inquirer';
 import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
+import os from 'os';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
@@ -223,7 +225,7 @@ export class InteractiveSession {
     this.currentAgent = agent;
   }
 
-  async start(): Promise<void> {
+  async start(initializedCount: number = 0): Promise<void> {
     // Set this session as the singleton for access from other modules
     setSingletonSession(this);
 
@@ -239,6 +241,11 @@ export class InteractiveSession {
     console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
     console.log(colors.gradient('╚════════════════════════════════════════════════════════════╝'));
     console.log(colors.textMuted('  AI-powered command-line assistant'));
+
+    // Show initialization message if skills were initialized
+    if (initializedCount > 0) {
+      console.log(colors.textMuted(`  ✨ Initialized ${initializedCount} built-in skills`));
+    }
     console.log('');
 
     await this.initialize();
@@ -1787,7 +1794,100 @@ export class InteractiveSession {
   }
 }
 
+/**
+ * Initialize built-in skills on first run.
+ * Checks if user skills directory is empty or doesn't exist,
+ * then copies all built-in skills including the protected find-skills.
+ * @returns Number of skills initialized, or 0 if no initialization was needed.
+ */
+async function initializeSkillsOnDemand(): Promise<number> {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+
+  // Get user skills directory (respects OS-specific paths)
+  const configManager = getConfigManager();
+  const userSkillsPath = configManager.getUserSkillsPath() || path.join(os.homedir(), '.xagent', 'skills');
+
+  // Check if user skills directory exists and has skills
+  let hasSkills = false;
+  if (fs.existsSync(userSkillsPath)) {
+    try {
+      const entries = fs.readdirSync(userSkillsPath, { withFileTypes: true });
+      hasSkills = entries.some(e => e.isDirectory());
+    } catch {
+      hasSkills = false;
+    }
+  }
+
+  // If skills already exist, skip initialization
+  if (hasSkills) {
+    return 0;
+  }
+
+  // Define skill source directories
+  const builtinSkillsDir = path.join(__dirname, '..', 'skills', 'skills');
+  const findSkillsDir = path.join(__dirname, '..', 'find-skills');
+
+  const skillsToInstall: { source: string; name: string }[] = [];
+
+  // Add find-skills from root directory
+  if (fs.existsSync(findSkillsDir) && fs.existsSync(path.join(findSkillsDir, 'SKILL.md'))) {
+    skillsToInstall.push({ source: findSkillsDir, name: 'find-skills' });
+  }
+
+  // Add skills from skills/skills directory
+  if (fs.existsSync(builtinSkillsDir)) {
+    const entries = fs.readdirSync(builtinSkillsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const skillPath = path.join(builtinSkillsDir, entry.name);
+        if (fs.existsSync(path.join(skillPath, 'SKILL.md'))) {
+          skillsToInstall.push({ source: skillPath, name: entry.name });
+        }
+      }
+    }
+  }
+
+  if (skillsToInstall.length === 0) {
+    return 0;
+  }
+
+  // Create user skills directory
+  fs.mkdirSync(userSkillsPath, { recursive: true });
+
+  // Copy all skills
+  for (const { source, name } of skillsToInstall) {
+    const destPath = path.join(userSkillsPath, name);
+    if (!fs.existsSync(destPath)) {
+      copyDirectoryRecursive(source, destPath);
+    }
+  }
+
+  return skillsToInstall.length;
+}
+
+function copyDirectoryRecursive(src: string, dest: string): void {
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(dest, { recursive: true });
+  }
+
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+
+    if (entry.isDirectory()) {
+      copyDirectoryRecursive(srcPath, destPath);
+    } else if (entry.isFile()) {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
 export async function startInteractiveSession(): Promise<void> {
+  // Initialize built-in skills on first run (silent, returns count)
+  const initializedCount = await initializeSkillsOnDemand();
+
   const session = new InteractiveSession();
 
   // Flag to control shutdown
@@ -1832,7 +1932,7 @@ export async function startInteractiveSession(): Promise<void> {
     process.exit(0);
   });
 
-  await session.start();
+  await session.start(initializedCount);
 }
 
 // Singleton session instance for access from other modules

@@ -178,6 +178,7 @@ program
       console.log(colors.success(`✅ Approval mode set to: ${options.approvalMode}`));
       console.log('');
     }
+
     await startInteractiveSession();
   });
 
@@ -460,9 +461,9 @@ program
 
 program
   .command('skill')
-  .description('Manage user-installed skills')
+  .description('Manage skills')
   .option('-l, --list', 'List all installed user skills')
-  .option('--add <path>', 'Install a skill from local path')
+  .option('--add <source>', 'Install a skill (auto-detects local path or remote URL)')
   .option('-r, --remove <skill-id>', 'Remove a user-installed skill')
   .action(async (options) => {
     const { getConfigManager } = await import('./config.js');
@@ -484,76 +485,102 @@ program
       console.log(colors.border(separator));
       console.log('');
 
-      const sourcePath = pathModule.resolve(options.add);
-      const skillName = pathModule.basename(sourcePath);
-      const destPath = pathModule.join(userSkillsPath, skillName);
+      const source = options.add.trim();
+      const { installSkill } = await import('./skill-installer.js');
+      const { parseSource } = await import('./skill-installer.js');
 
-      try {
-        // Check if source exists
-        await fs.access(sourcePath);
+      // Auto-detect if source is local or remote
+      const parsed = parseSource(source);
+      const isLocal = parsed.type === 'local';
 
-        // Check if SKILL.md exists
-        const skillMdPath = pathModule.join(sourcePath, 'SKILL.md');
+      if (isLocal) {
+        // Local installation
+        const sourcePath = pathModule.resolve(source);
+        const skillName = pathModule.basename(sourcePath);
+        const destPath = pathModule.join(userSkillsPath, skillName);
+
         try {
-          await fs.access(skillMdPath);
-        } catch {
-          console.log(colors.error(`SKILL.md not found in ${sourcePath}`));
-          console.log(colors.textMuted('Each skill must have a SKILL.md file'));
+          // Check if source exists
+          await fs.access(sourcePath);
+
+          // Check if SKILL.md exists
+          const skillMdPath = pathModule.join(sourcePath, 'SKILL.md');
+          try {
+            await fs.access(skillMdPath);
+          } catch {
+            console.log(colors.error(`SKILL.md not found in ${sourcePath}`));
+            console.log(colors.textMuted('Each skill must have a SKILL.md file'));
+            console.log('');
+            process.exit(1);
+          }
+
+          // Check if skill already exists in user skills path
+          try {
+            await fs.access(destPath);
+            console.log(colors.warning(`Skill "${skillName}" already installed`));
+            console.log(colors.textMuted(`Use "xagent skill -r ${skillName}" to remove it first`));
+            console.log('');
+            process.exit(1);
+          } catch {
+            // Doesn't exist, proceed
+          }
+
+          // Ensure user skills directory exists
+          await fs.mkdir(userSkillsPath, { recursive: true });
+
+          // Copy the skill
+          await copyDirectory(sourcePath, destPath);
+          console.log('');
+          console.log(colors.success(`✅ Skill "${skillName}" installed successfully`));
+          console.log(colors.textMuted(`  Location: ${destPath}`));
+          console.log(colors.textMuted(`  Type: Local`));
+          console.log('');
+
+          // Notify running xAgent to update system prompt
+          await notifySkillUpdate(userSkillsPath);
+          console.log('');
+        } catch (error: any) {
+          const { message, suggestion } = formatError(error);
+          console.log(colors.error(`Failed to install skill: ${message}`));
+          console.log(colors.textMuted(suggestion));
           console.log('');
           process.exit(1);
         }
+      } else {
+        // Remote installation
+        console.log(colors.textMuted(`  Source: ${source}`));
+        console.log(colors.textMuted(`  Type: Remote`));
+        console.log('');
 
-              // Check if skill already exists in user skills path
-              try {
-                await fs.access(destPath);
-                console.log(colors.warning(`Skill "${skillName}" already installed`));
-                console.log(colors.textMuted(`Use "xagent skill -r ${skillName}" to remove it first`));
-                console.log('');
-                process.exit(1);
-              } catch {
-                // Doesn't exist, proceed
-              }
-        
-              // Check if a built-in skill with the same name exists
-              const builtinSkillsPath = configManager.getSkillsPath();
-              if (builtinSkillsPath) {
-                const builtinSkillPath = path.join(builtinSkillsPath, skillName);
-                try {
-                  await fs.access(builtinSkillPath);
-                  console.log(colors.warning(`⚠️  A built-in skill "${skillName}" already exists`));
-                  console.log(colors.textMuted(`Your version will override the built-in skill`));
-                  console.log(colors.textMuted(`Use "xagent skill -r ${skillName}" to revert to built-in`));
-                  console.log('');
-                } catch {
-                  // No built-in skill with this name
-                }
-              }
-        // Ensure user skills directory exists
-        await fs.mkdir(userSkillsPath, { recursive: true });
+        try {
+          const result = await installSkill(source);
 
-        // Copy the skill
-        await copyDirectory(sourcePath, destPath);
-        console.log('');
-        console.log(colors.success(`✅ Skill "${skillName}" installed successfully`));
-        console.log(colors.textMuted(`  Location: ${destPath}`));
-        console.log('');
-        // console.log(colors.textMuted('Note: Dependencies will be installed automatically when needed'));
-        // console.log('');
+          if (result.success) {
+            console.log(colors.success(`✅ Skill "${result.skillName}" installed successfully`));
+            console.log(colors.textMuted(`  Location: ${result.skillPath}`));
+            console.log('');
 
-        // Notify running xAgent to update system prompt
-        await notifySkillUpdate(userSkillsPath);
-        console.log('');
-      } catch (error: any) {
-        const { message, suggestion } = formatError(error);
-        console.log(colors.error(`Failed to install skill: ${message}`));
-        console.log(colors.textMuted(suggestion));
-        console.log('');
-        process.exit(1);
+            // Notify running xAgent to update system prompt
+            await notifySkillUpdate(userSkillsPath);
+            console.log(colors.textMuted('Note: Run "xagent start" to use the new skill'));
+            console.log('');
+          } else {
+            console.log(colors.error(`Failed to install skill: ${result.error}`));
+            console.log('');
+            process.exit(1);
+          }
+        } catch (error: any) {
+          const { message, suggestion } = formatError(error);
+          console.log(colors.error(`Failed to install skill: ${message}`));
+          console.log(colors.textMuted(suggestion));
+          console.log('');
+          process.exit(1);
+        }
       }
     } else if (options.list) {
       const separator = icons.separator.repeat(40);
       console.log('');
-      console.log(colors.primaryBright(`${icons.tool} User-Installed Skills`));
+      console.log(colors.primaryBright(`${icons.tool} Skills`));
       console.log(colors.border(separator));
       console.log('');
 
@@ -598,6 +625,15 @@ program
     } else if (options.remove) {
       const skillPath = path.join(userSkillsPath, options.remove);
 
+      // Protect find-skills from deletion
+      if (options.remove === 'find-skills') {
+        console.log('');
+        console.log(colors.error(`Cannot remove protected skill: find-skills`));
+        console.log(colors.textMuted('find-skills is a built-in skill that helps you discover and install other skills.'));
+        console.log('');
+        process.exit(1);
+      }
+
       try {
         await fs.access(skillPath);
         // Verify it's in user skills path (not built-in)
@@ -608,28 +644,11 @@ program
           process.exit(1);
         }
 
-        // Check if a built-in skill with the same name exists
-        const builtinSkillsPath = configManager.getSkillsPath();
-        let hasBuiltinVersion = false;
-        if (builtinSkillsPath) {
-          const builtinSkillPath = path.join(builtinSkillsPath, options.remove);
-          try {
-            await fs.access(builtinSkillPath);
-            hasBuiltinVersion = true;
-          } catch {
-            // No built-in skill
-          }
-        }
-
         // Remove the skill directory
         await fs.rm(skillPath, { recursive: true, force: true });
         console.log('');
-        if (hasBuiltinVersion) {
-          console.log(colors.success(`✅ Skill ${options.remove} removed successfully`));
-          console.log(colors.textMuted(`Reverted to built-in version`));
-        } else {
-          console.log(colors.success(`✅ Skill ${options.remove} removed successfully`));
-        }
+        console.log(colors.success(`✅ Skill ${options.remove} removed successfully`));
+        console.log('');
 
         // Notify running xAgent to update system prompt
         await notifySkillUpdate(userSkillsPath);
@@ -644,9 +663,15 @@ program
       // Show help
       console.log('');
       console.log(colors.textMuted('Usage:'));
-      console.log(`  ${colors.primaryBright('xagent skill -l')}           ${colors.textDim('| List all user-installed skills')}`);
-      console.log(`  ${colors.primaryBright('xagent skill --add <path>')} ${colors.textDim('| Add a skill from local path')}`);
-      console.log(`  ${colors.primaryBright('xagent skill -r <name>')}    ${colors.textDim('| Remove a user-installed skill')}`);
+      console.log(`  ${colors.primaryBright('xagent skill -l')}                    ${colors.textDim('| List all skills')}`);
+      console.log(`  ${colors.primaryBright('xagent skill --add <source>')}        ${colors.textDim('| Install skill (auto-detects local or remote)')}`);
+      console.log(`  ${colors.primaryBright('xagent skill -r <name>')}             ${colors.textDim('| Remove a skill')}`);
+      console.log('');
+      console.log(colors.textMuted('Examples:'));
+      console.log(`  ${colors.primaryBright('xagent skill --add ./my-skill')}           ${colors.textDim('| Install from local path')}`);
+      console.log(`  ${colors.primaryBright('xagent skill --add owner/repo')}          ${colors.textDim('| Install from GitHub')}`);
+      console.log(`  ${colors.primaryBright('xagent skill --add https://github.com/owner/repo')}`);
+      console.log(`  ${colors.primaryBright('xagent skill --add https://docs.example.com/skill.md')}`);
       console.log('');
       console.log(colors.textMuted('To install a new skill, use the interactive command:'));
       console.log(`  ${colors.primaryBright('/skills add')}`);

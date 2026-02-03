@@ -1991,6 +1991,14 @@ export async function startInteractiveSession(): Promise<void> {
     process.exit(0);
   });
 
+  // Check for updates on startup
+  try {
+    const { checkUpdatesOnStartup } = await import('./update.js');
+    await checkUpdatesOnStartup();
+  } catch (error) {
+    // Silently ignore update check failures
+  }
+
   await session.start();
 }
 

@@ -2,6 +2,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { confirm } from '@clack/prompts';
 import { startInteractiveSession } from './session.js';
 import { getConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
@@ -756,6 +757,53 @@ program
       console.log(`  ${colors.primaryBright('xagent memory --clean')}          ${colors.textDim('| Clean all project memories (keep global)')}`);
       console.log(`  ${colors.primaryBright('xagent memory --clean-project')}  ${colors.textDim('| Clean current project memory only')}`);
       console.log(`  ${colors.primaryBright('xagent memory --clean-all')}      ${colors.textDim('| Clean ALL memories (including global)')}`);
+      console.log('');
+    }
+  });
+
+program
+  .command('update')
+  .description('Check for updates and update xAgent CLI')
+  .action(async () => {
+    const separator = icons.separator.repeat(40);
+    console.log('');
+    console.log(colors.primaryBright(`${icons.rocket} Update Check`));
+    console.log(colors.border(separator));
+    console.log('');
+
+    try {
+      const { getUpdateManager } = await import('./update.js');
+      const updateManager = getUpdateManager();
+      const versionInfo = await updateManager.checkForUpdates();
+
+      console.log(`  ${icons.info}  ${colors.textMuted('Current version:')} ${colors.primaryBright(versionInfo.currentVersion)}`);
+      console.log(`  ${icons.code} ${colors.textMuted('Latest version:')} ${colors.primaryBright(versionInfo.latestVersion)}`);
+      console.log('');
+
+      if (versionInfo.updateAvailable) {
+        console.log(colors.success(`  📦 A new version is available!`));
+        console.log('');
+
+        if (versionInfo.releaseNotes) {
+          console.log(colors.textMuted('  Release Notes:'));
+          console.log(colors.textDim(`  ${versionInfo.releaseNotes}`));
+          console.log('');
+        }
+
+        const shouldUpdate = await confirm({
+          message: 'Do you want to update now?',
+        });
+
+        if (shouldUpdate === true) {
+          console.log('');
+          await updateManager.autoUpdate();
+        }
+      } else {
+        console.log(colors.success(`  ✅ You are using the latest version`));
+        console.log('');
+      }
+    } catch (error: any) {
+      console.log(colors.error(`  ❌ Failed to check for updates: ${error.message}`));
       console.log('');
     }
   });

@@ -153,6 +153,9 @@ export class SlashCommandHandler {
       case 'compress':
         await this.handleCompress(args);
         break;
+      case 'update':
+        await this.handleUpdate();
+        break;
       default:
         logger.warn(`Unknown command: /${command}`, 'Type /help for available commands');
     }
@@ -329,6 +332,12 @@ export class SlashCommandHandler {
         desc: 'Show version information',
         detail: 'View version and related information of XAGENT CLI',
         example: '/about',
+      },
+      {
+        cmd: '/update',
+        desc: 'Check for updates',
+        detail: 'Check for new versions and update xAgent CLI',
+        example: '/update',
       },
     ]);
 
@@ -1463,6 +1472,51 @@ export class SlashCommandHandler {
     logger.blank();
     logger.link('Documentation', 'https://platform.xagent.cn/');
     logger.link('GitHub', 'https://github.com/xagent-ai/xagent-cli');
+  }
+
+  private async handleUpdate(): Promise<void> {
+    const separator = icons.separator.repeat(Math.min(40, process.stdout.columns || 80));
+
+    console.log('');
+    console.log(colors.primaryBright(`${icons.rocket} Update Check`));
+    console.log(colors.border(separator));
+    console.log('');
+
+    try {
+      const { getUpdateManager } = await import('./update.js');
+      const updateManager = getUpdateManager();
+      const versionInfo = await updateManager.checkForUpdates();
+
+      console.log(`  ${icons.info}  ${colors.textMuted('Current version:')} ${colors.primaryBright(versionInfo.currentVersion)}`);
+      console.log(`  ${icons.code} ${colors.textMuted('Latest version:')} ${colors.primaryBright(versionInfo.latestVersion)}`);
+      console.log('');
+
+      if (versionInfo.updateAvailable) {
+        console.log(colors.success(`  📦 A new version is available!`));
+        console.log('');
+
+        if (versionInfo.releaseNotes) {
+          console.log(colors.textMuted('  Release Notes:'));
+          console.log(colors.textDim(`  ${versionInfo.releaseNotes}`));
+          console.log('');
+        }
+
+        const shouldUpdate = await confirm({
+          message: 'Do you want to update now?',
+        });
+
+        if (shouldUpdate === true) {
+          console.log('');
+          await updateManager.autoUpdate();
+        }
+      } else {
+        console.log(colors.success(`  ✅ You are using the latest version`));
+        console.log('');
+      }
+    } catch (error: any) {
+      console.log(colors.error(`  ❌ Failed to check for updates: ${error.message}`));
+      console.log('');
+    }
   }
 
   private async handleCompress(args: string[]): Promise<void> {

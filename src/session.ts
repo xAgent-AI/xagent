@@ -366,6 +366,28 @@ export class InteractiveSession {
 
       // Initialize AI clients and set contextCompressor appropriately
       if (selectedAuthType === AuthType.OAUTH_XAGENT) {
+        // Remote mode: fetch default models if not set
+        const currentLlm = this.configManager.get('remote_llmModelName');
+        const currentVlm = this.configManager.get('remote_vlmModelName');
+        
+        if (!currentLlm || !currentVlm) {
+          const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
+          
+          try {
+            const defaults = await RemoteAIClient.fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
+
+            if (!currentLlm && defaults.llm?.name) {
+              this.configManager.set('remote_llmModelName', defaults.llm.name);
+            }
+            if (!currentVlm && defaults.vlm?.name) {
+              this.configManager.set('remote_vlmModelName', defaults.vlm.name);
+            }
+            this.configManager.save('global');
+          } catch (error: any) {
+            logger.debug('[SESSION] Failed to fetch default models:', error.message);
+          }
+        }
+
         // Remote mode: create RemoteAIClient and use it for context compression
         const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
         this.remoteAIClient = new RemoteAIClient(

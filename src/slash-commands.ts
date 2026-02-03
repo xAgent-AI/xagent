@@ -3,11 +3,10 @@ import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'fs/promises';
 import path from 'path';
-import https from 'https';
-import axios from 'axios';
 import inquirer from 'inquirer';
 import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
+import { RemoteAIClient } from './remote-ai-client.js';
 import { getToolRegistry } from './tools.js';
 import { getAgentManager } from './agents.js';
 import { getMemoryManager, MemoryFile } from './memory.js';
@@ -24,7 +23,6 @@ import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { AuthService, selectAuthType } from './auth.js';
-import { RemoteAIClient } from './remote-ai-client.js';
 
 const logger = getLogger();
 
@@ -479,25 +477,20 @@ export class SlashCommandHandler {
           // Set default remote model settings if not already set
           // Fetch default models from /models/default endpoint
           const webBaseUrl = newAuthConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-          const httpsAgent = new https.Agent({ rejectUnauthorized: false });
           let defaultLlmName = '';
           let defaultVlmName = '';
 
           try {
             console.log(chalk.cyan('   Fetching default models from remote server...'));
-            const defaultResponse = await axios.get(`${webBaseUrl}/api/models/default`, {
-              headers: { 'Authorization': `Bearer ${newAuthConfig.apiKey}` },
-              httpsAgent,
-              timeout: 10000
-            });
+            const defaults = await RemoteAIClient.fetchDefaultModels(newAuthConfig.apiKey || '', webBaseUrl);
 
-            if (defaultResponse.data?.llm?.name) {
-              defaultLlmName = defaultResponse.data.llm.name;
-              console.log(chalk.cyan(`   Default LLM: ${defaultResponse.data.llm.displayName || defaultLlmName}`));
+            if (defaults.llm?.name) {
+              defaultLlmName = defaults.llm.name;
+              console.log(chalk.cyan(`   Default LLM: ${defaults.llm.displayName || defaultLlmName}`));
             }
-            if (defaultResponse.data?.vlm?.name) {
-              defaultVlmName = defaultResponse.data.vlm.name;
-              console.log(chalk.cyan(`   Default VLM: ${defaultResponse.data.vlm.displayName || defaultVlmName}`));
+            if (defaults.vlm?.name) {
+              defaultVlmName = defaults.vlm.name;
+              console.log(chalk.cyan(`   Default VLM: ${defaults.vlm.displayName || defaultVlmName}`));
             }
           } catch (error: any) {
             console.log(chalk.yellow(`   ⚠️  Failed to fetch default models: ${error.message}`));
@@ -643,13 +636,7 @@ export class SlashCommandHandler {
       if (!defaults) {
         try {
           const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-          const httpsAgent = new https.Agent({ rejectUnauthorized: false });
-          const response = await axios.get(`${webBaseUrl}/api/models/default`, {
-            headers: { 'Authorization': `Bearer ${authConfig.apiKey}` },
-            httpsAgent,
-            timeout: 10000
-          });
-          defaults = response.data;
+          defaults = await RemoteAIClient.fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
         } catch (error: any) {
           console.log(chalk.yellow(`   ⚠️  Failed to fetch default models: ${error.message}`));
         }

@@ -738,6 +738,22 @@ export class RemoteAIClient extends EventEmitter {
   }
 
   /**
+   * Static method to fetch default models - used when RemoteAIClient is not yet available
+   */
+  static async fetchDefaultModels(authToken: string, webBaseUrl: string): Promise<{ llm: ModelInfo; vlm: ModelInfo }> {
+    const url = `${webBaseUrl}/api/models/default`;
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+    
+    const response = await axios.get(url, {
+      headers: { 'Authorization': `Bearer ${authToken}` },
+      httpsAgent,
+      timeout: 10000
+    });
+
+    return response.data;
+  }
+
+  /**
    * Compress context - generate summary for long conversations
    * Uses separate /api/agent/compress endpoint that doesn't require taskId
    */

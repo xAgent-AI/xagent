@@ -2,12 +2,11 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import axios from 'axios';
-import https from 'https';
 import { startInteractiveSession } from './session.js';
 import { getConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { AuthType } from './types.js';
+import { RemoteAIClient } from './remote-ai-client.js';
 import { getAgentManager } from './agents.js';
 import { getMCPManager } from './mcp.js';
 import { getLogger, setConfigProvider } from './logger.js';
@@ -178,25 +177,20 @@ program
       // Set default remote model settings if not already set
       if (authType === AuthType.OAUTH_XAGENT) {
         const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-        const httpsAgent = new https.Agent({ rejectUnauthorized: false });
         let defaultLlmName = '';
         let defaultVlmName = '';
 
         try {
           console.log(colors.textMuted('   Fetching default models from remote server...'));
-          const defaultResponse = await axios.get(`${webBaseUrl}/api/models/default`, {
-            headers: { 'Authorization': `Bearer ${authConfig.apiKey}` },
-            httpsAgent,
-            timeout: 10000
-          });
+          const defaults = await RemoteAIClient.fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
 
-          if (defaultResponse.data?.llm?.name) {
-            defaultLlmName = defaultResponse.data.llm.name;
-            console.log(colors.textMuted(`   Default LLM: ${defaultResponse.data.llm.displayName || defaultLlmName}`));
+          if (defaults.llm?.name) {
+            defaultLlmName = defaults.llm.name;
+            console.log(colors.textMuted(`   Default LLM: ${defaults.llm.displayName || defaultLlmName}`));
           }
-          if (defaultResponse.data?.vlm?.name) {
-            defaultVlmName = defaultResponse.data.vlm.name;
-            console.log(colors.textMuted(`   Default VLM: ${defaultResponse.data.vlm.displayName || defaultVlmName}`));
+          if (defaults.vlm?.name) {
+            defaultVlmName = defaults.vlm.name;
+            console.log(colors.textMuted(`   Default VLM: ${defaults.vlm.displayName || defaultVlmName}`));
           }
         } catch (error: any) {
           console.log(colors.textMuted(`   ⚠️  Failed to fetch default models: ${error.message}`));

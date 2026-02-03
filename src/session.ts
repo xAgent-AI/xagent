@@ -49,6 +49,7 @@ import {
   CompressionResult,
 } from './context-compressor.js';
 import { Logger, LogLevel, getLogger } from './logger.js';
+import { ensureTtySane, setupEscKeyHandler } from './terminal.js';
 
 const logger = getLogger();
 
@@ -235,18 +236,21 @@ export class InteractiveSession {
     await this.initialize();
     this.showWelcomeMessage();
 
+    // Set up ESC key handler using the terminal module
+    // This avoids conflicts with readline and provides clean ESC detection
+    let escCleanup: (() => void) | undefined;
+    if (process.stdin.isTTY) {
+      escCleanup = setupEscKeyHandler(() => {
+        if ((this as any)._isOperationInProgress) {
+          // An operation is running, let it be cancelled
+          this.cancellationManager.cancel();
+        }
+        // No operation running, ignore ESC
+      });
+    }
+
     // Track if an operation is in progress
     (this as any)._isOperationInProgress = false;
-
-    // Listen for ESC cancellation - only cancel operations, don't exit the program
-    const cancelHandler = () => {
-      if ((this as any)._isOperationInProgress) {
-        // An operation is running, let it be cancelled
-        return;
-      }
-      // No operation running, ignore ESC or show a message
-    };
-    this.cancellationManager.on('cancelled', cancelHandler);
 
     this.promptLoop();
 
@@ -662,19 +666,20 @@ export class InteractiveSession {
 
   private showRemoteModelInfo(): void {
     const authConfig = this.configManager.getAuthConfig();
+    const isRemote = authConfig.type === AuthType.OAUTH_XAGENT;
 
-    if (authConfig.type === AuthType.OAUTH_XAGENT) {
-      const llmModel = authConfig.remote_llmModelName || 'Not set';
-      const vlmModel = authConfig.remote_vlmModelName || 'Not set';
-      console.log(colors.textMuted('Remote Models:'));
-      console.log(`  LLM: ${llmModel}`);
-      console.log(`  VLM: ${vlmModel}`);
+    if (isRemote) {
+      const llmModel = authConfig.remote_llmModelName || colors.textMuted('Not set');
+      const vlmModel = authConfig.remote_vlmModelName || colors.textMuted('Not set');
+      console.log(colors.textMuted(`${icons.brain} Remote Models:`));
+      console.log(`  ${colors.primaryBright(icons.arrowRight)} ${colors.info('LLM:')} ${llmModel}`);
+      console.log(`  ${colors.primaryBright(icons.arrowRight)} ${colors.info('VLM:')} ${vlmModel}`);
     } else {
-      const modelName = authConfig.modelName || 'Not set';
-      const guiSubagentModel = this.configManager.get('guiSubagentModel') || 'Not set';
-      console.log(colors.textMuted('Local Models:'));
-      console.log(`  LLM: ${modelName}`);
-      console.log(`  VLM: ${guiSubagentModel}`);
+      const modelName = authConfig.modelName || colors.textMuted('Not set');
+      const guiSubagentModel = this.configManager.get('guiSubagentModel') || colors.textMuted('Not set');
+      console.log(colors.textMuted(`${icons.brain} Local Models:`));
+      console.log(`  ${colors.primaryBright(icons.arrowRight)} ${colors.info('LLM:')} ${modelName}`);
+      console.log(`  ${colors.primaryBright(icons.arrowRight)} ${colors.info('VLM:')} ${guiSubagentModel}`);
     }
     console.log('');
   }
@@ -690,12 +695,9 @@ export class InteractiveSession {
       this.rl.close();
     }
 
-    // Enable raw mode BEFORE emitKeypressEvents for better ESC detection
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-    }
-    process.stdin.resume();
-    readline.emitKeypressEvents(process.stdin);
+    // Ensure TTY is in proper state for input handling
+    // This handles any state left by @clack/prompts or other interactions
+    ensureTtySane();
 
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -2117,6 +2119,14 @@ export async function startInteractiveSession(): Promise<void> {
     // Force exit
     process.exit(0);
   });
+
+  // Check for updates on startup
+  try {
+    const { checkUpdatesOnStartup } = await import('./update.js');
+    await checkUpdatesOnStartup();
+  } catch (error) {
+    // Silently ignore update check failures
+  }
 
   await session.start();
 }

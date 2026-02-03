@@ -49,6 +49,7 @@ import {
   CompressionResult,
 } from './context-compressor.js';
 import { Logger, LogLevel, getLogger } from './logger.js';
+import { ensureTtySane, setupEscKeyHandler } from './terminal.js';
 
 const logger = getLogger();
 
@@ -235,18 +236,21 @@ export class InteractiveSession {
     await this.initialize();
     this.showWelcomeMessage();
 
+    // Set up ESC key handler using the terminal module
+    // This avoids conflicts with readline and provides clean ESC detection
+    let escCleanup: (() => void) | undefined;
+    if (process.stdin.isTTY) {
+      escCleanup = setupEscKeyHandler(() => {
+        if ((this as any)._isOperationInProgress) {
+          // An operation is running, let it be cancelled
+          this.cancellationManager.cancel();
+        }
+        // No operation running, ignore ESC
+      });
+    }
+
     // Track if an operation is in progress
     (this as any)._isOperationInProgress = false;
-
-    // Listen for ESC cancellation - only cancel operations, don't exit the program
-    const cancelHandler = () => {
-      if ((this as any)._isOperationInProgress) {
-        // An operation is running, let it be cancelled
-        return;
-      }
-      // No operation running, ignore ESC or show a message
-    };
-    this.cancellationManager.on('cancelled', cancelHandler);
 
     this.promptLoop();
 
@@ -690,12 +694,9 @@ export class InteractiveSession {
       this.rl.close();
     }
 
-    // Enable raw mode BEFORE emitKeypressEvents for better ESC detection
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-    }
-    process.stdin.resume();
-    readline.emitKeypressEvents(process.stdin);
+    // Ensure TTY is in proper state for input handling
+    // This handles any state left by @clack/prompts or other interactions
+    ensureTtySane();
 
     this.rl = readline.createInterface({
       input: process.stdin,

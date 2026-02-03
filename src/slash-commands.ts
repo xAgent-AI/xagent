@@ -1,3 +1,4 @@
+import readline from 'readline';
 import { select, confirm, text } from '@clack/prompts';
 import chalk from 'chalk';
 import ora from 'ora';
@@ -21,6 +22,7 @@ import {
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
+import { ensureTtySane } from './terminal.js';
 import { AuthService, selectAuthType } from './auth.js';
 
 const logger = getLogger();

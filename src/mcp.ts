@@ -467,16 +467,44 @@ export class MCPServer {
       if (contentType.includes('text/event-stream') || 
           (typeof response.data === 'string' && response.data.startsWith('id:'))) {
         // Parse SSE format: "id:1\nevent:message\ndata:{...}"
-        const sseData = response.data;
-        const dataMatch = sseData.match(/data:(.+)$/m);
-        if (dataMatch) {
-          try {
-            resultData = JSON.parse(dataMatch[1].trim());
-          } catch (e: any) {
-            throw new Error(`Failed to parse SSE data: ${e.message}`);
+        // MCP SSE responses may contain multiple data blocks, need to find the one with the result
+        const responseStr = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+        const dataMatches = responseStr.match(/data:(.+)/g);
+        
+        if (dataMatches) {
+          // Look for the data block that contains the matching id or result
+          for (const dataMatch of dataMatches) {
+            try {
+              const dataContent = dataMatch.replace('data:', '').trim();
+              const parsed = JSON.parse(dataContent);
+              // Find the data block that has the matching id or result
+              if (parsed.id === message.id || parsed.result) {
+                resultData = parsed;
+                break;
+              }
+            } catch (e) {
+              continue;
+            }
           }
-        } else {
-          throw new Error('No data field found in SSE response');
+        }
+        
+        // Fallback: try to parse the last data block if no matching one found
+        if (!resultData) {
+          const dataMatch = responseStr.match(/data:({.*})/);
+          if (dataMatch) {
+            try {
+              resultData = JSON.parse(dataMatch[1]);
+            } catch (e) {
+              throw new Error('Failed to parse SSE response');
+            }
+          } else if (!resultData) {
+            // Try to parse the entire response as JSON
+            try {
+              resultData = JSON.parse(responseStr);
+            } catch (e) {
+              throw new Error('No valid data field found in SSE response');
+            }
+          }
         }
       } else {
         // Direct JSON response
@@ -489,6 +517,12 @@ export class MCPServer {
         throw new Error(`MCP server error: ${errorMsg}`);
       }
 
+      // Return the content array from result (MCP result format: { content: [{type: 'text', text: '...'}] })
+      if (resultData?.result?.content) {
+        return resultData.result.content;
+      }
+      
+      // Fallback: return result as-is if no content field
       return resultData?.result;
     } catch (error: any) {
       throw new Error(`MCP Tool call failed: ${error.message}`);

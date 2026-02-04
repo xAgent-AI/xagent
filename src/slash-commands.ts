@@ -1,10 +1,12 @@
-import inquirer from 'inquirer';
+import readline from 'readline';
+import { select, confirm, text } from '@clack/prompts';
 import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'fs/promises';
 import path from 'path';
 import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
+import { RemoteAIClient } from './remote-ai-client.js';
 import { getToolRegistry } from './tools.js';
 import { getAgentManager } from './agents.js';
 import { getMemoryManager, MemoryFile } from './memory.js';
@@ -12,10 +14,15 @@ import { getMCPManager, MCPServer } from './mcp.js';
 import { getCheckpointManager } from './checkpoint.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { getLogger } from './logger.js';
-import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
+import {
+  getContextCompressor,
+  ContextCompressor,
+  CompressionResult,
+} from './context-compressor.js';
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
+import { ensureTtySane } from './terminal.js';
 import { AuthService, selectAuthType } from './auth.js';
 
 const logger = getLogger();
@@ -32,7 +39,7 @@ export class SlashCommandHandler {
   private onClearCallback: (() => void) | null = null;
   private onSystemPromptUpdate: (() => Promise<void>) | null = null;
   private onConfigUpdate: (() => void) | null = null;
-  private remoteAIClient: any = null;  // Reference to InteractiveSession's remoteAIClient
+  private remoteAIClient: any = null; // Reference to InteractiveSession's remoteAIClient
 
   constructor() {
     this.configManager = getConfigManager(process.cwd());
@@ -126,6 +133,8 @@ export class SlashCommandHandler {
         break;
       case 'provider':
         await this.handleProvider();
+      case 'model':
+        await this.handleModel();
         break;
       case 'memory':
         await this.handleMemory(args);
@@ -151,9 +160,15 @@ export class SlashCommandHandler {
       case 'compress':
         await this.handleCompress(args);
         break;
+      case 'update':
+        await this.handleUpdate();
+        break;
       default:
         logger.warn(`Unknown command: /${command}`, 'Type /help for available commands');
     }
+
+    // Ensure stdin is in raw mode for proper input handling after @clack/prompts usage
+    ensureTtySane();
 
     return true;
   }
@@ -162,18 +177,29 @@ export class SlashCommandHandler {
     const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80));
 
     console.log('');
-    console.log(colors.primaryBright('╔════════════════════════════════════════════════════════════╗'));
+    console.log(
+      colors.primaryBright('╔════════════════════════════════════════════════════════════╗')
+    );
     console.log(colors.primaryBright('║') + ' '.repeat(56) + colors.primaryBright('║'));
-    console.log(' '.repeat(14) + colors.gradient('📚 XAGENT CLI Help') + ' '.repeat(31) + colors.primaryBright('║'));
+    console.log(
+      ' '.repeat(14) +
+        colors.gradient('📚 XAGENT CLI Help') +
+        ' '.repeat(31) +
+        colors.primaryBright('║')
+    );
     console.log(colors.primaryBright('║') + ' '.repeat(56) + colors.primaryBright('║'));
-    console.log(colors.primaryBright('╚════════════════════════════════════════════════════════════╝'));
+    console.log(
+      colors.primaryBright('╚════════════════════════════════════════════════════════════╝')
+    );
     console.log('');
 
     // Shortcuts
     console.log(colors.accent('Shortcuts'));
     console.log(colors.border(separator));
     console.log('');
-    console.log(colors.textDim(`  ${colors.accent('!')}  - ${colors.textMuted('Enter bash mode')}`));
+    console.log(
+      colors.textDim(`  ${colors.accent('!')}  - ${colors.textMuted('Enter bash mode')}`)
+    );
     console.log(colors.textDim(`  ${colors.accent('/')}  - ${colors.textMuted('Commands')}`));
     console.log(colors.textDim(`  ${colors.accent('@')}  - ${colors.textMuted('File paths')}`));
     console.log('');
@@ -184,20 +210,20 @@ export class SlashCommandHandler {
         cmd: '/help [command]',
         desc: 'Show help information',
         detail: 'View all available commands or detailed description of specific command',
-        example: '/help\n/help mode'
+        example: '/help\n/help mode',
       },
       {
         cmd: '/clear',
         desc: 'Clear conversation history',
         detail: 'Clear all conversation records of current session, start new conversation',
-        example: '/clear'
+        example: '/clear',
       },
       {
         cmd: '/exit',
         desc: 'Exit program',
         detail: 'Safely exit XAGENT CLI',
-        example: '/exit'
-      }
+        example: '/exit',
+      },
     ]);
 
     // Project Management
@@ -205,15 +231,16 @@ export class SlashCommandHandler {
       {
         cmd: '/init',
         desc: 'Initialize project context',
-        detail: 'Create XAGENT.md file in current directory, used to store project context information',
-        example: '/init'
+        detail:
+          'Create XAGENT.md file in current directory, used to store project context information',
+        example: '/init',
       },
       {
         cmd: '/memory [show|clear]',
         desc: 'Manage project memory',
         detail: 'View or clear memory (global, current, all, or filename)',
-        example: '/memory show\n/memory clear\n/memory clear global\n/memory clear all'
-      }
+        example: '/memory show\n/memory clear\n/memory clear global\n/memory clear all',
+      },
     ]);
 
     // Authentication & Configuration
@@ -222,7 +249,7 @@ export class SlashCommandHandler {
         cmd: '/auth',
         desc: 'Configure authentication information',
         detail: 'Change or view current authentication configuration',
-        example: '/auth'
+        example: '/auth',
       },
       {
         cmd: '/mode [mode]',
@@ -234,14 +261,14 @@ export class SlashCommandHandler {
           'accept_edits - Automatically accept edit operations',
           'plan - Plan before executing',
           'default - Safe execution, requires confirmation',
-          'smart - Smart approval (recommended)'
-        ]
+          'smart - Smart approval (recommended)',
+        ],
       },
       {
         cmd: '/think [on|off|display]',
         desc: 'Control thinking mode',
         detail: 'Enable/disable AI thinking process display',
-        example: '/think on\n/think off\n/think display compact'
+        example: '/think on\n/think off\n/think display compact',
       },
       // {
       //   cmd: '/language [zh|en]',
@@ -253,8 +280,8 @@ export class SlashCommandHandler {
         cmd: '/theme',
         desc: 'Switch theme',
         detail: 'Change UI theme style',
-        example: '/theme'
-      }
+        example: '/theme',
+      },
     ]);
 
     // Feature Extensions
@@ -263,13 +290,13 @@ export class SlashCommandHandler {
         cmd: '/agents [list|online|install|remove]',
         desc: 'Manage sub-agents',
         detail: 'View, install or remove specialized AI sub-agents',
-        example: '/agents list\n/agents online\n/agents install explore-agent'
+        example: '/agents list\n/agents online\n/agents install explore-agent',
       },
       {
         cmd: '/mcp [list|add|remove|refresh]',
         desc: 'Manage MCP servers',
         detail: 'Manage Model Context Protocol servers',
-        example: '/mcp list\n/mcp add server-name'
+        example: '/mcp list\n/mcp add server-name',
       },
       {
         cmd: '/skills [list|add|remove]',
@@ -284,11 +311,17 @@ export class SlashCommandHandler {
         example: '/vlm'
       },
       {
+        cmd: '/model',
+        desc: 'Configure LLM/VLM models',
+        detail: 'Configure or switch LLM and VLM models for remote mode',
+        example: '/model',
+      },
+      {
         cmd: '/tools [verbose|simple]',
         desc: 'Manage tool display',
         detail: 'View available tools or switch tool call display mode',
-        example: '/tools\n/tools verbose\n/tools simple'
-      }
+        example: '/tools\n/tools verbose\n/tools simple',
+      },
     ]);
 
     // Advanced Features
@@ -297,26 +330,33 @@ export class SlashCommandHandler {
         cmd: '/restore',
         desc: 'Restore from checkpoint',
         detail: 'Restore conversation state from historical checkpoints',
-        example: '/restore'
+        example: '/restore',
       },
       {
         cmd: '/compress [on|off|max_message|max_token|exec]',
         desc: 'Manage context compression',
         detail: 'Configure compression settings or execute compression manually',
-        example: '/compress\n/compress exec\n/compress on\n/compress max_message 50\n/compress max_token 1500000'
+        example:
+          '/compress\n/compress exec\n/compress on\n/compress max_message 50\n/compress max_token 1500000',
       },
       {
         cmd: '/stats',
         desc: 'Show session statistics',
         detail: 'View statistics information of current session',
-        example: '/stats'
+        example: '/stats',
       },
       {
         cmd: '/about',
         desc: 'Show version information',
         detail: 'View version and related information of XAGENT CLI',
-        example: '/about'
-      }
+        example: '/about',
+      },
+      {
+        cmd: '/update',
+        desc: 'Check for updates',
+        detail: 'Check for new versions and update xAgent CLI',
+        example: '/update',
+      },
     ]);
 
     // Keyboard Shortcuts
@@ -330,13 +370,16 @@ export class SlashCommandHandler {
     console.log('');
   }
 
-  private showHelpCategory(title: string, commands: Array<{
-    cmd: string;
-    desc: string;
-    detail: string;
-    example: string;
-    modes?: string[];
-  }>): void {
+  private showHelpCategory(
+    title: string,
+    commands: Array<{
+      cmd: string;
+      desc: string;
+      detail: string;
+      example: string;
+      modes?: string[];
+    }>
+  ): void {
     const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80));
 
     console.log('');
@@ -345,20 +388,20 @@ export class SlashCommandHandler {
     console.log(colors.border(separator));
     console.log('');
 
-    commands.forEach(cmd => {
+    commands.forEach((cmd) => {
       console.log(colors.primaryBright(`  ${cmd.cmd}`));
       console.log(colors.textDim(`    ${cmd.desc}`));
       console.log(colors.textMuted(`    ${cmd.detail}`));
 
       if (cmd.modes) {
         console.log(colors.textDim(`    Available modes:`));
-        cmd.modes.forEach(mode => {
+        cmd.modes.forEach((mode) => {
           console.log(colors.textDim(`      • ${mode}`));
         });
       }
 
       console.log(colors.accent(`    Examples:`));
-      cmd.example.split('\n').forEach(ex => {
+      cmd.example.split('\n').forEach((ex) => {
         console.log(colors.codeText(`      ${ex}`));
       });
       console.log('');
@@ -401,7 +444,8 @@ export class SlashCommandHandler {
 
     // Show current authentication configuration
     const authConfig = this.configManager.getAuthConfig();
-    const currentType = authConfig.type === AuthType.OAUTH_XAGENT ? 'xAgent (Remote)' : 'Third-party API (Local)';
+    const currentType =
+      authConfig.type === AuthType.OAUTH_XAGENT ? 'xAgent (Remote)' : 'Third-party API (Local)';
 
     console.log(chalk.cyan('\n📋 Current Authentication Configuration:\n'));
     console.log(`  ${chalk.yellow('Mode:')} ${currentType}`);
@@ -413,17 +457,13 @@ export class SlashCommandHandler {
     }
     console.log('');
 
-    const { action } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'action',
-        message: 'Select action:',
-        choices: [
-          { name: 'Switch authentication method', value: 'switch' },
-          { name: 'Back', value: 'back' }
-        ]
-      }
-    ]);
+    const action = await select({
+      message: 'Select action:',
+      options: [
+        { value: 'switch', label: 'Switch authentication method' },
+        { value: 'back', label: 'Back' },
+      ],
+    });
 
     if (action === 'back') {
       return;
@@ -431,16 +471,11 @@ export class SlashCommandHandler {
 
     if (action === 'switch') {
       // Use the same selection UI as initial setup
-      const { confirmSwitch } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'confirmSwitch',
-          message: `Switch from "${currentType}" to another authentication method?`,
-          default: false
-        }
-      ]);
+      const confirmSwitch = await confirm({
+        message: `Switch from "${currentType}" to another authentication method?`,
+      });
 
-      if (!confirmSwitch) {
+      if (confirmSwitch === false || confirmSwitch === undefined) {
         return;
       }
 
@@ -453,7 +488,7 @@ export class SlashCommandHandler {
           type: AuthType.OAUTH_XAGENT,
           apiKey: '',
           baseUrl: '',
-          xagentApiBaseUrl: authConfig.xagentApiBaseUrl
+          xagentApiBaseUrl: authConfig.xagentApiBaseUrl,
         });
 
         const success = await authService.authenticate();
@@ -468,15 +503,33 @@ export class SlashCommandHandler {
             xagentApiBaseUrl: newAuthConfig.xagentApiBaseUrl,
             guiSubagentModel: '',
             guiSubagentBaseUrl: 'https://www.xagent-colife.net/v3',
-            guiSubagentApiKey: ''
+            guiSubagentApiKey: '',
           });
-          // Set default remote provider settings if not already set
-          if (!this.configManager.get('remote_llmProvider')) {
-            this.configManager.set('remote_llmProvider', 'Default');
+          // Set default remote model settings if not already set
+          // Fetch default models from /models/default endpoint
+          const webBaseUrl = newAuthConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
+          let defaultLlmName = '';
+          let defaultVlmName = '';
+
+          try {
+            console.log(chalk.cyan('   Fetching default models from remote server...'));
+            const defaults = await RemoteAIClient.fetchDefaultModels(newAuthConfig.apiKey || '', webBaseUrl);
+
+            if (defaults.llm?.name) {
+              defaultLlmName = defaults.llm.name;
+              console.log(chalk.cyan(`   Default LLM: ${defaults.llm.displayName || defaultLlmName}`));
+            }
+            if (defaults.vlm?.name) {
+              defaultVlmName = defaults.vlm.name;
+              console.log(chalk.cyan(`   Default VLM: ${defaults.vlm.displayName || defaultVlmName}`));
+            }
+          } catch (error: any) {
+            console.log(chalk.yellow(`   ⚠️  Failed to fetch default models: ${error.message}`));
+            console.log(chalk.yellow('   ⚠️  Use /model command to select models manually.'));
           }
-          if (!this.configManager.get('remote_vlmProvider')) {
-            this.configManager.set('remote_vlmProvider', 'Default');
-          }
+
+          this.configManager.set('remote_llmModelName', defaultLlmName);
+          this.configManager.set('remote_vlmModelName', defaultVlmName);
           this.configManager.save('global');
 
           // Notify InteractiveSession to update aiClient config
@@ -493,7 +546,7 @@ export class SlashCommandHandler {
           type: AuthType.OPENAI_COMPATIBLE,
           apiKey: '',
           baseUrl: '',
-          modelName: ''
+          modelName: '',
         });
 
         const success = await authService.authenticate();
@@ -508,7 +561,7 @@ export class SlashCommandHandler {
             refreshToken: '',
             guiSubagentModel: '',
             guiSubagentBaseUrl: '',
-            guiSubagentApiKey: ''
+            guiSubagentApiKey: '',
           });
           this.configManager.save('global');
 
@@ -531,16 +584,11 @@ export class SlashCommandHandler {
 
     if (currentAuthType !== AuthType.OAUTH_XAGENT) {
       console.log(chalk.yellow('\n⚠️  Current authentication type is not OAuth xAgent.'));
-      const { proceed } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'proceed',
-          message: 'Do you want to switch to OAuth xAgent authentication?',
-          default: false
-        }
-      ]);
+      const proceed = await confirm({
+        message: 'Do you want to switch to OAuth xAgent authentication?',
+      });
 
-      if (!proceed) {
+      if (proceed === false || proceed === undefined) {
         return;
       }
 
@@ -549,7 +597,7 @@ export class SlashCommandHandler {
         selectedAuthType: AuthType.OAUTH_XAGENT,
         apiKey: '',
         refreshToken: '',
-        baseUrl: ''
+        baseUrl: '',
       });
       this.configManager.save('global');
       console.log(chalk.green('✅ Switched to OAuth xAgent authentication.'));
@@ -567,7 +615,7 @@ export class SlashCommandHandler {
         apiKey: '',
         baseUrl: '',
         refreshToken: '',
-        xagentApiBaseUrl: config.xagentApiBaseUrl
+        xagentApiBaseUrl: config.xagentApiBaseUrl,
       });
 
       const success = await authService.authenticate();
@@ -585,100 +633,10 @@ export class SlashCommandHandler {
     }
   }
 
-  private async handleVlm(): Promise<void> {
-    // Check if local mode (remote mode uses backend VLM config)
-    const authConfig = this.configManager.getAuthConfig();
-    if (authConfig.type === AuthType.OAUTH_XAGENT) {
-      console.log(chalk.yellow('\n⚠️  This command is only available in local mode (third-party API).'));
-      console.log(chalk.cyan('   In remote mode, VLM configuration is managed by /provider.'));
-      return;
-    }
-
-    logger.section('VLM Configuration for GUI Agent');
-
-    // Show current VLM config
-    const currentVlmConfig = {
-      model: this.configManager.get('guiSubagentModel'),
-      baseUrl: this.configManager.get('guiSubagentBaseUrl'),
-      apiKey: this.configManager.get('guiSubagentApiKey') ? '***' : ''
-    };
-
-    console.log(chalk.cyan('\n📊 Current VLM Configuration:\n'));
-    console.log(`  Model: ${chalk.yellow(currentVlmConfig.model || 'Not configured')}`);
-    console.log(`  Base URL: ${chalk.yellow(currentVlmConfig.baseUrl || 'Not configured')}`);
-    console.log(`  API Key: ${chalk.yellow(currentVlmConfig.apiKey || 'Not configured')}`);
-    console.log();
-
-    const { action } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'action',
-        message: 'Select action:',
-        choices: [
-          { name: 'Configure VLM', value: 'configure' },
-          { name: 'Remove VLM configuration', value: 'remove' },
-          { name: 'Back', value: 'back' }
-        ]
-      }
-    ]);
-
-    if (action === 'back') {
-      return;
-    }
-
-    if (action === 'remove') {
-      const { confirm } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'confirm',
-          message: 'Are you sure you want to remove VLM configuration?',
-          default: false
-        }
-      ]);
-
-      if (confirm) {
-        this.configManager.set('guiSubagentModel', '');
-        this.configManager.set('guiSubagentBaseUrl', '');
-        this.configManager.set('guiSubagentApiKey', '');
-        this.configManager.save('global');
-        console.log(chalk.green('✅ VLM configuration removed successfully!'));
-      }
-      return;
-    }
-
-    if (action === 'configure') {
-      // Use AuthService to configure VLM
-      // Get xagentApiBaseUrl from config (respects XAGENT_BASE_URL env var)
-      const config = this.configManager.getAuthConfig();
-
-      const authService = new AuthService({
-        type: 'openai_compatible' as any,
-        apiKey: '',
-        baseUrl: '',
-        modelName: '',
-        xagentApiBaseUrl: config.xagentApiBaseUrl
-      });
-
-      const vlmConfig = await authService.configureAndValidateVLM();
-
-      if (vlmConfig) {
-        this.configManager.set('guiSubagentModel', vlmConfig.model);
-        this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
-        this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
-        this.configManager.save('global');
-        console.log(chalk.green('✅ VLM configuration saved successfully!'));
-        console.log(chalk.cyan(`   Model: ${vlmConfig.model}`));
-        console.log(chalk.cyan(`   Base URL: ${vlmConfig.baseUrl}`));
-      } else {
-        console.log(chalk.red('❌ VLM configuration failed or cancelled'));
-      }
-    }
-  }
-
   /**
-   * Handle /provider command - Configure LLM/VLM providers for remote mode
+   * Handle /model command - Configure LLM/VLM models for remote mode
    */
-  private async handleProvider(): Promise<void> {
+  private async handleModel(): Promise<void> {
     const authConfig = this.configManager.getAuthConfig();
 
     // 1. Check if remote mode
@@ -687,89 +645,106 @@ export class SlashCommandHandler {
       return;
     }
 
-    // 2. Get RemoteAIClient instance (from InteractiveSession)
-    const remoteClient = this.remoteAIClient;
-    if (!remoteClient) {
-      console.log(chalk.red('\n❌ Remote client not initialized. Please use /auth to configure remote mode first.'));
-      return;
+    // 2. Auto-fetch default models if not set
+    let currentLlm = authConfig.remote_llmModelName;
+    let currentVlm = authConfig.remote_vlmModelName;
+
+    if (!currentLlm || !currentVlm) {
+      console.log(chalk.cyan('\n📊 Fetching default models from remote server...'));
+      
+      // Try to use RemoteAIClient first, otherwise fetch directly
+      let defaults: { llm?: { name: string; displayName?: string }; vlm?: { name: string; displayName?: string } } | null = null;
+      
+      if (this.remoteAIClient) {
+        try {
+          defaults = await this.remoteAIClient.getDefaultModels();
+        } catch (error: any) {
+          console.log(chalk.yellow(`   ⚠️  Failed to get defaults from RemoteAIClient: ${error.message}`));
+        }
+      }
+      
+      // If RemoteAIClient failed or not available, fetch directly
+      if (!defaults) {
+        try {
+          const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
+          defaults = await RemoteAIClient.fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
+        } catch (error: any) {
+          console.log(chalk.yellow(`   ⚠️  Failed to fetch default models: ${error.message}`));
+        }
+      }
+      
+      if (defaults) {
+        if (!currentLlm && defaults.llm?.name) {
+          currentLlm = defaults.llm.name;
+          this.configManager.set('remote_llmModelName', currentLlm);
+          console.log(chalk.cyan(`   Default LLM: ${defaults.llm.displayName || currentLlm}`));
+        }
+        if (!currentVlm && defaults.vlm?.name) {
+          currentVlm = defaults.vlm.name;
+          this.configManager.set('remote_vlmModelName', currentVlm);
+          console.log(chalk.cyan(`   Default VLM: ${defaults.vlm.displayName || currentVlm}`));
+        }
+        this.configManager.save('global');
+      } else {
+        console.log(chalk.yellow('   ⚠️  Use /auth to configure remote mode first.'));
+        return;
+      }
     }
 
-    // 3. Display current configuration
-    const currentLlm = authConfig.remote_llmProvider || 'Not set';
-    const currentVlm = authConfig.remote_vlmProvider || 'Not set';
+    // 3. Get RemoteAIClient instance (from InteractiveSession) for model selection
+    const remoteClient = this.remoteAIClient;
 
-    console.log(chalk.cyan('\n📊 Current Provider Configuration:\n'));
-    console.log(`  ${chalk.yellow('LLM Provider:')} ${currentLlm}`);
-    console.log(`  ${chalk.yellow('VLM Provider:')} ${currentVlm}`);
+    // 4. Display current configuration
+    console.log(chalk.cyan('\n📊 Current Model Configuration:\n'));
+    console.log(`  ${chalk.yellow('LLM Model:')} ${currentLlm || 'Not set'}`);
+    console.log(`  ${chalk.yellow('VLM Model:')} ${currentVlm || 'Not set'}`);
     console.log('');
 
     // 4. Main menu
-    const { action } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'action',
-        message: 'Select action:',
-        choices: [
-          { name: 'Use default llm/vlm config', value: 'default' },
-          { name: 'Change LLM config', value: 'llm' },
-          { name: 'Change VLM config', value: 'vlm' },
-          { name: 'Back', value: 'back' }
-        ]
-      }
-    ]);
+    const action = await select({
+      message: 'Select action:',
+      options: [
+        { value: 'llm', label: 'Change LLM model' },
+        { value: 'vlm', label: 'Change VLM model' },
+        { value: 'back', label: 'Back' },
+      ],
+    });
 
-    if (action === 'back') return;
-
-    // 5. Get default configuration
-    if (action === 'default') {
-      try {
-        const defaults = await remoteClient.getDefaultModels();
-        // Update in-memory config
-        await this.configManager.set('remote_llmProvider', defaults.llm.provider);
-        await this.configManager.set('remote_vlmProvider', defaults.vlm.provider);
-        this.configManager.save('global');
-
-        console.log(chalk.green('\n✅ Default configuration applied!'));
-        console.log(`   LLM: ${defaults.llm.providerDisplay}`);
-        console.log(`   VLM: ${defaults.vlm.providerDisplay}`);
-
-        // 通知 InteractiveSession 更新 aiClient config
-        if (this.onConfigUpdate) {
-          this.onConfigUpdate();
-        }
-      } catch (error: any) {
-        console.log(chalk.red(`\n❌ Failed to get default models: ${error.message}`));
-      }
+    if (action === 'back') {
       return;
     }
 
-    // 6. Get and display provider list
+    // Restore stdin raw mode after @clack/prompts interaction
+    // This is critical for the second select to work properly
+    ensureTtySane();
+
+    // Get and display provider list
     try {
       const models = await remoteClient.getModels();
-      const providers = action === 'llm' ? models.llm : models.vlm;
+      const modelList = action === 'llm' ? models.llm : models.vlm;
 
-      if (providers.length === 0) {
-        console.log(chalk.yellow('\n⚠️  No providers available.'));
+      if (modelList.length === 0) {
+        console.log(chalk.yellow('\n⚠️  No models available.'));
         return;
       }
 
       // Build choice list
-      const choices = providers.map((p: any) => ({
-        name: `${p.providerDisplay} (${p.provider})`,
-        value: p.provider
+      const choices = modelList.map((m: any) => ({
+        name: `${m.displayName} (${m.name})`,
+        value: m.name
       }));
 
-      const { selectedProvider } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'selectedProvider',
-          message: action === 'llm' ? 'Select LLM Provider:' : 'Select VLM Provider:',
-          choices
-        }
-      ]);
+      const selectedModel = await select({
+        message: action === 'llm' ? 'Select LLM Model:' : 'Select VLM Model:',
+        options: choices
+      });
 
-      const configKey = action === 'llm' ? 'remote_llmProvider' : 'remote_vlmProvider';
-      this.configManager.set(configKey, selectedProvider);
+      if (typeof selectedModel !== 'string') {
+        return;
+      }
+
+      const configKey = action === 'llm' ? 'remote_llmModelName' : 'remote_vlmModelName';
+      this.configManager.set(configKey, selectedModel);
       this.configManager.save('global');
 
       // Clear conversation history to avoid tool call ID conflicts between providers
@@ -778,7 +753,9 @@ export class SlashCommandHandler {
       // Clear conversation history to avoid tool call ID conflicts between providers
       if (this.onClearCallback) {
         this.onClearCallback();
-        console.log(chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between providers.'));
+        console.log(
+          chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between models.')
+        );
       }
 
       // Notify InteractiveSession to update aiClient config
@@ -786,8 +763,8 @@ export class SlashCommandHandler {
         this.onConfigUpdate();
       }
 
-      console.log(chalk.green('\n✅ Provider updated successfully!'));
-      console.log(`   ${action === 'llm' ? 'LLM' : 'VLM'}: ${selectedProvider}`);
+      console.log(chalk.green('\n✅ Model updated successfully!'));
+      console.log(`   ${action === 'llm' ? 'LLM' : 'VLM'}: ${selectedModel}`);
     } catch (error: any) {
       console.log(chalk.red(`\n❌ Failed to get models: ${error.message}`));
     }
@@ -795,7 +772,8 @@ export class SlashCommandHandler {
 
   private async handleMode(args: string[]): Promise<void> {
     const modes = Object.values(ExecutionMode);
-    const currentMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
+    const currentMode =
+      this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
 
     if (args.length > 0) {
       const newMode = args[0].toLowerCase();
@@ -816,7 +794,7 @@ export class SlashCommandHandler {
         { mode: 'accept_edits', desc: 'Accept all edits automatically' },
         { mode: 'plan', desc: 'Plan before executing' },
         { mode: 'default', desc: 'Safe execution with confirmations' },
-        { mode: 'smart', desc: 'Smart approval with intelligent security checks' }
+        { mode: 'smart', desc: 'Smart approval with intelligent security checks' },
       ];
 
       descriptions.forEach(({ mode, desc }) => {
@@ -865,7 +843,9 @@ export class SlashCommandHandler {
       }
     } else {
       console.log(chalk.cyan('\n🧠 Thinking Mode:\n'));
-      console.log(`  Status: ${thinkingConfig.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`);
+      console.log(
+        `  Status: ${thinkingConfig.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`
+      );
       console.log(`  Mode: ${chalk.yellow(thinkingConfig.mode)}`);
       console.log(`  Display: ${chalk.yellow(thinkingConfig.displayMode)}\n`);
 
@@ -890,13 +870,19 @@ export class SlashCommandHandler {
         logger.warn('Online marketplace not implemented yet', 'Check back later for updates');
         break;
       case 'install':
-        logger.warn('Agent installation wizard not implemented yet', 'Use /agents install in interactive mode');
+        logger.warn(
+          'Agent installation wizard not implemented yet',
+          'Use /agents install in interactive mode'
+        );
         break;
       case 'remove':
         logger.warn('Agent removal not implemented yet', 'Use /agents remove in interactive mode');
         break;
       default:
-        logger.warn(`Unknown agents action: ${action}`, 'Use /agents list to see available actions');
+        logger.warn(
+          `Unknown agents action: ${action}`,
+          'Use /agents list to see available actions'
+        );
     }
   }
 
@@ -963,112 +949,118 @@ export class SlashCommandHandler {
 
     logger.section('MCP Servers');
 
-    serverConfigs.forEach(({ name: serverName, config: serverConfig }: { name: string; config: any }) => {
-      const server = this.mcpManager.getServer(serverName);
-      const isConnected = server?.isServerConnected() || false;
-      const status = isConnected ? chalk.green('✓ Connected') : chalk.red('✗ Disconnected');
-      const tools = server?.getToolNames() || [];
-      const transport = serverConfig?.transport || serverConfig?.type || 'unknown';
-      const command = serverConfig?.command ? `${serverConfig.command} ${(serverConfig.args || []).join(' ')}` : serverConfig?.url || 'N/A';
+    serverConfigs.forEach(
+      ({ name: serverName, config: serverConfig }: { name: string; config: any }) => {
+        const server = this.mcpManager.getServer(serverName);
+        const isConnected = server?.isServerConnected() || false;
+        const status = isConnected ? chalk.green('✓ Connected') : chalk.red('✗ Disconnected');
+        const tools = server?.getToolNames() || [];
+        const transport = serverConfig?.transport || serverConfig?.type || 'unknown';
+        const command = serverConfig?.command
+          ? `${serverConfig.command} ${(serverConfig.args || []).join(' ')}`
+          : serverConfig?.url || 'N/A';
 
-      console.log('');
-      console.log(`  ${chalk.cyan(serverName)} ${status}`);
-      console.log(`    Transport: ${transport}`);
-      console.log(`    Command: ${command}`);
-      console.log(`    Tools: ${isConnected ? tools.length : 'N/A'} (${isConnected ? tools.join(', ') : 'wait for connection'})`);
-    });
+        console.log('');
+        console.log(`  ${chalk.cyan(serverName)} ${status}`);
+        console.log(`    Transport: ${transport}`);
+        console.log(`    Command: ${command}`);
+        console.log(
+          `    Tools: ${isConnected ? tools.length : 'N/A'} (${isConnected ? tools.join(', ') : 'wait for connection'})`
+        );
+      }
+    );
 
     console.log('');
     logger.info(`Total: ${serverConfigs.length} server(s)`);
   }
 
   private async addMcpServerInteractive(serverName?: string): Promise<void> {
-    const { name, command, args: serverArgs, transport, url, authToken, headers } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'name',
-        message: 'Enter MCP server name:',
-        default: serverName,
-        validate: (input: string) => {
-          if (!input.trim()) {
-            return 'Server name is required';
-          }
-          if (!/^[a-zA-Z0-9_-]+$/.test(input)) {
-            return 'Server name must contain only alphanumeric characters, hyphens, and underscores';
-          }
-          const servers = this.mcpManager.getAllServers();
-          if (servers.some((s: MCPServer) => (s as any).config?.name === input)) {
-            return 'Server with this name already exists';
-          }
-          return true;
+    let name = (await text({
+      message: 'Enter MCP server name:',
+      defaultValue: serverName,
+      validate: (value: string | undefined) => {
+        if (!value || !value.trim()) {
+          return 'Server name is required';
         }
+        if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
+          return 'Server name must contain only alphanumeric characters, hyphens, and underscores';
+        }
+        const servers = this.mcpManager.getAllServers();
+        if (servers.some((s: MCPServer) => (s as any).config?.name === value)) {
+          return 'Server with this name already exists';
+        }
+        return undefined;
       },
-      {
-        type: 'list',
-        name: 'transport',
-        message: 'Select transport type:',
-        choices: [
-          { name: 'Stdio (stdin/stdout)', value: 'stdio' },
-          { name: 'HTTP/SSE', value: 'sse' },
-          { name: 'HTTP (POST)', value: 'http' }
-        ],
-        default: 'stdio'
-      },
-      {
-        type: 'input',
-        name: 'command',
+    })) as string;
+
+    const transport = await select({
+      message: 'Select transport type:',
+      options: [
+        { value: 'stdio', label: 'Stdio (stdin/stdout)' },
+        { value: 'sse', label: 'HTTP/SSE' },
+        { value: 'http', label: 'HTTP (POST)' },
+      ],
+    });
+
+    let command = '';
+    let serverArgs: string[] = [];
+    let url = '';
+    let authToken = '';
+    let headers: Record<string, string> | string | undefined;
+
+    if (transport === 'stdio') {
+      command = (await text({
         message: 'Enter command (for stdio transport):',
-        when: (answers: any) => answers.transport === 'stdio',
-        validate: (input: string) => input.trim() ? true : 'Command is required'
-      },
-      {
-        type: 'input',
-        name: 'args',
+        validate: (value: string | undefined) =>
+          value && value.trim() ? undefined : 'Command is required',
+      })) as string;
+
+      const argsInput = (await text({
         message: 'Enter arguments (comma-separated, for stdio transport):',
-        when: (answers: any) => answers.transport === 'stdio',
-        filter: (input: string) => input ? input.split(',').map((a: string) => a.trim()) : []
-      },
-      {
-        type: 'input',
-        name: 'url',
+        defaultValue: '',
+      })) as string;
+
+      if (argsInput.trim()) {
+        serverArgs = argsInput.split(',').map((a: string) => a.trim());
+      }
+    } else {
+      url = (await text({
         message: 'Enter server URL (for HTTP/SSE/HTTP transport):',
-        when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http',
-        validate: (input: string) => {
-          if (!input.trim()) {
+        validate: (value: string | undefined) => {
+          if (!value || !value.trim()) {
             return 'URL is required';
           }
           try {
-            new URL(input);
-            return true;
+            new URL(value);
+            return undefined;
           } catch {
             return 'Invalid URL format (e.g., https://example.com)';
           }
-        }
-      },
-      {
-        type: 'password',
-        name: 'authToken',
+        },
+      })) as string;
+
+      authToken = (await text({
         message: 'Enter authentication token (optional):',
-        when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http'
-      },
-      {
-        type: 'input',
-        name: 'headers',
-        message: 'Enter custom headers as JSON (optional, e.g., {"Authorization": "Bearer token"}):',
-        when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http',
-        filter: (input: string) => {
-          if (!input.trim()) return undefined;
-          try {
-            return JSON.parse(input);
-          } catch {
-            return undefined;
-          }
+        defaultValue: '',
+      })) as string;
+
+      const headersInput = (await text({
+        message:
+          'Enter custom headers as JSON (optional, e.g., {"Authorization": "Bearer token"}):',
+        defaultValue: '',
+      })) as string;
+
+      if (headersInput.trim()) {
+        try {
+          headers = JSON.parse(headersInput);
+        } catch {
+          headers = undefined;
         }
       }
-    ]);
+    }
 
     const config: any = {
-      transport: transport as 'stdio' | 'sse' | 'http'
+      transport: transport as 'stdio' | 'sse' | 'http',
     };
 
     if (transport === 'stdio') {
@@ -1143,23 +1135,19 @@ export class SlashCommandHandler {
       return;
     }
 
-    const serverNames = servers.map((s: MCPServer) => {
+    const serverOptions = servers.map((s: MCPServer) => {
       const tools = s.getToolNames();
       const status = s.isServerConnected() ? '✓' : '✗';
       return {
-        name: `${status} ${(s as any).config?.name || 'unknown'} (${tools.length} tools)`,
-        value: (s as any).config?.name
+        value: (s as any).config?.name,
+        label: `${status} ${(s as any).config?.name || 'unknown'} (${tools.length} tools)`,
       };
     });
 
-    const { serverName } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'serverName',
-        message: 'Select MCP server to remove:',
-        choices: serverNames
-      }
-    ]);
+    const serverName = (await select({
+      message: 'Select MCP server to remove:',
+      options: serverOptions,
+    })) as string;
 
     await this.removeMcpServer(serverName);
   }
@@ -1204,7 +1192,7 @@ export class SlashCommandHandler {
       await this.mcpManager.connectAllServers();
 
       spinner.succeed('MCP servers refreshed successfully');
-      
+
       // Show current server status
       await this.listMcpServers();
     } catch (error: any) {
@@ -1219,7 +1207,10 @@ export class SlashCommandHandler {
     try {
       await this.memoryManager.loadMemory();
     } catch (error) {
-      logger.error('Failed to load memory files', error instanceof Error ? error.message : String(error));
+      logger.error(
+        'Failed to load memory files',
+        error instanceof Error ? error.message : String(error)
+      );
       return;
     }
 
@@ -1231,7 +1222,10 @@ export class SlashCommandHandler {
         await this.clearMemory(args[1]);
         break;
       default:
-        logger.warn(`Unknown memory action: ${action}`, 'Use /memory show to see available actions');
+        logger.warn(
+          `Unknown memory action: ${action}`,
+          'Use /memory show to see available actions'
+        );
     }
   }
 
@@ -1262,7 +1256,10 @@ export class SlashCommandHandler {
       logger.success(`Cleared ${cleared} memory file(s)`);
 
       // Recreate global memory
-      await this.memoryManager.saveMemory('# Global Context\n\nGlobal preferences and settings will be added here.', 'global');
+      await this.memoryManager.saveMemory(
+        '# Global Context\n\nGlobal preferences and settings will be added here.',
+        'global'
+      );
       logger.info('Recreated global memory');
       logger.info('Use /init to initialize project memory if needed');
       return;
@@ -1276,7 +1273,10 @@ export class SlashCommandHandler {
         logger.success('Global memory cleared');
 
         // Recreate global memory
-        await this.memoryManager.saveMemory('# Global Context\n\nGlobal preferences and settings will be added here.', 'global');
+        await this.memoryManager.saveMemory(
+          '# Global Context\n\nGlobal preferences and settings will be added here.',
+          'global'
+        );
         logger.info('Recreated with default content');
       } else {
         logger.warn('No global memory found');
@@ -1285,9 +1285,8 @@ export class SlashCommandHandler {
     }
 
     // Clear specific file by filename or path
-    const targetMemory = memoryFiles.find((m: MemoryFile) =>
-      path.basename(m.path) === target ||
-      m.path === target
+    const targetMemory = memoryFiles.find(
+      (m: MemoryFile) => path.basename(m.path) === target || m.path === target
     );
 
     if (targetMemory) {
@@ -1298,13 +1297,19 @@ export class SlashCommandHandler {
 
         // Recreate global memory, not project memory
         if (targetMemory.level === 'global') {
-          await this.memoryManager.saveMemory('# Global Context\n\nGlobal preferences and settings will be added here.', 'global');
+          await this.memoryManager.saveMemory(
+            '# Global Context\n\nGlobal preferences and settings will be added here.',
+            'global'
+          );
           logger.info('Recreated with default content');
         } else {
           logger.info('Use /init to initialize if needed');
         }
       } catch (error) {
-        logger.error('Failed to clear memory', error instanceof Error ? error.message : String(error));
+        logger.error(
+          'Failed to clear memory',
+          error instanceof Error ? error.message : String(error)
+        );
       }
     } else {
       logger.warn(`Memory file not found: ${target}`, 'Use /memory show to see available files');
@@ -1325,9 +1330,12 @@ export class SlashCommandHandler {
     console.log('');
 
     memoryFiles.forEach((file: MemoryFile) => {
-      const level = file.level === 'global' ? chalk.blue('[global]') :
-                     file.level === 'project' ? chalk.green('[project]') :
-                     chalk.yellow('[subdirectory]');
+      const level =
+        file.level === 'global'
+          ? chalk.blue('[global]')
+          : file.level === 'project'
+            ? chalk.green('[project]')
+            : chalk.yellow('[subdirectory]');
       logger.info(`  ${level} ${path.basename(file.path)}`);
     });
 
@@ -1336,13 +1344,9 @@ export class SlashCommandHandler {
   }
 
   private async addMemory(): Promise<void> {
-    const { entry } = await inquirer.prompt([
-      {
-        type: 'editor',
-        name: 'entry',
-        message: 'Enter memory entry (opens editor):'
-      }
-    ]);
+    const entry = (await text({
+      message: 'Enter memory entry (opens editor):',
+    })) as string;
 
     if (entry && entry.trim()) {
       await this.memoryManager.addMemoryEntry(entry.trim());
@@ -1383,19 +1387,15 @@ export class SlashCommandHandler {
         logger.error(error.message, 'Check if checkpoint ID is valid');
       }
     } else {
-      const choices = checkpoints.map((cp: Checkpoint) => ({
-        name: `${new Date(cp.timestamp).toLocaleString()} - ${cp.description}`,
-        value: cp.id
+      const checkpointOptions = checkpoints.map((cp: Checkpoint) => ({
+        value: cp.id,
+        label: `${new Date(cp.timestamp).toLocaleString()} - ${cp.description}`,
       }));
 
-      const { checkpointId } = await inquirer.prompt([
-        {
-          type: 'list',
-          name: 'checkpointId',
-          message: 'Select checkpoint to restore:',
-          choices
-        }
-      ]);
+      const checkpointId = await select({
+        message: 'Select checkpoint to restore:',
+        options: checkpointOptions,
+      });
 
       try {
         await this.checkpointManager.restoreCheckpoint(checkpointId);
@@ -1412,7 +1412,7 @@ export class SlashCommandHandler {
 
     logger.section('Available Tools');
 
-    tools.forEach(tool => {
+    tools.forEach((tool) => {
       logger.info(`  ${tool.name}`);
       logger.info(`    ${tool.description}`);
     });
@@ -1436,11 +1436,17 @@ export class SlashCommandHandler {
     if (mode === 'verbose' || mode === 'detail' || mode === 'true' || mode === 'on') {
       this.configManager.set('showToolDetails', true);
       this.configManager.save('global');
-      logger.success('Tool display mode switched to verbose mode', 'Will show complete tool call information');
+      logger.success(
+        'Tool display mode switched to verbose mode',
+        'Will show complete tool call information'
+      );
     } else if (mode === 'simple' || mode === 'concise' || mode === 'false' || mode === 'off') {
       this.configManager.set('showToolDetails', false);
       this.configManager.save('global');
-      logger.success('Tool display mode switched to simple mode', 'Only show tool execution status');
+      logger.success(
+        'Tool display mode switched to simple mode',
+        'Only show tool execution status'
+      );
     } else {
       logger.warn('Invalid mode', 'Use verbose or simple');
     }
@@ -1462,20 +1468,19 @@ export class SlashCommandHandler {
   }
 
   private async handleLanguage(): Promise<void> {
-    const { language } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'language',
-        message: 'Select language:',
-        choices: [
-          { name: 'Chinese', value: 'zh' },
-          { name: 'English', value: 'en' }
-        ]
-      }
-    ]);
+    const language = (await select({
+      message: 'Select language:',
+      options: [
+        { value: 'zh', label: 'Chinese' },
+        { value: 'en', label: 'English' },
+      ],
+    })) as 'zh' | 'en';
 
     this.configManager.setLanguage(language);
-    logger.success(`Language changed to: ${language === 'zh' ? 'Chinese' : 'English'}`, 'Restart CLI to apply changes');
+    logger.success(
+      `Language changed to: ${language === 'zh' ? 'Chinese' : 'English'}`,
+      'Restart CLI to apply changes'
+    );
   }
 
   private async handleAbout(): Promise<void> {
@@ -1487,18 +1492,63 @@ export class SlashCommandHandler {
     logger.link('GitHub', 'https://github.com/xagent-ai/xagent-cli');
   }
 
+  private async handleUpdate(): Promise<void> {
+    const separator = icons.separator.repeat(Math.min(40, process.stdout.columns || 80));
+
+    console.log('');
+    console.log(colors.primaryBright(`${icons.rocket} Update Check`));
+    console.log(colors.border(separator));
+    console.log('');
+
+    try {
+      const { getUpdateManager } = await import('./update.js');
+      const updateManager = getUpdateManager();
+      const versionInfo = await updateManager.checkForUpdates();
+
+      console.log(`  ${icons.info}  ${colors.textMuted('Current version:')} ${colors.primaryBright(versionInfo.currentVersion)}`);
+      console.log(`  ${icons.code} ${colors.textMuted('Latest version:')} ${colors.primaryBright(versionInfo.latestVersion)}`);
+      console.log('');
+
+      if (versionInfo.updateAvailable) {
+        console.log(colors.success(`  📦 A new version is available!`));
+        console.log('');
+
+        if (versionInfo.releaseNotes) {
+          console.log(colors.textMuted('  Release Notes:'));
+          console.log(colors.textDim(`  ${versionInfo.releaseNotes}`));
+          console.log('');
+        }
+
+        const shouldUpdate = await confirm({
+          message: 'Do you want to update now?',
+        });
+
+        if (shouldUpdate === true) {
+          console.log('');
+          await updateManager.autoUpdate();
+        }
+      } else {
+        console.log(colors.success(`  ✅ You are using the latest version`));
+        console.log('');
+      }
+    } catch (error: any) {
+      console.log(colors.error(`  ❌ Failed to check for updates: ${error.message}`));
+      console.log('');
+    }
+  }
+
   private async handleCompress(args: string[]): Promise<void> {
     const config = this.configManager.getContextCompressionConfig();
 
     // If there are arguments, process config or execute
     if (args.length > 0) {
       const action = args[0].toLowerCase();
-      
+
       if (action === 'exec' || action === 'run' || action === 'now') {
         await this.executeCompression(config);
         return;
       }
-      
+
       await this.setCompressConfig(args);
       return;
     }
@@ -1524,10 +1574,7 @@ export class SlashCommandHandler {
       return;
     }
 
-    const { needsCompression, reason } = this.contextCompressor.needsCompression(
-      messages,
-      config
-    );
+    const { needsCompression, reason } = this.contextCompressor.needsCompression(messages, config);
 
     if (!needsCompression) {
       console.log(chalk.green('✅ No compression needed'));
@@ -1540,7 +1587,7 @@ export class SlashCommandHandler {
     const spinner = ora({
       text: 'Compressing context...',
       spinner: 'dots',
-      color: 'cyan'
+      color: 'cyan',
     }).start();
 
     try {
@@ -1553,13 +1600,23 @@ export class SlashCommandHandler {
       spinner.succeed(chalk.green('✅ Compression complete'));
 
       console.log('');
-      console.log(`  ${chalk.cyan('Original:')} ${chalk.yellow(result.originalMessageCount.toString())} messages (${result.originalSize} chars)`);
-      console.log(`  ${chalk.cyan('Compressed:')} ${chalk.yellow(result.compressedMessageCount.toString())} messages (${result.compressedSize} chars)`);
-      console.log(`  ${chalk.cyan('Reduction:')} ${chalk.green(Math.round((1 - result.compressedSize / result.originalSize) * 100) + '%')}`);
+      console.log(
+        `  ${chalk.cyan('Original:')} ${chalk.yellow(result.originalMessageCount.toString())} messages (${result.originalSize} chars)`
+      );
+      console.log(
+        `  ${chalk.cyan('Compressed:')} ${chalk.yellow(result.compressedMessageCount.toString())} messages (${result.compressedSize} chars)`
+      );
+      console.log(
+        `  ${chalk.cyan('Reduction:')} ${chalk.green(Math.round((1 - result.compressedSize / result.originalSize) * 100) + '%')}`
+      );
       console.log(`  ${chalk.cyan('Method:')} ${chalk.yellow(result.compressionMethod)}`);
 
       console.log('');
-      console.log(chalk.gray('Use /clear to start a new conversation, or continue chatting to see the compressed summary.'));
+      console.log(
+        chalk.gray(
+          'Use /clear to start a new conversation, or continue chatting to see the compressed summary.'
+        )
+      );
       console.log('');
     } catch (error: any) {
       spinner.fail(chalk.red('Compression failed'));

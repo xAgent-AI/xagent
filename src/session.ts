@@ -4,7 +4,6 @@ import https from 'https';
 import axios from 'axios';
 import crypto from 'crypto';
 import ora from 'ora';
-import inquirer from 'inquirer';
 import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -14,7 +13,15 @@ import os from 'os';
 
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
-import { ExecutionMode, ChatMessage, ToolCall, AuthType, AuthConfig, AgentConfig, ToolCallItem } from './types.js';
+import {
+  ExecutionMode,
+  ChatMessage,
+  ToolCall,
+  AuthType,
+  AuthConfig,
+  AgentConfig,
+  ToolCallItem,
+} from './types.js';
 import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { RemoteAIClient, TokenInvalidError } from './remote-ai-client.js';
 import { getConfigManager, ConfigManager } from './config.js';
@@ -28,10 +35,24 @@ import { getConversationManager, ConversationManager } from './conversation.js';
 import { getSessionManager, SessionManager } from './session-manager.js';
 import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
-import { theme, icons, colors, styleHelpers, renderMarkdown, renderDiff, renderLines, TERMINAL_BG } from './theme.js';
+import {
+  theme,
+  icons,
+  colors,
+  styleHelpers,
+  renderMarkdown,
+  renderDiff,
+  renderLines,
+  TERMINAL_BG,
+} from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
-import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
+import {
+  getContextCompressor,
+  ContextCompressor,
+  CompressionResult,
+} from './context-compressor.js';
 import { Logger, LogLevel, getLogger } from './logger.js';
+import { ensureTtySane, setupEscKeyHandler } from './terminal.js';
 
 const logger = getLogger();
 
@@ -59,53 +80,54 @@ export class InteractiveSession {
   private currentTaskId: string | null = null;
   private taskCompleted: boolean = false;
   private isFirstApiCall: boolean = true;
+  // Mapping for tool call IDs to handle MiniMax compatibility
+  private toolCallIdMapping: Map<string, string> = new Map();
 
-    constructor(indentLevel: number = 0) {
-      this.rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-      });
+  constructor(indentLevel: number = 0) {
+    this.rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
 
-      this.configManager = getConfigManager(process.cwd());
-      this.agentManager = getAgentManager(process.cwd());
-      this.memoryManager = getMemoryManager(process.cwd());
-      this.mcpManager = getMCPManager();
-      this.checkpointManager = getCheckpointManager(process.cwd());
-      this.conversationManager = getConversationManager();
-      this.sessionManager = getSessionManager(process.cwd());
-      this.slashCommandHandler = new SlashCommandHandler();
+    this.configManager = getConfigManager(process.cwd());
+    this.agentManager = getAgentManager(process.cwd());
+    this.memoryManager = getMemoryManager(process.cwd());
+    this.mcpManager = getMCPManager();
+    this.checkpointManager = getCheckpointManager(process.cwd());
+    this.conversationManager = getConversationManager();
+    this.sessionManager = getSessionManager(process.cwd());
+    this.slashCommandHandler = new SlashCommandHandler();
 
-      // Register /clear callback, clear local conversation when clearing dialogue
-            this.slashCommandHandler.setClearCallback(() => {
-              this.conversation = [];
-              this.tool_calls = [];
-              this.currentTaskId = null;
-              this.taskCompleted = false;
-              this.isFirstApiCall = true;
-              this.slashCommandHandler.setConversationHistory([]);
-            });
-      
-            // Register MCP update callback, update system prompt
-            this.slashCommandHandler.setSystemPromptUpdateCallback(async () => {
-              await this.updateSystemPrompt();
-            });
-      
-            // Register config update callback, update aiClient config when /auth changes config
-            this.slashCommandHandler.setConfigUpdateCallback(() => {
-              this.updateAiClientConfig();
-            });
-      
-            this.executionMode = ExecutionMode.DEFAULT;
+    // Register /clear callback, clear local conversation when clearing dialogue
+    this.slashCommandHandler.setClearCallback(() => {
+      this.conversation = [];
+      this.tool_calls = [];
+      this.currentTaskId = null;
+      this.taskCompleted = false;
+      this.isFirstApiCall = true;
+      this.slashCommandHandler.setConversationHistory([]);
+    });
 
-      this.cancellationManager = getCancellationManager();
+    // Register MCP update callback, update system prompt
+    this.slashCommandHandler.setSystemPromptUpdateCallback(async () => {
+      await this.updateSystemPrompt();
+    });
 
-      this.indentLevel = indentLevel;
+    // Register config update callback, update aiClient config when /auth changes config
+    this.slashCommandHandler.setConfigUpdateCallback(() => {
+      this.updateAiClientConfig();
+    });
 
-      this.indentString = ' '.repeat(indentLevel);
+    this.executionMode = ExecutionMode.DEFAULT;
 
-      this.contextCompressor = getContextCompressor();
+    this.cancellationManager = getCancellationManager();
 
-    }
+    this.indentLevel = indentLevel;
+
+    this.indentString = ' '.repeat(indentLevel);
+
+    this.contextCompressor = getContextCompressor();
+  }
 
   private getIndent(): string {
     return this.indentString;
@@ -166,18 +188,24 @@ export class InteractiveSession {
     await skillInvoker.reload();
 
     const toolRegistry = getToolRegistry();
-    const promptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
+    const promptGenerator = new SystemPromptGenerator(
+      toolRegistry,
+      this.executionMode,
+      undefined,
+      this.mcpManager
+    );
 
     // Use the current agent's original system prompt as base
-    const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are xAgent, an AI-powered CLI tool.';
+    const baseSystemPrompt =
+      this.currentAgent?.systemPrompt || 'You are xAgent, an AI-powered CLI tool.';
     const newSystemPrompt = await promptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
     // Replace old system prompt with new one
-    this.conversation = this.conversation.filter(msg => msg.role !== 'system');
+    this.conversation = this.conversation.filter((msg) => msg.role !== 'system');
     this.conversation.unshift({
       role: 'system',
       content: newSystemPrompt,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     // Sync to slashCommandHandler
@@ -242,8 +270,21 @@ export class InteractiveSession {
     console.log('');
     console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
     console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
-    console.log(colors.gradient('║') + ' '.repeat(13) + '🤖 ' + colors.gradient('XAGENT CLI') + ' '.repeat(32) + colors.gradient('  ║'));
-    console.log(colors.gradient('║') + ' '.repeat(16) + colors.textMuted(`v${packageJson.version}`) + ' '.repeat(36) + colors.gradient('  ║'));
+    console.log(
+      colors.gradient('║') +
+        ' '.repeat(13) +
+        '🤖 ' +
+        colors.gradient('XAGENT CLI') +
+        ' '.repeat(32) +
+        colors.gradient('  ║')
+    );
+    console.log(
+      colors.gradient('║') +
+        ' '.repeat(16) +
+        colors.textMuted(`v${packageJson.version}`) +
+        ' '.repeat(36) +
+        colors.gradient('  ║')
+    );
     console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
     console.log(colors.gradient('╚════════════════════════════════════════════════════════════╝'));
     console.log(colors.textMuted('  AI-powered command-line assistant'));
@@ -259,19 +300,21 @@ export class InteractiveSession {
 
     // Start watching for skill updates from CLI
     this.startSkillUpdateWatcher();
+    // Set up ESC key handler using the terminal module
+    // This avoids conflicts with readline and provides clean ESC detection
+    let escCleanup: (() => void) | undefined;
+    if (process.stdin.isTTY) {
+      escCleanup = setupEscKeyHandler(() => {
+        if ((this as any)._isOperationInProgress) {
+          // An operation is running, let it be cancelled
+          this.cancellationManager.cancel();
+        }
+        // No operation running, ignore ESC
+      });
+    }
 
     // Track if an operation is in progress
     (this as any)._isOperationInProgress = false;
-
-    // Listen for ESC cancellation - only cancel operations, don't exit the program
-    const cancelHandler = () => {
-      if ((this as any)._isOperationInProgress) {
-        // An operation is running, let it be cancelled
-        return;
-      }
-      // No operation running, ignore ESC or show a message
-    };
-    this.cancellationManager.on('cancelled', cancelHandler);
 
     this.promptLoop();
 
@@ -285,15 +328,15 @@ export class InteractiveSession {
     logger.debug('\n[SESSION] ========== initialize() 开始 ==========\n');
 
     try {
-            // Custom spinner for initialization (like Thinking...)
-            const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-            let frameIndex = 0;
-            const validatingText = colors.textMuted('Validating authentication...');
-      
-            const spinnerInterval = setInterval(() => {
-              process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${validatingText}`);
-              frameIndex = (frameIndex + 1) % frames.length;
-            }, 120);
+      // Custom spinner for initialization (like Thinking...)
+      const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+      let frameIndex = 0;
+      const validatingText = colors.textMuted('Validating authentication...');
+
+      const spinnerInterval = setInterval(() => {
+        process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${validatingText}`);
+        frameIndex = (frameIndex + 1) % frames.length;
+      }, 120);
       logger.debug('[SESSION] 调用 configManager.load()...');
       this.configManager.load();
 
@@ -305,13 +348,16 @@ export class InteractiveSession {
       logger.debug('[SESSION] selectedAuthType (initial):', String(selectedAuthType));
       logger.debug('[SESSION] AuthType.OAUTH_XAGENT:', String(AuthType.OAUTH_XAGENT));
       logger.debug('[SESSION] AuthType.OPENAI_COMPATIBLE:', String(AuthType.OPENAI_COMPATIBLE));
-      logger.debug('[SESSION] Will validate OAuth:', String(!!(authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT)));
+      logger.debug(
+        '[SESSION] Will validate OAuth:',
+        String(!!(authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT))
+      );
 
       // Only validate OAuth tokens, skip validation for third-party API keys
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
         clearInterval(spinnerInterval);
         process.stdout.write('\r' + ' '.repeat(50) + '\r'); // Clear the line
-        
+
         const baseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
         let isValid = await this.validateToken(baseUrl, authConfig.apiKey);
 
@@ -323,7 +369,7 @@ export class InteractiveSession {
             process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${refreshingText}`);
             frameIndex = (frameIndex + 1) % frames.length;
           }, 120);
-          
+
           const newToken = await this.refreshToken(baseUrl, authConfig.refreshToken);
           clearInterval(refreshInterval);
           process.stdout.write('\r' + ' '.repeat(50) + '\r');
@@ -352,11 +398,11 @@ export class InteractiveSession {
           await this.setupAuthentication();
           authConfig = this.configManager.getAuthConfig();
 
-          // Recreate readline interface after inquirer
+          // Recreate readline interface after interactive prompt
           this.rl.close();
           this.rl = readline.createInterface({
             input: process.stdin,
-            output: process.stdout
+            output: process.stdout,
           });
           this.rl.on('close', () => {
             // readline closed
@@ -371,11 +417,11 @@ export class InteractiveSession {
         selectedAuthType = this.configManager.get('selectedAuthType');
         logger.debug('[SESSION] selectedAuthType (after setup):', String(selectedAuthType));
 
-        // Recreate readline interface after inquirer
+        // Recreate readline interface after interactive prompt
         this.rl.close();
         this.rl = readline.createInterface({
           input: process.stdin,
-          output: process.stdout
+          output: process.stdout,
         });
         this.rl.on('close', () => {
           // readline closed
@@ -388,9 +434,35 @@ export class InteractiveSession {
 
       // Initialize AI clients and set contextCompressor appropriately
       if (selectedAuthType === AuthType.OAUTH_XAGENT) {
+        // Remote mode: fetch default models if not set
+        const currentLlm = this.configManager.get('remote_llmModelName');
+        const currentVlm = this.configManager.get('remote_vlmModelName');
+        
+        if (!currentLlm || !currentVlm) {
+          const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
+          
+          try {
+            const defaults = await RemoteAIClient.fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
+
+            if (!currentLlm && defaults.llm?.name) {
+              this.configManager.set('remote_llmModelName', defaults.llm.name);
+            }
+            if (!currentVlm && defaults.vlm?.name) {
+              this.configManager.set('remote_vlmModelName', defaults.vlm.name);
+            }
+            this.configManager.save('global');
+          } catch (error: any) {
+            logger.debug('[SESSION] Failed to fetch default models:', error.message);
+          }
+        }
+
         // Remote mode: create RemoteAIClient and use it for context compression
         const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-        this.remoteAIClient = new RemoteAIClient(authConfig.apiKey || '', webBaseUrl, authConfig.showAIDebugInfo);
+        this.remoteAIClient = new RemoteAIClient(
+          authConfig.apiKey || '',
+          webBaseUrl,
+          authConfig.showAIDebugInfo
+        );
         this.contextCompressor.setAIClient(this.remoteAIClient);
         logger.debug('[DEBUG Initialize] RemoteAIClient created successfully');
       } else {
@@ -403,7 +475,8 @@ export class InteractiveSession {
       // Sync remoteAIClient reference to slashCommandHandler for /provider command
       this.slashCommandHandler.setRemoteAIClient(this.remoteAIClient);
 
-      this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
+      this.executionMode =
+        this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
 
       await this.agentManager.loadAgents();
       await this.memoryManager.loadMemory();
@@ -430,11 +503,17 @@ export class InteractiveSession {
       // Eagerly connect to MCP servers to get tool definitions
       if (mcpServers && Object.keys(mcpServers).length > 0) {
         try {
-          console.log(`${colors.info(`${icons.brain} Connecting to ${Object.keys(mcpServers).length} MCP server(s)...`)}`);
+          console.log(
+            `${colors.info(`${icons.brain} Connecting to ${Object.keys(mcpServers).length} MCP server(s)...`)}`
+          );
           await this.mcpManager.connectAllServers();
-          const connectedCount = Array.from(this.mcpManager.getAllServers()).filter((s: any) => s.isServerConnected()).length;
+          const connectedCount = Array.from(this.mcpManager.getAllServers()).filter((s: any) =>
+            s.isServerConnected()
+          ).length;
           const mcpTools = this.mcpManager.getToolDefinitions();
-          console.log(`${colors.success(`✓ ${connectedCount}/${Object.keys(mcpServers).length} MCP server(s) connected (${mcpTools.length} tools available)`)}`);
+          console.log(
+            `${colors.success(`✓ ${connectedCount}/${Object.keys(mcpServers).length} MCP server(s) connected (${mcpTools.length} tools available)`)}`
+          );
 
           // Register MCP tools with the tool registry (hide MCP origin from LLM)
           const toolRegistry = getToolRegistry();
@@ -472,7 +551,7 @@ export class InteractiveSession {
   private async validateToken(baseUrl: string, apiKey: string): Promise<boolean> {
     logger.debug('[SESSION] validateToken called with baseUrl:', baseUrl);
     logger.debug('[SESSION] apiKey exists:', apiKey ? 'yes' : 'no');
-    
+
     try {
       // For OAuth XAGENT auth, use /api/auth/me endpoint
       const url = `${baseUrl}/api/auth/me`;
@@ -482,11 +561,11 @@ export class InteractiveSession {
 
       const response = await axios.get(url, {
         headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
         },
         httpsAgent,
-        timeout: 10000
+        timeout: 10000,
       });
 
       logger.debug('[SESSION] Validation response status:', String(response.status));
@@ -508,10 +587,14 @@ export class InteractiveSession {
       const url = `${baseUrl}/api/auth/refresh`;
       const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
-      const response = await axios.post(url, { refreshToken }, {
-        httpsAgent,
-        timeout: 10000
-      });
+      const response = await axios.post(
+        url,
+        { refreshToken },
+        {
+          httpsAgent,
+          timeout: 10000,
+        }
+      );
 
       if (response.status === 200) {
         const data = response.data as { token?: string; refreshToken?: string };
@@ -536,13 +619,13 @@ export class InteractiveSession {
 
     // Get xagentApiBaseUrl from config (respects XAGENT_BASE_URL env var)
     const config = this.configManager.getAuthConfig();
-    
+
     const authService = new AuthService({
       type: authType,
       apiKey: '',
       baseUrl: '',
       modelName: '',
-      xagentApiBaseUrl: config.xagentApiBaseUrl
+      xagentApiBaseUrl: config.xagentApiBaseUrl,
     });
 
     const success = await authService.authenticate();
@@ -571,14 +654,14 @@ export class InteractiveSession {
     }
 
     this.configManager.setAuthConfig(authConfig);
-    
-    // Set default remote provider settings if not already set
+
+    // Set default remote model settings if not already set
     if (authType === AuthType.OAUTH_XAGENT) {
-      if (!this.configManager.get('remote_llmProvider')) {
-        this.configManager.set('remote_llmProvider', 'Default');
+      if (!this.configManager.get('remote_llmModelName')) {
+        this.configManager.set('remote_llmModelName', '');
       }
-      if (!this.configManager.get('remote_vlmProvider')) {
-        this.configManager.set('remote_vlmProvider', 'Default');
+      if (!this.configManager.get('remote_vlmModelName')) {
+        this.configManager.set('remote_vlmModelName', '');
       }
       this.configManager.save('global');
     }
@@ -593,7 +676,8 @@ export class InteractiveSession {
 
     if (language === 'zh') {
       console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
-              console.log(colors.textMuted('Type /help to see available commands'));    } else {
+      console.log(colors.textMuted('Type /help to see available commands'));
+    } else {
       console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
       console.log(colors.textMuted('Type /help to see available commands'));
     }
@@ -609,28 +693,28 @@ export class InteractiveSession {
       [ExecutionMode.YOLO]: {
         color: colors.error,
         icon: icons.fire,
-        description: 'Execute commands without confirmation'
+        description: 'Execute commands without confirmation',
       },
       [ExecutionMode.ACCEPT_EDITS]: {
         color: colors.warning,
         icon: icons.check,
-        description: 'Accept all edits automatically'
+        description: 'Accept all edits automatically',
       },
       [ExecutionMode.PLAN]: {
         color: colors.info,
         icon: icons.brain,
-        description: 'Plan before executing'
+        description: 'Plan before executing',
       },
       [ExecutionMode.DEFAULT]: {
         color: colors.success,
         icon: icons.bolt,
-        description: 'Safe execution with confirmations'
+        description: 'Safe execution with confirmations',
       },
       [ExecutionMode.SMART]: {
         color: colors.primaryBright,
         icon: icons.sparkles,
-        description: 'Smart approval with intelligent security checks'
-      }
+        description: 'Smart approval with intelligent security checks',
+      },
     };
 
     const config = modeConfig[this.executionMode];
@@ -639,6 +723,28 @@ export class InteractiveSession {
     console.log(colors.textMuted(`${icons.info} Current Mode:`));
     console.log(`  ${config.color(config.icon)} ${styleHelpers.text.bold(config.color(modeName))}`);
     console.log(`  ${colors.textDim(`  ${config.description}`)}`);
+    console.log('');
+
+    this.showRemoteModelInfo();
+  }
+
+  private showRemoteModelInfo(): void {
+    const authConfig = this.configManager.getAuthConfig();
+    const isRemote = authConfig.type === AuthType.OAUTH_XAGENT;
+
+    if (isRemote) {
+      const llmModel = authConfig.remote_llmModelName || colors.textMuted('Not set');
+      const vlmModel = authConfig.remote_vlmModelName || colors.textMuted('Not set');
+      console.log(colors.textMuted(`${icons.brain} Remote Models:`));
+      console.log(`  ${colors.primaryBright(icons.arrowRight)} ${colors.info('LLM:')} ${llmModel}`);
+      console.log(`  ${colors.primaryBright(icons.arrowRight)} ${colors.info('VLM:')} ${vlmModel}`);
+    } else {
+      const modelName = authConfig.modelName || colors.textMuted('Not set');
+      const guiSubagentModel = this.configManager.get('guiSubagentModel') || colors.textMuted('Not set');
+      console.log(colors.textMuted(`${icons.brain} Local Models:`));
+      console.log(`  ${colors.primaryBright(icons.arrowRight)} ${colors.info('LLM:')} ${modelName}`);
+      console.log(`  ${colors.primaryBright(icons.arrowRight)} ${colors.info('VLM:')} ${guiSubagentModel}`);
+    }
     console.log('');
   }
 
@@ -653,16 +759,13 @@ export class InteractiveSession {
       this.rl.close();
     }
 
-    // Enable raw mode BEFORE emitKeypressEvents for better ESC detection
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-    }
-    process.stdin.resume();
-    readline.emitKeypressEvents(process.stdin);
+    // Ensure TTY is in proper state for input handling
+    // This handles any state left by @clack/prompts or other interactions
+    ensureTtySane();
 
     this.rl = readline.createInterface({
       input: process.stdin,
-      output: process.stdout
+      output: process.stdout,
     });
 
     const prompt = `${colors.primaryBright('❯')} `;
@@ -691,7 +794,8 @@ export class InteractiveSession {
     if (trimmedInput.startsWith('/')) {
       const handled = await this.slashCommandHandler.handleCommand(trimmedInput);
       if (handled) {
-        this.executionMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
+        this.executionMode =
+          this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
         // Sync conversation history to slashCommandHandler
         this.slashCommandHandler.setConversationHistory(this.conversation);
       }
@@ -721,7 +825,9 @@ export class InteractiveSession {
     }
 
     console.log('');
-    console.log(colors.primaryBright(`${icons.robot} Using agent: ${agent.name || agent.agentType}`));
+    console.log(
+      colors.primaryBright(`${icons.robot} Using agent: ${agent.name || agent.agentType}`)
+    );
     console.log(colors.border(icons.separator.repeat(40)));
     console.log('');
 
@@ -731,9 +837,9 @@ export class InteractiveSession {
 
   public async processUserMessage(message: string, agent?: AgentConfig): Promise<void> {
     const inputs = parseInput(message);
-    const textInput = inputs.find(i => i.type === 'text');
-    const fileInputs = inputs.filter(i => i.type === 'file');
-    const commandInput = inputs.find(i => i.type === 'command');
+    const textInput = inputs.find((i) => i.type === 'text');
+    const fileInputs = inputs.filter((i) => i.type === 'file');
+    const commandInput = inputs.find((i) => i.type === 'command');
 
     if (commandInput) {
       await this.executeShellCommand(commandInput.content);
@@ -746,10 +852,16 @@ export class InteractiveSession {
       const toolRegistry = getToolRegistry();
       for (const fileInput of fileInputs) {
         try {
-          const content = await toolRegistry.execute('Read', { filePath: fileInput.content }, this.executionMode);
+          const content = await toolRegistry.execute(
+            'Read',
+            { filePath: fileInput.content },
+            this.executionMode
+          );
           userContent += `\n\n--- File: ${fileInput.content} ---\n${content}`;
         } catch (error: any) {
-          console.log(chalk.yellow(`Warning: Failed to read file ${fileInput.content}: ${error.message}`));
+          console.log(
+            chalk.yellow(`Warning: Failed to read file ${fileInput.content}: ${error.message}`)
+          );
         }
       }
     }
@@ -759,7 +871,7 @@ export class InteractiveSession {
       type: 'text' as const,
       content: userContent,
       rawInput: message,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
     await this.sessionManager.addInput(sessionInput);
 
@@ -776,7 +888,7 @@ export class InteractiveSession {
     const userMessage: ChatMessage = {
       role: 'user',
       content: userContent,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
 
     this.conversation.push(userMessage);
@@ -784,7 +896,9 @@ export class InteractiveSession {
 
     // Use remote AI client if available (OAuth XAGENT mode)
     const currentSelectedAuthType = this.configManager.get('selectedAuthType');
-    logger.debug(`[DEBUG] processUserMessage: remoteAIClient exists=${!!this.remoteAIClient}, selectedAuthType=${currentSelectedAuthType}`);
+    logger.debug(
+      `[DEBUG] processUserMessage: remoteAIClient exists=${!!this.remoteAIClient}, selectedAuthType=${currentSelectedAuthType}`
+    );
 
     if (this.remoteAIClient) {
       logger.debug('[DEBUG] Using generateRemoteResponse (remote mode)');
@@ -800,7 +914,9 @@ export class InteractiveSession {
     const thinkingConfig = this.configManager.getThinkingConfig();
     const displayMode = thinkingConfig.displayMode || 'compact';
 
-    const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length);
+    const separator = icons.separator.repeat(
+      Math.min(60, process.stdout.columns || 80) - indent.length
+    );
 
     console.log('');
     console.log(`${indent}${colors.border(separator)}`);
@@ -816,9 +932,10 @@ export class InteractiveSession {
       case 'compact':
         // Compact display, truncate partial content
         const maxLength = 500;
-        const truncatedContent = reasoningContent.length > maxLength
-          ? reasoningContent.substring(0, maxLength) + '... (truncated)'
-          : reasoningContent;
+        const truncatedContent =
+          reasoningContent.length > maxLength
+            ? reasoningContent.substring(0, maxLength) + '... (truncated)'
+            : reasoningContent;
 
         console.log(`${indent}${colors.textDim(`${icons.brain} Thinking Process:`)}`);
         console.log('');
@@ -829,7 +946,9 @@ export class InteractiveSession {
       case 'indicator':
         // Show indicator only
         console.log(`${indent}${colors.textDim(`${icons.brain} Thinking process completed`)}`);
-        console.log(`${indent}${colors.textDim(`[${reasoningContent.length} chars of reasoning]`)}`);
+        console.log(
+          `${indent}${colors.textDim(`[${reasoningContent.length} chars of reasoning]`)}`
+        );
         break;
 
       default:
@@ -871,12 +990,15 @@ export class InteractiveSession {
     const contextWindow = contextWindowMatch ? parseInt(contextWindowMatch[1], 10) : 0;
 
     console.log('');
-    console.log(`${indent}${colors.success(`${icons.sparkles} Compressing context (${currentMessages} msgs, ${tokenCount.toLocaleString()} > ${threshold.toLocaleString()}/${contextWindow.toLocaleString()} tokens, ${Math.round(tokenCount / contextWindow * 100)}% of context window)...`)}`);
+    console.log(
+      `${indent}${colors.success(`${icons.sparkles} Compressing context (${currentMessages} msgs, ${tokenCount.toLocaleString()} > ${threshold.toLocaleString()}/${contextWindow.toLocaleString()} tokens, ${Math.round((tokenCount / contextWindow) * 100)}% of context window)...`)}`
+    );
 
     const toolRegistry = getToolRegistry();
     const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
     const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
-    const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
+    const enhancedSystemPrompt =
+      await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
     const result: CompressionResult = await this.contextCompressor.compressContext(
       this.conversation,
@@ -887,12 +1009,14 @@ export class InteractiveSession {
     if (result.wasCompressed) {
       this.conversation = result.compressedMessages;
       const reductionPercent = Math.round((1 - result.compressedSize / result.originalSize) * 100);
-      console.log(`${indent}${colors.success(`${icons.success} Compressed ${result.originalMessageCount} → ${result.compressedMessageCount} messages (${reductionPercent}% smaller)`)}`);
+      console.log(
+        `${indent}${colors.success(`${icons.success} Compressed ${result.originalMessageCount} → ${result.compressedMessageCount} messages (${reductionPercent}% smaller)`)}`
+      );
 
       // Summary is embedded in first user message, look for it
       // The format is: "[Conversation Summary - X messages compressed]\n\n${summary}"
-      let summaryMessage: ChatMessage | undefined = result.compressedMessages.find(m =>
-        m.role === 'user' && m.content.includes('[Conversation Summary')
+      let summaryMessage: ChatMessage | undefined = result.compressedMessages.find(
+        (m) => m.role === 'user' && m.content.includes('[Conversation Summary')
       );
 
       if (summaryMessage) {
@@ -902,7 +1026,7 @@ export class InteractiveSession {
           summaryMessage = {
             role: 'assistant',
             content: match[1],
-            timestamp: summaryMessage.timestamp
+            timestamp: summaryMessage.timestamp,
           };
         }
       }
@@ -917,13 +1041,24 @@ export class InteractiveSession {
         }
 
         console.log('');
-        console.log(`${indent}${theme.predefinedStyles.title(`${icons.sparkles} Conversation Summary`)}`);
-        const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length * 2);
+        console.log(
+          `${indent}${theme.predefinedStyles.title(`${icons.sparkles} Conversation Summary`)}`
+        );
+        const separator = icons.separator.repeat(
+          Math.min(60, process.stdout.columns || 80) - indent.length * 2
+        );
         console.log(`${indent}${colors.border(separator)}`);
-        const renderedSummary = renderMarkdown(summaryContent, (process.stdout.columns || 80) - indent.length * 4);
-        console.log(`${indent}${theme.predefinedStyles.dim(renderedSummary).replace(/^/gm, indent)}`);
+        const renderedSummary = renderMarkdown(
+          summaryContent,
+          (process.stdout.columns || 80) - indent.length * 4
+        );
+        console.log(
+          `${indent}${theme.predefinedStyles.dim(renderedSummary).replace(/^/gm, indent)}`
+        );
         if (isTruncated) {
-          console.log(`${indent}${colors.textMuted(`(... ${summaryMessage.content.length - maxPreviewLength} more chars hidden)`)}`);
+          console.log(
+            `${indent}${colors.textMuted(`(... ${summaryMessage.content.length - maxPreviewLength} more chars hidden)`)}`
+          );
         }
         console.log(`${indent}${colors.border(separator)}`);
       }
@@ -938,7 +1073,9 @@ export class InteractiveSession {
     console.log('');
     console.log(`${indent}${colors.textMuted(`${icons.code} Executing:`)}`);
     console.log(`${indent}${colors.codeText(`  $ ${command}`)}`);
-    console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
+    console.log(
+      `${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`
+    );
     console.log('');
 
     const toolRegistry = getToolRegistry();
@@ -958,7 +1095,7 @@ export class InteractiveSession {
         tool: 'Bash',
         params: { command },
         result,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       };
 
       this.tool_calls.push(toolCall);
@@ -968,7 +1105,7 @@ export class InteractiveSession {
         type: 'command',
         content: command,
         rawInput: command,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
       await this.sessionManager.addOutput({
@@ -977,7 +1114,7 @@ export class InteractiveSession {
         toolName: 'Bash',
         toolParams: { command },
         toolResult: result,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
     } catch (error: any) {
       console.log(`${indent}${colors.error(`Command execution failed: ${error.message}`)}`);
@@ -1006,21 +1143,22 @@ export class InteractiveSession {
    */
   private createRemoteCaller(taskId: string, status: 'begin' | 'continue') {
     const client = this.remoteAIClient!;
-    
+
+
     return {
       chatCompletion: (messages: ChatMessage[], options: any) => {
         // Must fetch authConfig inside the closure, otherwise it captures stale config
         const authConfig = this.configManager.getAuthConfig();
-        logger.debug(`[DEBUG] createRemoteCaller: llmProvider=${authConfig.remote_llmProvider}, vlmProvider=${authConfig.remote_vlmProvider}`);
+        logger.debug(`[DEBUG] createRemoteCaller: llmModelName=${authConfig.remote_llmModelName}, vlmModelName=${authConfig.remote_vlmModelName}`);
         return client.chatCompletion(messages, {
           ...options,
           taskId,
           status: options.isFirstApiCall ? 'begin' : 'continue',
-          llmProvider: authConfig.remote_llmProvider,
-          vlmProvider: authConfig.remote_vlmProvider
+          llmModelName: authConfig.remote_llmModelName,
+          vlmModelName: authConfig.remote_vlmModelName
         });
       },
-      isRemote: true
+      isRemote: true,
     };
   }
 
@@ -1030,13 +1168,17 @@ export class InteractiveSession {
   private createLocalCaller() {
     const client = this.aiClient!;
     return {
-      chatCompletion: (messages: ChatMessage[], options: any) => 
+      chatCompletion: (messages: ChatMessage[], options: any) =>
         client.chatCompletion(messages as any, options),
-      isRemote: false
+      isRemote: false,
     };
   }
 
-  private async generateResponse(thinkingTokens: number = 0, _customAIClient?: AIClient, existingTaskId?: string): Promise<void> {
+  private async generateResponse(
+    thinkingTokens: number = 0,
+    _customAIClient?: AIClient,
+    existingTaskId?: string
+  ): Promise<void> {
     // Use existing taskId or create new one for this user interaction
     // If taskId already exists (e.g., from tool calls), reuse it
     const taskId = existingTaskId || this.currentTaskId || crypto.randomUUID();
@@ -1083,18 +1225,28 @@ export class InteractiveSession {
       const toolDefinitions = toolRegistry.getToolDefinitions();
 
       // Available tools for this session
-      const availableTools = this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
-        ? toolDefinitions.filter((tool): tool is { function: { name: string } } =>
-            typeof tool.function?.name === 'string' && allowedToolNames.includes(tool.function.name))
-        : toolDefinitions;
+      const availableTools =
+        this.executionMode !== ExecutionMode.DEFAULT && allowedToolNames.length > 0
+          ? toolDefinitions.filter(
+              (tool): tool is { function: { name: string } } =>
+                typeof tool.function?.name === 'string' &&
+                allowedToolNames.includes(tool.function.name)
+            )
+          : toolDefinitions;
 
       const baseSystemPrompt = this.currentAgent?.systemPrompt ?? '';
-      const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode, undefined, this.mcpManager);
-      const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
+      const systemPromptGenerator = new SystemPromptGenerator(
+        toolRegistry,
+        this.executionMode,
+        undefined,
+        this.mcpManager
+      );
+      const enhancedSystemPrompt =
+        await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
       const messages: ChatMessage[] = [
         { role: 'system', content: `${enhancedSystemPrompt}\n\n${memory}`, timestamp: Date.now() },
-        ...this.conversation
+        ...this.conversation,
       ];
 
       const operationId = `ai-response-${Date.now()}`;
@@ -1103,7 +1255,7 @@ export class InteractiveSession {
           tools: availableTools,
           toolChoice: availableTools.length > 0 ? 'auto' : 'none',
           thinkingTokens,
-          isFirstApiCall: this.isFirstApiCall
+          isFirstApiCall: this.isFirstApiCall,
         }),
         operationId
       );
@@ -1116,9 +1268,7 @@ export class InteractiveSession {
 
       const assistantMessage = response.choices[0].message;
 
-      const content = typeof assistantMessage.content === 'string'
-        ? assistantMessage.content
-        : '';
+      const content = typeof assistantMessage.content === 'string' ? assistantMessage.content : '';
       const reasoningContent = assistantMessage.reasoning_content || '';
       // Display reasoning content if available and thinking mode is enabled
       if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
@@ -1127,18 +1277,27 @@ export class InteractiveSession {
 
       console.log('');
       console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
-      console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
+      console.log(
+        `${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`
+      );
       console.log('');
-      const renderedContent = renderMarkdown(content, (process.stdout.columns || 80) - indent.length * 2);
+      const renderedContent = renderMarkdown(
+        content,
+        (process.stdout.columns || 80) - indent.length * 2
+      );
       console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
       console.log('');
+
+      // Clear tool call ID mapping at the start of each user message processing
+      // This prevents stale data from previous requests from polluting the next task
+      this.toolCallIdMapping = new Map();
 
       this.conversation.push({
         role: 'assistant',
         content,
         timestamp: Date.now(),
         reasoningContent,
-        tool_calls: assistantMessage.tool_calls
+        tool_calls: assistantMessage.tool_calls,
       });
 
       // Record output to session manager
@@ -1147,7 +1306,7 @@ export class InteractiveSession {
         content,
         timestamp: Date.now(),
         reasoningContent,
-        tool_calls: assistantMessage.tool_calls
+        tool_calls: assistantMessage.tool_calls,
       });
 
       if (assistantMessage.tool_calls) {
@@ -1162,7 +1321,7 @@ export class InteractiveSession {
           [...this.conversation],
           [...this.tool_calls]
         );
-      }      
+      }
 
       // Operation completed successfully, clear the flag
       (this as any)._isOperationInProgress = false;
@@ -1181,11 +1340,12 @@ export class InteractiveSession {
         return;
       }
       // Distinguish error types: timeout vs other failures
-      const isTimeout = error.message.includes('timeout') || 
-                        error.message.includes('Timeout');
+      const isTimeout = error.message.includes('timeout') || error.message.includes('Timeout');
       const failureReason = isTimeout ? 'timeout' : 'failure';
 
-      logger.debug(`[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}, reason: ${failureReason}`);
+      logger.debug(
+        `[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}, reason: ${failureReason}`
+      );
       if (this.remoteAIClient && this.currentTaskId) {
         await this.remoteAIClient.failTask(this.currentTaskId, failureReason).catch(() => {});
       }
@@ -1201,17 +1361,24 @@ export class InteractiveSession {
    * @param thinkingTokens - Optional thinking tokens config
    * @param existingTaskId - Optional existing taskId to reuse (for tool call continuation)
    */
-  private async generateRemoteResponse(thinkingTokens: number = 0, existingTaskId?: string): Promise<void> {
+  private async generateRemoteResponse(
+    thinkingTokens: number = 0,
+    existingTaskId?: string
+  ): Promise<void> {
     // Reuse existing taskId or create new one for this user interaction
     const taskId = existingTaskId || crypto.randomUUID();
     this.currentTaskId = taskId;
-    logger.debug(`[Session] generateRemoteResponse: taskId=${taskId}, existingTaskId=${!!existingTaskId}`);
+    logger.debug(
+      `[Session] generateRemoteResponse: taskId=${taskId}, existingTaskId=${!!existingTaskId}`
+    );
 
     // Each new user message is a fresh task - always set isFirstApiCall = true
     // This ensures status is 'begin' for every user message
     this.isFirstApiCall = true;
     const status: 'begin' | 'continue' = 'begin';
-    logger.debug(`[Session] Status for this call: ${status}, isFirstApiCall=${this.isFirstApiCall}`);
+    logger.debug(
+      `[Session] Status for this call: ${status}, isFirstApiCall=${this.isFirstApiCall}`
+    );
 
     // Check if remote client is available
     if (!this.remoteAIClient) {
@@ -1220,7 +1387,7 @@ export class InteractiveSession {
     }
 
     try {
-      // Use unified generateResponse without passing customAIClient, 
+      // Use unified generateResponse without passing customAIClient,
       // let createLLMCaller handle remote/local selection
       await this.generateResponse(thinkingTokens, undefined, taskId);
 
@@ -1229,7 +1396,6 @@ export class InteractiveSession {
       if (this.currentTaskId) {
         await this.remoteAIClient.completeTask(this.currentTaskId);
       }
-
     } catch (error: any) {
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
@@ -1254,7 +1420,9 @@ export class InteractiveSession {
         this.configManager.set('refreshToken', '');
         this.configManager.save('global');
 
-        logger.debug('[DEBUG generateRemoteResponse] Cleared invalid credentials, starting re-authentication...');
+        logger.debug(
+          '[DEBUG generateRemoteResponse] Cleared invalid credentials, starting re-authentication...'
+        );
 
         // Re-authenticate
         await this.setupAuthentication();
@@ -1266,11 +1434,11 @@ export class InteractiveSession {
         logger.debug('[DEBUG generateRemoteResponse] After re-auth:');
         logger.debug('  - authConfig.apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
 
-        // Recreate readline interface after inquirer
+        // Recreate readline interface after interactive prompt
         this.rl.close();
         this.rl = readline.createInterface({
           input: process.stdin,
-          output: process.stdout
+          output: process.stdout,
         });
         this.rl.on('close', () => {
           logger.debug('DEBUG: readline interface closed');
@@ -1279,10 +1447,18 @@ export class InteractiveSession {
         // Reinitialize RemoteAIClient with new token
         if (authConfig.apiKey) {
           const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-          logger.debug('[DEBUG generateRemoteResponse] Reinitializing RemoteAIClient with new token');
-          this.remoteAIClient = new RemoteAIClient(authConfig.apiKey, webBaseUrl, authConfig.showAIDebugInfo);
+          logger.debug(
+            '[DEBUG generateRemoteResponse] Reinitializing RemoteAIClient with new token'
+          );
+          this.remoteAIClient = new RemoteAIClient(
+            authConfig.apiKey,
+            webBaseUrl,
+            authConfig.showAIDebugInfo
+          );
         } else {
-          logger.debug('[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!');
+          logger.debug(
+            '[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!'
+          );
         }
 
         // Sync remoteAIClient reference to slashCommandHandler for /provider command
@@ -1296,11 +1472,12 @@ export class InteractiveSession {
       }
 
       // Distinguish error types: timeout vs other failures
-      const isTimeout = error.message.includes('timeout') || 
-                        error.message.includes('Timeout');
+      const isTimeout = error.message.includes('timeout') || error.message.includes('Timeout');
       const failureReason = isTimeout ? 'timeout' : 'failure';
 
-      logger.debug(`[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}, reason: ${failureReason}`);
+      logger.debug(
+        `[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}, reason: ${failureReason}`
+      );
       if (this.remoteAIClient && this.currentTaskId) {
         await this.remoteAIClient.failTask(this.currentTaskId, failureReason).catch(() => {});
       }
@@ -1310,7 +1487,10 @@ export class InteractiveSession {
     }
   }
 
-  private async handleToolCalls(toolCalls: ToolCallItem[], onComplete?: () => Promise<void>): Promise<void> {
+  private async handleToolCalls(
+    toolCalls: ToolCallItem[],
+    onComplete?: () => Promise<void>
+  ): Promise<void> {
     // Mark that tool execution is in progress
     (this as any)._isOperationInProgress = true;
 
@@ -1346,17 +1526,34 @@ export class InteractiveSession {
 
     // Execute all tools in parallel
     const results = await toolRegistry.executeAll(
-      preparedToolCalls.map(tc => ({ name: tc.name, params: tc.params })),
+      preparedToolCalls.map((tc) => ({ name: tc.name, params: tc.params })),
       this.executionMode
     );
 
-    // Process results and maintain order
-    let hasError = false;
-    for (const { tool, result, error } of results) {
-      const toolCall = preparedToolCalls.find(tc => tc.name === tool);
-      if (!toolCall) continue;
+    // Create a map to store results by tool call index to maintain original order
+    const resultsByIndex = new Map<number, { tool: string; result: any; error?: string }>();
+    const usedIndices = new Set<number>();
+    
+    for (const result of results) {
+      // Find the first unused original index in preparedToolCalls that matches the tool name
+      const originalIndex = preparedToolCalls.findIndex((tc, idx) => 
+        tc.name === result.tool && !usedIndices.has(idx)
+      );
+      if (originalIndex !== -1) {
+        usedIndices.add(originalIndex);
+        resultsByIndex.set(originalIndex, result);
+      }
+    }
 
-      const { params } = toolCall;
+    // Process results in the original tool_calls order (critical for Anthropic format APIs)
+    let hasError = false;
+    for (let i = 0; i < preparedToolCalls.length; i++) {
+      const toolCall = preparedToolCalls[i];
+      const { name: tool, params } = toolCall;
+      
+      const resultData = resultsByIndex.get(i);
+      const result = resultData?.result;
+      const error = resultData?.error;
 
       if (error) {
         if (error === 'Operation cancelled by user') {
@@ -1379,10 +1576,10 @@ export class InteractiveSession {
           content: JSON.stringify({
             name: tool,
             parameters: params,
-            error: error
+            error: error,
           }),
           tool_call_id: toolCall.id,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
       } else {
         // Use correct indent for gui-subagent tasks
@@ -1425,7 +1622,10 @@ export class InteractiveSession {
           // Show edit result with diff
           console.log('');
           const diffOutput = renderDiff(result.diff);
-          const indentedDiff = diffOutput.split('\n').map(line => `${displayIndent}  ${line}`).join('\n');
+          const indentedDiff = diffOutput
+            .split('\n')
+            .map((line) => `${displayIndent}  ${line}`)
+            .join('\n');
           console.log(`${indentedDiff}`);
         } else if (hasFilePreview) {
           // Show new file content in diff-like style
@@ -1437,24 +1637,34 @@ export class InteractiveSession {
         } else if (hasDeleteInfo) {
           // Show DeleteFile result
           console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.check} Deleted: ${result.filePath}`)}`);
+          console.log(
+            `${displayIndent}${colors.success(`${icons.check} Deleted: ${result.filePath}`)}`
+          );
         } else if (isTaskTool) {
           // Special handling for task tool (subagent) - show friendly summary
           console.log('');
           const subagentType = params.subagent_type;
-          const subagentName = params.description || (params.prompt ? params.prompt.substring(0, 50).replace(/\n/g, ' ') : 'Unknown task');
+          const subagentName =
+            params.description ||
+            (params.prompt ? params.prompt.substring(0, 50).replace(/\n/g, ' ') : 'Unknown task');
 
           if (result?.success) {
-            console.log(`${displayIndent}${colors.success(`${icons.check} ${subagentType}: Completed`)}`);
+            console.log(
+              `${displayIndent}${colors.success(`${icons.check} ${subagentType}: Completed`)}`
+            );
             console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
             if (result.message) {
               console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
             }
           } else if (result?.cancelled) {
-            console.log(`${displayIndent}${colors.warning(`${icons.cross} ${subagentType}: Cancelled`)}`);
+            console.log(
+              `${displayIndent}${colors.warning(`${icons.cross} ${subagentType}: Cancelled`)}`
+            );
             console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
           } else {
-            console.log(`${displayIndent}${colors.error(`${icons.cross} ${subagentType}: Failed`)}`);
+            console.log(
+              `${displayIndent}${colors.error(`${icons.cross} ${subagentType}: Failed`)}`
+            );
             console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
             if (result?.message) {
               console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
@@ -1506,7 +1716,9 @@ export class InteractiveSession {
           }
 
           if (result?.success !== false) {
-            console.log(`${displayIndent}${colors.success(`${icons.check} ${serverName}: Success`)}`);
+            console.log(
+              `${displayIndent}${colors.success(`${icons.check} ${serverName}: Success`)}`
+            );
             console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
             if (summary) {
               console.log(`${displayIndent}${colors.textDim(`  ${summary}`)}`);
@@ -1515,7 +1727,9 @@ export class InteractiveSession {
             console.log(`${displayIndent}${colors.error(`${icons.cross} ${serverName}: Failed`)}`);
             console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
             if (result?.message || result?.error) {
-              console.log(`${displayIndent}${colors.textDim(`  ${result?.message || result?.error}`)}`);
+              console.log(
+                `${displayIndent}${colors.textDim(`  ${result?.message || result?.error}`)}`
+              );
             }
           }
         } else if (tool === 'InvokeSkill') {
@@ -1528,7 +1742,8 @@ export class InteractiveSession {
             console.log(`${displayIndent}${colors.success(`${icons.check} Skill: Completed`)}`);
             console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
             if (taskDesc) {
-              const truncatedTask = taskDesc.length > 60 ? taskDesc.substring(0, 60) + '...' : taskDesc;
+              const truncatedTask =
+                taskDesc.length > 60 ? taskDesc.substring(0, 60) + '...' : taskDesc;
               console.log(`${displayIndent}${colors.textDim(`  Task: ${truncatedTask}`)}`);
             }
           } else {
@@ -1544,13 +1759,20 @@ export class InteractiveSession {
           console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
         } else if (result && result.success === false) {
           // GUI task or other tool failed
-          console.log(`${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`);
+          console.log(
+            `${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`
+          );
         } else if (result) {
           // Show brief preview by default (consistent with subagent behavior)
-          const resultPreview = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-          const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
+          const resultPreview =
+            typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+          const truncatedPreview =
+            resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
           // Indent the preview
-          const indentedPreview = truncatedPreview.split('\n').map(line => `${displayIndent}  ${line}`).join('\n');
+          const indentedPreview = truncatedPreview
+            .split('\n')
+            .map((line) => `${displayIndent}  ${line}`)
+            .join('\n');
           console.log(`${indentedPreview}`);
         } else {
           console.log(`${displayIndent}${colors.textDim('(no result)')}`);
@@ -1560,7 +1782,7 @@ export class InteractiveSession {
           tool,
           params,
           result,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         };
 
         this.tool_calls.push(toolCallRecord);
@@ -1572,24 +1794,28 @@ export class InteractiveSession {
           toolName: tool,
           toolParams: params,
           toolResult: result,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
 
         // Unified message format with tool name and params
         // Format: OpenAI-compatible tool result with plain text content
-        // MiniMax requires content to be plain text, not JSON string
         this.conversation.push({
           role: 'tool',
           content: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
           tool_call_id: toolCall.id,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
       }
     }
 
     // Logic: Only skip returning results to main agent when user explicitly cancelled (ESC)
     // For all other cases (success, failure, errors), always return results for further processing
-    const guiSubagentCancelled = preparedToolCalls.some(tc => tc.name === 'task' && tc.params?.subagent_type === 'gui-subagent' && results.some(r => r.tool === 'task' && (r.result as any)?.cancelled === true));
+    const guiSubagentCancelled = preparedToolCalls.some(
+      (tc) =>
+        tc.name === 'task' &&
+        tc.params?.subagent_type === 'gui-subagent' &&
+        results.some((r) => r.tool === 'task' && (r.result as any)?.cancelled === true)
+    );
 
     // If GUI agent was cancelled by user, don't continue generating response
     // This avoids wasting API calls and tokens on cancelled tasks
@@ -1617,30 +1843,31 @@ export class InteractiveSession {
    */
   private getToolDescription(toolName: string, params: any): string {
     const descriptions: Record<string, (params: any) => string> = {
-      'Read': (p) => `Read file: ${this.truncatePath(p.filePath)}`,
-      'Write': (p) => `Write file: ${this.truncatePath(p.filePath)}`,
-      'Grep': (p) => `Search text: "${p.pattern}"`,
-      'Bash': (p) => `Execute command: ${this.truncateCommand(p.command)}`,
-      'ListDirectory': (p) => `List directory: ${this.truncatePath(p.path || '.')}`,
-      'SearchFiles': (p) => `Search files: ${p.pattern}`,
-      'DeleteFile': (p) => `Delete file: ${this.truncatePath(p.filePath)}`,
-      'CreateDirectory': (p) => `Create directory: ${this.truncatePath(p.dirPath)}`,
-      'Edit': (p) => `Edit text: ${this.truncatePath(p.file_path)}`,
-      'web_search': (p) => `Web search: "${p.query}"`,
-      'todo_write': () => `Update todo list`,
-      'todo_read': () => `Read todo list`,
-      'task': (p) => `Launch subtask: ${p.description}`,
-      'ReadBashOutput': (p) => `Read task output: ${p.task_id}`,
-      'web_fetch': () => `Fetch web content`,
-      'ask_user_question': () => `Ask user`,
-      'save_memory': () => `Save memory`,
-      'exit_plan_mode': () => `Complete plan`,
-      'xml_escape': (p) => `XML escape: ${this.truncatePath(p.file_path)}`,
-      'image_read': (p) => `Read image: ${this.truncatePath(p.image_input)}`,
+      Read: (p) => `Read file: ${this.truncatePath(p.filePath)}`,
+      Write: (p) => `Write file: ${this.truncatePath(p.filePath)}`,
+      Grep: (p) => `Search text: "${p.pattern}"`,
+      Bash: (p) => `Execute command: ${this.truncateCommand(p.command)}`,
+      ListDirectory: (p) => `List directory: ${this.truncatePath(p.path || '.')}`,
+      SearchFiles: (p) => `Search files: ${p.pattern}`,
+      DeleteFile: (p) => `Delete file: ${this.truncatePath(p.filePath)}`,
+      CreateDirectory: (p) => `Create directory: ${this.truncatePath(p.dirPath)}`,
+      Edit: (p) => `Edit text: ${this.truncatePath(p.file_path)}`,
+      web_search: (p) => `Web search: "${p.query}"`,
+      todo_write: () => `Update todo list`,
+      todo_read: () => `Read todo list`,
+      task: (p) => `Launch subtask: ${p.description}`,
+      ReadBashOutput: (p) => `Read task output: ${p.task_id}`,
+      web_fetch: () => `Fetch web content`,
+      ask_user_question: () => `Ask user`,
+      save_memory: () => `Save memory`,
+      exit_plan_mode: () => `Complete plan`,
+      xml_escape: (p) => `XML escape: ${this.truncatePath(p.file_path)}`,
+      image_read: (p) => `Read image: ${this.truncatePath(p.image_input)}`,
       // 'Skill': (p) => `Execute skill: ${p.skill}`,
       // 'ListSkills': () => `List available skills`,
       // 'GetSkillDetails': (p) => `Get skill details: ${p.skill}`,
-      'InvokeSkill': (p) => `Invoke skill: ${p.skillId} - ${this.truncatePath(p.taskDescription || '', 40)}`
+      InvokeSkill: (p) =>
+        `Invoke skill: ${p.skillId} - ${this.truncatePath(p.taskDescription || '', 40)}`,
     };
 
     const getDescription = descriptions[toolName];
@@ -1673,11 +1900,14 @@ export class InteractiveSession {
       return `${indent}${colors.textMuted('No tasks')}`;
     }
 
-    const statusConfig: Record<string, { icon: string; color: (text: string) => string; label: string }> = {
-      'pending': { icon: icons.circle, color: colors.textMuted, label: 'Pending' },
-      'in_progress': { icon: icons.loading, color: colors.warning, label: 'In Progress' },
-      'completed': { icon: icons.success, color: colors.success, label: 'Completed' },
-      'failed': { icon: icons.error, color: colors.error, label: 'Failed' }
+    const statusConfig: Record<
+      string,
+      { icon: string; color: (text: string) => string; label: string }
+    > = {
+      pending: { icon: icons.circle, color: colors.textMuted, label: 'Pending' },
+      in_progress: { icon: icons.loading, color: colors.warning, label: 'In Progress' },
+      completed: { icon: icons.success, color: colors.success, label: 'Completed' },
+      failed: { icon: icons.error, color: colors.error, label: 'Failed' },
     };
 
     const lines: string[] = [];
@@ -1716,18 +1946,18 @@ export class InteractiveSession {
   //     const messages = data as any[];
   //     const tools = extra as any[];
   //
-      //     // System prompt
-      //     const systemMsg = messages.find((m: any) => m.role === 'system');
-      //     console.log(colors.border(`${boxChar.vertical}`) + ' 🟫 SYSTEM: ' +
-      //       colors.textMuted(systemMsg?.content?.toString().substring(0, 50) || '(none)') + ' '.repeat(3) + colors.border(boxChar.vertical));
-      //
-      //     // Messages count
-      //     console.log(colors.border(`${boxChar.vertical}`) + ' 💬 MESSAGES: ' +
-      //       colors.text(messages.length.toString()) + ' items' + ' '.repeat(40) + colors.border(boxChar.vertical));
-      //
-      //     // Tools count
-      //     console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOLS: ' +
-      //       colors.text((tools?.length || 0).toString()) + '' + ' '.repeat(43) + colors.border(boxChar.vertical));  //
+  //     // System prompt
+  //     const systemMsg = messages.find((m: any) => m.role === 'system');
+  //     console.log(colors.border(`${boxChar.vertical}`) + ' 🟫 SYSTEM: ' +
+  //       colors.textMuted(systemMsg?.content?.toString().substring(0, 50) || '(none)') + ' '.repeat(3) + colors.border(boxChar.vertical));
+  //
+  //     // Messages count
+  //     console.log(colors.border(`${boxChar.vertical}`) + ' 💬 MESSAGES: ' +
+  //       colors.text(messages.length.toString()) + ' items' + ' '.repeat(40) + colors.border(boxChar.vertical));
+  //
+  //     // Tools count
+  //     console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOLS: ' +
+  //       colors.text((tools?.length || 0).toString()) + '' + ' '.repeat(43) + colors.border(boxChar.vertical));  //
   //     // Show last 2 messages
   //     const recentMessages = messages.slice(-2);
   //     for (const msg of recentMessages) {
@@ -1751,8 +1981,8 @@ export class InteractiveSession {
   //       colors.text(`Prompt: ${response.usage?.prompt_tokens || '?'}, Completion: ${response.usage?.completion_tokens || '?'}`) +
   //       ' '.repeat(15) + colors.border(boxChar.vertical));
   //
-        // console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOL_CALLS: ' +
-        //   colors.text((message.tool_calls?.length || 0).toString()) + '' + ' '.repeat(37) + colors.border(boxChar.vertical));
+  // console.log(colors.border(`${boxChar.vertical}`) + ' 🔧 TOOL_CALLS: ' +
+  //   colors.text((message.tool_calls?.length || 0).toString()) + '' + ' '.repeat(37) + colors.border(boxChar.vertical));
   //
   //     // Content preview
   //     const contentStr = typeof message.content === 'string'
@@ -1958,6 +2188,15 @@ export async function startInteractiveSession(): Promise<void> {
   });
 
   await session.start(initializedCount);
+  // Check for updates on startup
+  try {
+    const { checkUpdatesOnStartup } = await import('./update.js');
+    await checkUpdatesOnStartup();
+  } catch (error) {
+    // Silently ignore update check failures
+  }
+
+  await session.start();
 }
 
 // Singleton session instance for access from other modules

@@ -45,8 +45,8 @@ export interface RemoteChatOptions {
     };
   }>;
   signal?: AbortSignal;
-  llmProvider?: string;
-  vlmProvider?: string;
+  llmModelName?: string;
+  vlmModelName?: string;
 }
 
 export interface RemoteChatResponse {
@@ -103,10 +103,10 @@ export class RemoteAIClient extends EventEmitter {
       context: remoteChatOptions.context,
       toolResults: remoteChatOptions.toolResults,
       tools: remoteChatOptions.tools,
-      // Pass provider info to backend
+      // Pass model name to backend
       options: {
-        llmProvider: (remoteChatOptions as any).llmProvider,
-        vlmProvider: (remoteChatOptions as any).vlmProvider
+        llmModelName: (remoteChatOptions as any).llmModelName,
+        vlmModelName: (remoteChatOptions as any).vlmModelName
       }
     };
 
@@ -437,8 +437,8 @@ export class RemoteAIClient extends EventEmitter {
       context: undefined,
       taskId: (options as any).taskId,
       status: (options as any).status || 'begin',  // Use status from options, default to 'begin'
-      llmProvider: (options as any).llmProvider,
-      vlmProvider: (options as any).vlmProvider
+      llmModelName: (options as any).llmModelName,
+      vlmModelName: (options as any).vlmModelName
     });
 
     // Debug output for response
@@ -738,6 +738,22 @@ export class RemoteAIClient extends EventEmitter {
   }
 
   /**
+   * Static method to fetch default models - used when RemoteAIClient is not yet available
+   */
+  static async fetchDefaultModels(authToken: string, webBaseUrl: string): Promise<{ llm: ModelInfo; vlm: ModelInfo }> {
+    const url = `${webBaseUrl}/api/models/default`;
+    const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+    
+    const response = await axios.get(url, {
+      headers: { 'Authorization': `Bearer ${authToken}` },
+      httpsAgent,
+      timeout: 10000
+    });
+
+    return response.data;
+  }
+
+  /**
    * Compress context - generate summary for long conversations
    * Uses separate /api/agent/compress endpoint that doesn't require taskId
    */
@@ -775,6 +791,6 @@ export class RemoteAIClient extends EventEmitter {
 }
 
 export interface ModelInfo {
-  provider: string;
-  providerDisplay: string;
+  name: string;
+  displayName: string;
 }

@@ -28,8 +28,8 @@ export interface AuthConfig {
   searchApiKey?: string;
   showAIDebugInfo?: boolean;
   xagentApiBaseUrl?: string;     // xAgent API base URL
-  remote_llmProvider?: string;   // Remote mode LLM Provider ID
-  remote_vlmProvider?: string;   // Remote mode VLM Provider ID
+  remote_llmModelName?: string;  // Remote mode LLM Model Name
+  remote_vlmModelName?: string;  // Remote mode VLM Model Name
 }
 
 export interface Tool {
@@ -112,8 +112,8 @@ export interface Settings {
   showToolDetails: boolean;
   showAIDebugInfo: boolean;
   loggerLevel: LogLevel;
-  remote_llmProvider?: string;   // Remote 模式使用的 LLM Provider ID
-  remote_vlmProvider?: string;   // Remote 模式使用的 VLM Provider ID
+  remote_llmModelName?: string;  // Remote 模式使用的 LLM Model Name
+  remote_vlmModelName?: string;  // Remote 模式使用的 VLM Model Name
 }
 
 export interface ChatMessage {

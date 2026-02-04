@@ -19,8 +19,10 @@ import {
   AgentConfig,
   ToolCallItem,
 } from './types.js';
-import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
-import { RemoteAIClient, TokenInvalidError } from './remote-ai-client.js';
+import { createAIClient, type AIClientInterface } from './ai-client-factory.js';
+import { detectThinkingKeywords, getThinkingTokens } from './ai-client/types.js';
+import { TokenInvalidError } from './ai-client/types.js';
+import { fetchDefaultModels } from './ai-client/providers/remote.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { getToolRegistry } from './tools.js';
@@ -49,6 +51,10 @@ import {
   CompressionResult,
 } from './context-compressor.js';
 import { Logger, LogLevel, getLogger } from './logger.js';
+
+// Type aliases for backward compatibility
+type AIClient = AIClientInterface;
+type RemoteAIClient = AIClientInterface;
 
 const logger = getLogger();
 
@@ -145,12 +151,7 @@ export class InteractiveSession {
       }
       // Switch to remote: clear local client, create remote client
       this.aiClient = null;
-      const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-      this.remoteAIClient = new RemoteAIClient(
-        authConfig.apiKey || '',
-        webBaseUrl,
-        authConfig.showAIDebugInfo
-      );
+      this.remoteAIClient = createAIClient(authConfig);
     } else {
       // Already in local mode, no change needed
       if (this.aiClient !== null) {
@@ -158,7 +159,7 @@ export class InteractiveSession {
       }
       // Switch to local: clear remote client, create local client
       this.remoteAIClient = null;
-      this.aiClient = new AIClient(authConfig);
+      this.aiClient = createAIClient(authConfig);
     }
 
     this.slashCommandHandler.setRemoteAIClient(this.remoteAIClient);
@@ -374,7 +375,7 @@ export class InteractiveSession {
           const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
           
           try {
-            const defaults = await RemoteAIClient.fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
+            const defaults = await fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
 
             if (!currentLlm && defaults.llm?.name) {
               this.configManager.set('remote_llmModelName', defaults.llm.name);
@@ -389,17 +390,12 @@ export class InteractiveSession {
         }
 
         // Remote mode: create RemoteAIClient and use it for context compression
-        const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-        this.remoteAIClient = new RemoteAIClient(
-          authConfig.apiKey || '',
-          webBaseUrl,
-          authConfig.showAIDebugInfo
-        );
+        this.remoteAIClient = createAIClient(authConfig);
         this.contextCompressor.setAIClient(this.remoteAIClient);
         logger.debug('[DEBUG Initialize] RemoteAIClient created successfully');
       } else {
         // Local mode: create local AIClient
-        this.aiClient = new AIClient(authConfig);
+        this.aiClient = createAIClient(authConfig);
         this.contextCompressor.setAIClient(this.aiClient);
         logger.debug('[DEBUG Initialize] RemoteAIClient NOT created (not OAuth XAGENT mode)');
       }
@@ -1240,7 +1236,7 @@ export class InteractiveSession {
       });
 
       if (assistantMessage.tool_calls) {
-        await this.handleToolCalls(assistantMessage.tool_calls);
+        await this.handleToolCalls(assistantMessage.tool_calls as unknown as import('./types.js').ToolCallItem[]);
       } else {
         await this.checkAndCompressContext();
       }
@@ -1265,7 +1261,7 @@ export class InteractiveSession {
       if (error.message === 'Operation cancelled by user') {
         // 用户手动取消 → 发送 cancel
         if (this.remoteAIClient && this.currentTaskId) {
-          await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
+          await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
         }
         return;
       }
@@ -1277,7 +1273,7 @@ export class InteractiveSession {
         `[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}, reason: ${failureReason}`
       );
       if (this.remoteAIClient && this.currentTaskId) {
-        await this.remoteAIClient.failTask(this.currentTaskId, failureReason).catch(() => {});
+        await this.remoteAIClient.failTask?.(this.currentTaskId, failureReason).catch(() => {});
       }
 
       console.log(colors.error(`Error: ${error.message}`));
@@ -1323,8 +1319,8 @@ export class InteractiveSession {
 
       // Mark task as completed (发送 status: 'end')
       logger.debug(`[Session] Task completed: taskId=${this.currentTaskId}`);
-      if (this.currentTaskId) {
-        await this.remoteAIClient.completeTask(this.currentTaskId);
+      if (this.remoteAIClient && this.currentTaskId) {
+        await this.remoteAIClient.completeTask?.(this.currentTaskId);
       }
     } catch (error: any) {
       // Clear the operation flag
@@ -1333,7 +1329,7 @@ export class InteractiveSession {
       if (error.message === 'Operation cancelled by user') {
         // Notify backend to cancel the task
         if (this.remoteAIClient && this.currentTaskId) {
-          await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
+          await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
         }
         return;
       }
@@ -1376,15 +1372,10 @@ export class InteractiveSession {
 
         // Reinitialize RemoteAIClient with new token
         if (authConfig.apiKey) {
-          const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
           logger.debug(
             '[DEBUG generateRemoteResponse] Reinitializing RemoteAIClient with new token'
           );
-          this.remoteAIClient = new RemoteAIClient(
-            authConfig.apiKey,
-            webBaseUrl,
-            authConfig.showAIDebugInfo
-          );
+          this.remoteAIClient = createAIClient(authConfig);
         } else {
           logger.debug(
             '[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!'
@@ -1409,7 +1400,7 @@ export class InteractiveSession {
         `[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}, reason: ${failureReason}`
       );
       if (this.remoteAIClient && this.currentTaskId) {
-        await this.remoteAIClient.failTask(this.currentTaskId, failureReason).catch(() => {});
+        await this.remoteAIClient.failTask?.(this.currentTaskId, failureReason).catch(() => {});
       }
 
       console.log(colors.error(`Error: ${error.message}`));
@@ -1489,7 +1480,7 @@ export class InteractiveSession {
         if (error === 'Operation cancelled by user') {
           // Notify backend to cancel the task
           if (this.remoteAIClient && this.currentTaskId) {
-            await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
+            await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
           }
           (this as any)._isOperationInProgress = false;
           return;

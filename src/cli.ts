@@ -6,7 +6,7 @@ import { startInteractiveSession } from './session.js';
 import { getConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { AuthType } from './types.js';
-import { RemoteAIClient } from './remote-ai-client.js';
+import { fetchDefaultModels } from './ai-client/providers/remote.js';
 import { getAgentManager } from './agents.js';
 import { getMCPManager } from './mcp.js';
 import { getLogger, setConfigProvider } from './logger.js';
@@ -182,7 +182,7 @@ program
 
         try {
           console.log(colors.textMuted('   Fetching default models from remote server...'));
-          const defaults = await RemoteAIClient.fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
+          const defaults = await fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
 
           if (defaults.llm?.name) {
             defaultLlmName = defaults.llm.name;

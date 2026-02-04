@@ -17,7 +17,7 @@ interface XAgentAuthConfig extends AuthConfig {
   remote_vlmModelName?: string;  // Remote mode VLM Model Name
 }
 
-interface VLMProviderInfo {
+export interface VLMProviderInfo {
   name: string;
   provider: string;
   baseUrl: string;
@@ -25,7 +25,7 @@ interface VLMProviderInfo {
   models: string[];
 }
 
-const VLM_PROVIDERS: VLMProviderInfo[] = [
+export const VLM_PROVIDERS: VLMProviderInfo[] = [
   {
     name: 'OpenAI',
     provider: 'openai',
@@ -49,7 +49,7 @@ const VLM_PROVIDERS: VLMProviderInfo[] = [
   },
 ];
 
-interface ThirdPartyProvider {
+export interface ThirdPartyProvider {
   name: string;
   baseUrl: string;
   defaultModel: string;
@@ -57,7 +57,7 @@ interface ThirdPartyProvider {
   models?: string[];
 }
 
-const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
+export const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
   {
     name: 'Zhipu AI (GLM-4)',
     baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/',

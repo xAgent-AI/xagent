@@ -1258,35 +1258,8 @@ export class InteractiveSession {
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
 
-      // ESC pressed - completely cancel and return to prompt
       if (error.message === 'Operation cancelled by user') {
-        console.log('');
-        console.log(colors.warning('⚠️  Operation cancelled by user'));
-        console.log('');
 
-        // 清理 conversation，移除最后一条用户消息（这样 agent 不会继续处理）
-        this.cleanupIncompleteToolCalls();
-        
-        // 移除最后一条用户消息，避免 agent 继续处理
-        for (let i = this.conversation.length - 1; i >= 0; i--) {
-          if (this.conversation[i].role === 'user') {
-            this.conversation.splice(i, 1);
-            // 也从 session manager 中移除
-            const session = this.sessionManager.getCurrentSession();
-            if (session) {
-              for (let j = session.inputs.length - 1; j >= 0; j--) {
-                if (session.inputs[j].type === 'text') {
-                  session.inputs.splice(j, 1);
-                  this.sessionManager.saveSession(session);
-                  break;
-                }
-              }
-            }
-            break;
-          }
-        }
-
-        // 发送 cancel 给后端
         if (this.remoteAIClient && this.currentTaskId) {
           await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
         }
@@ -1842,25 +1815,6 @@ export class InteractiveSession {
         );
 
         console.log(`[Cleanup] After filter, tool_calls count: ${msg.tool_calls.length}`);
-
-        // 如果所有 tool_call 都被移除了，移除整个 assistant 消息
-        if (msg.tool_calls.length === 0) {
-          console.log(`[Cleanup] Removing empty assistant message at index ${i}`);
-          this.conversation.splice(i, 1);
-          // 也移除 session manager 中的最后一条 assistant 消息
-          const session = this.sessionManager.getCurrentSession();
-          if (session) {
-            for (let j = session.outputs.length - 1; j >= 0; j--) {
-              if (session.outputs[j].role === 'assistant') {
-                session.outputs.splice(j, 1);
-                this.sessionManager.saveSession(session);
-                break;
-              }
-            }
-          }
-        } else {
-          console.log(`[Cleanup] Keeping ${msg.tool_calls.length} completed tool_calls`);
-        }
 
         break;
       }

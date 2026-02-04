@@ -445,13 +445,10 @@ Please return results in JSON format:
         };
       }
 
-      // If user cancelled the AI review, reject the tool execution
+      // If user cancelled the AI review, directly cancel the entire task
+      // instead of just canceling the AI review and continuing
       if (isCancelled) {
-        return {
-          approved: false,
-          analysis: 'AI review cancelled by user',
-          riskLevel: RiskLevel.HIGH,
-        };
+        throw new Error('Operation cancelled by user');
       }
 
       // Other errors require manual confirmation

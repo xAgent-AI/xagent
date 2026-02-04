@@ -701,9 +701,9 @@ export class SlashCommandHandler {
         { value: 'vlm', label: 'Change VLM model' },
         { value: 'back', label: 'Back' },
       ],
-    });
+    }) as string | symbol;
 
-    if (action === 'back') {
+    if (action === 'back' || typeof action === 'symbol') {
       return;
     }
 
@@ -781,9 +781,9 @@ export class SlashCommandHandler {
         { value: 'vlm', label: 'Change VLM (for GUI automation)' },
         { value: 'back', label: 'Back' },
       ],
-    });
+    }) as string | symbol;
 
-    if (action === 'back') {
+    if (action === 'back' || typeof action === 'symbol') {
       return;
     }
 
@@ -805,9 +805,13 @@ export class SlashCommandHandler {
         value: p,
         label: `${p.name} - ${p.description}`,
       })),
-    });
+    }) as ThirdPartyProvider | symbol;
 
-    const selectedProvider = provider as ThirdPartyProvider;
+    if (typeof provider === 'symbol') {
+      return;
+    }
+
+    const selectedProvider = provider;
 
     let baseUrl = selectedProvider.baseUrl;
     let modelName = selectedProvider.defaultModel;
@@ -854,7 +858,11 @@ export class SlashCommandHandler {
             value: model,
             label: model === selectedProvider.defaultModel ? `${model} (default)` : model,
           })),
-        });
+        }) as string | symbol;
+
+        if (typeof selectedModel === 'symbol') {
+          return;
+        }
 
         modelName = selectedModel as string;
       } else {
@@ -929,7 +937,12 @@ export class SlashCommandHandler {
         value: p,
         label: `${p.name} - ${p.defaultModel}`,
       })),
-    }) as VLMProviderInfo;
+    }) as VLMProviderInfo | symbol;
+
+    // User cancelled
+    if (typeof provider === 'symbol') {
+      return;
+    }
 
     const selectedProvider = provider;
 
@@ -940,7 +953,12 @@ export class SlashCommandHandler {
         value: m,
         label: m,
       })),
-    }) as string;
+    }) as string | symbol;
+
+    // User cancelled
+    if (typeof model === 'symbol') {
+      return;
+    }
 
     // Step 3: Get API Key
     const apiKey = (await text({
@@ -1200,7 +1218,11 @@ export class SlashCommandHandler {
         { value: 'sse', label: 'HTTP/SSE' },
         { value: 'http', label: 'HTTP (POST)' },
       ],
-    });
+    }) as string | symbol;
+
+    if (typeof transport === 'symbol') {
+      return;
+    }
 
     let command = '';
     let serverArgs: string[] = [];
@@ -1347,7 +1369,11 @@ export class SlashCommandHandler {
     const serverName = (await select({
       message: 'Select MCP server to remove:',
       options: serverOptions,
-    })) as string;
+    })) as string | symbol;
+
+    if (typeof serverName === 'symbol') {
+      return;
+    }
 
     await this.removeMcpServer(serverName);
   }
@@ -1595,7 +1621,11 @@ export class SlashCommandHandler {
       const checkpointId = await select({
         message: 'Select checkpoint to restore:',
         options: checkpointOptions,
-      });
+      }) as string | symbol;
+
+      if (typeof checkpointId === 'symbol') {
+        return;
+      }
 
       try {
         await this.checkpointManager.restoreCheckpoint(checkpointId);
@@ -1674,7 +1704,11 @@ export class SlashCommandHandler {
         { value: 'zh', label: 'Chinese' },
         { value: 'en', label: 'English' },
       ],
-    })) as 'zh' | 'en';
+    })) as 'zh' | 'en' | symbol;
+
+    if (typeof language === 'symbol') {
+      return;
+    }
 
     this.configManager.setLanguage(language);
     logger.success(

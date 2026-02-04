@@ -11,7 +11,7 @@ import type {
   Model,
   RemoteModelsResponse,
 } from '../types';
-import { getLogger } from '../../logger';
+import { getLogger } from '../../logger.js';
 
 const logger = getLogger();
 

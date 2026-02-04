@@ -78,7 +78,7 @@ export class AnthropicProvider implements AIProvider {
       messages: anthropicMessages,
       temperature: options?.temperature ?? 1.0,
       stream: false,
-      max_tokens: options?.maxTokens || 4096,
+      max_tokens: options?.maxTokens,
     };
 
     if (system) {
@@ -135,7 +135,7 @@ export class AnthropicProvider implements AIProvider {
       messages: anthropicMessages,
       temperature: options?.temperature ?? 1.0,
       stream: true,
-      max_tokens: options?.maxTokens || 4096,
+      max_tokens: options?.maxTokens,
     };
 
     if (system) {

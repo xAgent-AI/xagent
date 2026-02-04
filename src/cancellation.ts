@@ -41,7 +41,7 @@ export class CancellationManager extends EventEmitter {
 
         this.keyPressHandler = function(str: string, key: readline.Key) {
           // ESC 可以通过 str 为空且 name 为 'escape' 或 sequence 为 '\x1b' 来检测
-          if (str === '\u001B' || key.name === 'escape' || key.sequence === '\x1b' || key.code === 27) {
+          if (str === '\u001B' || key.name === 'escape' || key.sequence === '\x1b') {
             console.log(`[ESC-DETECT] ESC pressed! operationId=${self.operationId}, isCancelled=${self.isCancelled}`);
             self.cancel();
           }

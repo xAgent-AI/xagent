@@ -451,7 +451,6 @@ Please return results in JSON format:
           approved: false,
           analysis: 'AI review cancelled by user',
           riskLevel: RiskLevel.HIGH,
-          detectionMethod: 'manual',
         };
       }
 

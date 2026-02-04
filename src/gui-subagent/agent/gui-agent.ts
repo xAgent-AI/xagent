@@ -546,7 +546,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
             console.log(`[GUIAgent-Debug] Abort detected, setting USER_STOPPED status`);
             data.status = GUIAgentStatus.USER_STOPPED;
             data.conversations = data.conversations || [];
-            return;
+            return data;
           }
 
           // Handle multimodal model API errors with specific error messages

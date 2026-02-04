@@ -499,10 +499,17 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
                 const result = await this.callModelAPI(messages, screenContext, this.remoteVlmCaller!);
                 return result;
               } catch (error: unknown) {
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                // 捕获各种 abort 相关的错误
                 if (
                   error instanceof Error &&
                   (error.name === 'AbortError' ||
-                    error.message?.includes('aborted'))
+                    errorMsg.includes('aborted') ||
+                    errorMsg.includes('canceled') ||
+                    errorMsg.includes('cancelled') ||
+                    errorMsg === 'Operation was canceled' ||
+                    errorMsg === 'The operation was canceled' ||
+                    errorMsg === 'This operation was aborted')
                 ) {
                   bail(error as Error);
                   return { prediction: '', parsedPredictions: [] };
@@ -519,11 +526,27 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           prediction = modelResult.prediction;
           parsedPredictions = modelResult.parsedPredictions;
         } catch (modelError) {
+          // 首先检查是否是取消/abort 错误
+          const errorMsg = modelError instanceof Error ? modelError.message : String(modelError);
+          const isAbortError = 
+            modelError instanceof Error && (
+              modelError.name === 'AbortError' ||
+              errorMsg.includes('aborted') ||
+              errorMsg.includes('canceled') ||
+              errorMsg.includes('cancelled') ||
+              errorMsg === 'Operation was canceled' ||
+              errorMsg === 'The operation was canceled' ||
+              errorMsg === 'This operation was aborted'
+            );
+          
+          if (isAbortError || this.signal?.aborted) {
+            data.status = GUIAgentStatus.USER_STOPPED;
+            data.conversations = data.conversations || [];
+            return data;
+          }
+
           // Handle multimodal model API errors with specific error messages
           data.status = GUIAgentStatus.ERROR;
-          const errorMsg = modelError instanceof Error ? modelError.message : String(modelError);
-
-          // Provide specific error message based on error type
           if (errorMsg.includes('401') || errorMsg.includes('authentication') || errorMsg.includes('API key') || errorMsg.includes('api_key') || errorMsg.includes('Unauthorized') || errorMsg.includes('invalid_api_key')) {
             data.error = '[Multimodal Model Authentication Failed] The guiSubagentApiKey configuration is invalid.\n' +
               'Error details: HTTP 401 - API key is invalid or expired\n' +

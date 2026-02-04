@@ -1261,12 +1261,13 @@ export class InteractiveSession {
       (this as any)._isOperationInProgress = false;
 
       if (error.message === 'Operation cancelled by user') {
-        // 用户手动取消 → 发送 cancel
+        // Notify backend to cancel the task
         if (this.remoteAIClient && this.currentTaskId) {
           await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
         }
         return;
       }
+
       // Distinguish error types: timeout vs other failures
       const isTimeout = error.message.includes('timeout') || error.message.includes('Timeout');
       const failureReason = isTimeout ? 'timeout' : 'failure';
@@ -1484,6 +1485,10 @@ export class InteractiveSession {
           if (this.remoteAIClient && this.currentTaskId) {
             await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
           }
+
+          // 清理 conversation 中未完成的 tool_call
+          this.cleanupIncompleteToolCalls();
+
           (this as any)._isOperationInProgress = false;
           return;
         }
@@ -1743,8 +1748,6 @@ export class InteractiveSession {
     // If GUI agent was cancelled by user, don't continue generating response
     // This avoids wasting API calls and tokens on cancelled tasks
     if (guiSubagentCancelled) {
-      console.log('');
-      console.log(`${indent}${colors.textMuted('GUI task cancelled by user')}`);
       (this as any)._isOperationInProgress = false;
       return;
     }
@@ -1758,6 +1761,50 @@ export class InteractiveSession {
       await this.checkAndCompressContext();
       // Local mode: default behavior - continue with generateResponse
       await this.generateResponse();
+    }
+  }
+
+  /**
+   * Clean up incomplete tool calls from conversation after cancellation
+   * This removes assistant messages with tool_calls that don't have corresponding tool_results
+   */
+  private async cleanupIncompleteToolCalls(): Promise<void> {
+    // 从后往前找到包含 tool_calls 的 assistant 消息
+    for (let i = this.conversation.length - 1; i >= 0; i--) {
+      const msg = this.conversation[i];
+
+      if (msg.role === 'assistant' && msg.tool_calls?.length) {
+        // 收集所有 tool_call IDs
+        const allToolCallIds = new Set(msg.tool_calls.map((tc: any) => tc.id));
+
+        // 找出哪些 tool_call IDs 已经有对应的 tool_result
+        const completedToolCallIds = new Set<string>();
+        for (let k = i + 1; k < this.conversation.length; k++) {
+          const resultMsg = this.conversation[k];
+          if (resultMsg.role === 'tool' && resultMsg.tool_call_id) {
+            completedToolCallIds.add(resultMsg.tool_call_id);
+          } else if (resultMsg.role === 'user' || resultMsg.role === 'assistant') {
+            break; // 遇到下一个角色消息就停止
+          }
+        }
+
+        // 找出未完成的 tool_call IDs
+        const incompleteToolCallIds = [...allToolCallIds].filter(
+          id => !completedToolCallIds.has(id)
+        );
+
+        // 如果所有 tool_call 都已完成，不需要清理
+        if (incompleteToolCallIds.length === 0) {
+          break;
+        }
+
+        // 只移除未完成的 tool_call，不移除已完成的 tool_result
+        msg.tool_calls = msg.tool_calls.filter(
+          (tc: any) => !incompleteToolCallIds.includes(tc.id)
+        );
+
+        break;
+      }
     }
   }
 

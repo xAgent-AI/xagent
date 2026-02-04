@@ -97,6 +97,14 @@ function formatError(error: unknown): { message: string; suggestion: string } {
     };
   }
 
+  // User cancellation - no suggestion needed
+  if (errorMessage.includes('cancelled by user') || errorMessage.includes('Operation cancelled')) {
+    return {
+      message: 'Operation cancelled',
+      suggestion: ''
+    };
+  }
+
   // Default friendly message
   return {
     message: 'An error occurred',

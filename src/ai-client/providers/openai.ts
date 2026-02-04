@@ -94,7 +94,9 @@ export class OpenAIProvider implements AIProvider {
     }
 
     try {
-      const response = await this.client.post('/chat/completions', requestBody);
+      const response = await this.client.post('/chat/completions', requestBody, {
+        signal: options?.signal,
+      });
       return this.convertResponse(response.data, model);
     } catch (error) {
       throw this.handleError(error);

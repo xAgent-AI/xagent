@@ -111,7 +111,9 @@ export class AnthropicProvider implements AIProvider {
     }
 
     try {
-      const response = await this.client.post('/v1/messages', requestBody);
+      const response = await this.client.post('/v1/messages', requestBody, {
+        signal: options?.signal,
+      });
       return this.convertResponse(response.data, model);
     } catch (error) {
       throw this.handleError(error);

@@ -11,7 +11,7 @@
  *   const response = await aiClient.chatCompletion(messages, { model: 'gpt-4' });
  */
 
-import type { Message, CompletionOptions, CompletionResponse, AIConfig, RemoteTaskManager } from './ai-client/types.js';
+import type { Message, CompletionOptions, CompletionResponse, AIConfig, RemoteTaskManager, Model } from './ai-client/types.js';
 import { AuthConfig, AuthType } from './types.js';
 import { ProviderFactory, createOpenAI, createAnthropic, createRemote, type AIProvider } from './ai-client/index.js';
 import type { RemoteAIProvider } from './ai-client/types.js';
@@ -22,6 +22,7 @@ import type { RemoteAIProvider } from './ai-client/types.js';
  * Includes optional methods for remote task management.
  */
 export interface AIClientInterface {
+  getModels(): Promise<Model[]>;
   chatCompletion(messages: Message[], options?: CompletionOptions): Promise<CompletionResponse>;
   compress(messages: Message[], options?: { maxTokens?: number; temperature?: number }): Promise<CompletionResponse>;
   // Optional remote task management methods (only available in remote mode)
@@ -40,6 +41,10 @@ class ProviderAdapter implements AIClientInterface {
 
   constructor(provider: AIProvider) {
     this.provider = provider;
+  }
+
+  async getModels(): Promise<Model[]> {
+    return this.provider.getModels();
   }
 
   async chatCompletion(messages: Message[], options?: CompletionOptions): Promise<CompletionResponse> {
@@ -80,6 +85,10 @@ class RemoteProviderAdapter implements AIClientInterface, RemoteTaskManager {
 
   constructor(provider: RemoteAIProvider) {
     this.provider = provider;
+  }
+
+  async getModels(): Promise<Model[]> {
+    return this.provider.getModels();
   }
 
   async chatCompletion(messages: Message[], options?: CompletionOptions): Promise<CompletionResponse> {

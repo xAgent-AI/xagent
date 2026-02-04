@@ -1243,7 +1243,7 @@ export class InteractiveSession {
         content,
         timestamp: Date.now(),
         reasoningContent,
-        tool_calls: fixedToolCalls,
+        tool_calls: assistantMessage.tool_calls,
       });
 
       // Record output to session manager
@@ -1252,11 +1252,11 @@ export class InteractiveSession {
         content,
         timestamp: Date.now(),
         reasoningContent,
-        tool_calls: fixedToolCalls,
+        tool_calls: assistantMessage.tool_calls,
       });
 
-      if (fixedToolCalls) {
-        await this.handleToolCalls(fixedToolCalls);
+      if (assistantMessage.tool_calls) {
+        await this.handleToolCalls(assistantMessage.tool_calls);
       } else {
         await this.checkAndCompressContext();
       }
@@ -1476,13 +1476,30 @@ export class InteractiveSession {
       this.executionMode
     );
 
-    // Process results and maintain order
-    let hasError = false;
-    for (const { tool, result, error } of results) {
-      const toolCall = preparedToolCalls.find((tc) => tc.name === tool);
-      if (!toolCall) continue;
+    // Create a map to store results by tool call index to maintain original order
+    const resultsByIndex = new Map<number, { tool: string; result: any; error?: string }>();
+    const usedIndices = new Set<number>();
+    
+    for (const result of results) {
+      // Find the first unused original index in preparedToolCalls that matches the tool name
+      const originalIndex = preparedToolCalls.findIndex((tc, idx) => 
+        tc.name === result.tool && !usedIndices.has(idx)
+      );
+      if (originalIndex !== -1) {
+        usedIndices.add(originalIndex);
+        resultsByIndex.set(originalIndex, result);
+      }
+    }
 
-      const { params } = toolCall;
+    // Process results in the original tool_calls order (critical for Anthropic format APIs)
+    let hasError = false;
+    for (let i = 0; i < preparedToolCalls.length; i++) {
+      const toolCall = preparedToolCalls[i];
+      const { name: tool, params } = toolCall;
+      
+      const resultData = resultsByIndex.get(i);
+      const result = resultData?.result;
+      const error = resultData?.error;
 
       if (error) {
         if (error === 'Operation cancelled by user') {
@@ -1509,7 +1526,7 @@ export class InteractiveSession {
             parameters: params,
             error: error,
           }),
-          tool_call_id: fixedToolCallId,
+          tool_call_id: toolCall.id,
           timestamp: Date.now(),
         });
       } else {
@@ -1736,7 +1753,7 @@ export class InteractiveSession {
         this.conversation.push({
           role: 'tool',
           content: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
-          tool_call_id: fixedToolCallId,
+          tool_call_id: toolCall.id,
           timestamp: Date.now(),
         });
       }
@@ -1770,10 +1787,6 @@ export class InteractiveSession {
       // Local mode: default behavior - continue with generateResponse
       await this.generateResponse();
     }
-
-    // Clear the id mapping after tool calls are processed
-    // This ensures each round of tool calls starts with a fresh mapping
-    this.toolCallIdMapping.clear();
   }
 
   /**

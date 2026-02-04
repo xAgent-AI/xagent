@@ -2179,25 +2179,15 @@ export class TaskTool implements Tool {
         throw new Error(`Sub-agent ${subagent_type} response truncated due to length limits`);
       }
 
-      // Fix duplicate tool_call.id before adding to conversation
-      // MiniMax requires all tool_call.id to be unique
-      let fixedToolCalls: any[] | undefined;
-      let idMapping = new Map<string, string>();
+      // Add assistant message to conversation (必须包含 tool_calls，否则 tool_result 无法匹配)
+      const assistantMessage: any = { role: 'assistant', content: contentStr };
       if (toolCalls && toolCalls.length > 0) {
-        const { fixed, mapping } = fixDuplicateToolCallIds(toolCalls);
-        fixedToolCalls = fixed;
-        idMapping = mapping;
-        if (mapping.size > 0) {
-          console.log(`[FIX-DUP-ID] Applied ${mapping.size} id fix(es) to subagent conversation`);
-        }
+        assistantMessage.tool_calls = toolCalls;
       }
-
-      // Add assistant message to conversation with fixed tool_calls
-      messages.push({
-        role: 'assistant',
-        content: contentStr,
-        ...(fixedToolCalls && { tool_calls: fixedToolCalls }),
-      });
+      if (reasoningContent) {
+        assistantMessage.reasoning_content = reasoningContent;
+      }
+      messages.push(assistantMessage as Message);
 
       // Display reasoning content if present
       if (reasoningContent) {
@@ -2221,10 +2211,7 @@ export class TaskTool implements Tool {
 
       // Process tool calls with proper indentation
       if (toolCalls && toolCalls.length > 0) {
-        // Use the already fixed toolCalls and idMapping from above
-        const toolCallsToProcess = idMapping.size > 0 ? fixedToolCalls! : toolCalls;
-
-        for (const toolCall of toolCallsToProcess) {
+        for (const toolCall of toolCalls) {
           const { name, arguments: params } = toolCall.function;
 
           let parsedParams: any;
@@ -2347,13 +2334,10 @@ export class TaskTool implements Tool {
               timestamp: new Date().toISOString(),
             });
 
-            // Use fixed tool_call_id from existing mapping
-            const fixedToolCallId = toolCall.id ? getFixedToolCallId(toolCall.id, idMapping) : '';
-
             messages.push({
               role: 'tool',
               content: JSON.stringify(toolResult),
-              tool_call_id: fixedToolCallId,
+              tool_call_id: toolCall.id,
             });
           } catch (error: any) {
             if (error.message === 'Operation cancelled by user') {
@@ -2389,13 +2373,10 @@ export class TaskTool implements Tool {
               timestamp: new Date().toISOString(),
             });
 
-            // Use fixed tool_call_id from existing mapping
-            const fixedToolCallId = toolCall.id ? getFixedToolCallId(toolCall.id, idMapping) : '';
-
             messages.push({
               role: 'tool',
               content: JSON.stringify({ error: error.message }),
-              tool_call_id: fixedToolCallId,
+              tool_call_id: toolCall.id,
             });
           }
         }

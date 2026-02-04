@@ -77,6 +77,8 @@ export class InteractiveSession {
   private currentTaskId: string | null = null;
   private taskCompleted: boolean = false;
   private isFirstApiCall: boolean = true;
+  // Mapping for tool call IDs to handle MiniMax compatibility
+  private toolCallIdMapping: Map<string, string> = new Map();
 
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
@@ -1224,24 +1226,9 @@ export class InteractiveSession {
       console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
       console.log('');
 
-      // Fix duplicate tool_call.id before pushing to conversation
-      // MiniMax requires all tool_call.id to be unique
-      // Always reset the mapping to avoid stale data from previous requests
+      // Clear tool call ID mapping at the start of each user message processing
+      // This prevents stale data from previous requests from polluting the next task
       this.toolCallIdMapping = new Map();
-      let fixedToolCalls = assistantMessage.tool_calls;
-      if (assistantMessage.tool_calls && assistantMessage.tool_calls.length > 0) {
-        const idCounts = new Map<string, number>();
-        assistantMessage.tool_calls.forEach((tc: any) => {
-          idCounts.set(tc.id, (idCounts.get(tc.id) || 0) + 1);
-        });
-        const duplicates = Array.from(idCounts.entries()).filter(([id, count]) => count > 1);
-
-        if (duplicates.length > 0) {
-          const result = this.fixDuplicateToolCallIds(assistantMessage.tool_calls);
-          fixedToolCalls = result.fixed;
-          this.toolCallIdMapping = result.mapping;
-        }
-      }
 
       this.conversation.push({
         role: 'assistant',
@@ -1522,8 +1509,6 @@ export class InteractiveSession {
         console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${tool} - ${error}`)}`);
 
         // Add detailed error info including tool name and params for AI understanding and correction
-        const fixedToolCallId = toolCall.id ? this.getFixedToolCallId(toolCall.id) : '';
-
         this.conversation.push({
           role: 'tool',
           content: JSON.stringify({
@@ -1752,9 +1737,6 @@ export class InteractiveSession {
 
         // Unified message format with tool name and params
         // Format: OpenAI-compatible tool result with plain text content
-        // MiniMax requires content to be plain text, not JSON string
-        const fixedToolCallId = toolCall.id ? this.getFixedToolCallId(toolCall.id) : '';
-
         this.conversation.push({
           role: 'tool',
           content: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
@@ -1983,84 +1965,6 @@ export class InteractiveSession {
    */
   getTaskId(): string | null {
     return this.currentTaskId;
-  }
-
-  // ID mapping for fixing duplicate tool_call.id (originalId -> fixedId)
-  private toolCallIdMapping: Map<string, string> = new Map();
-
-  /**
-   * Fix duplicate tool_call.id in assistant.tool_calls
-   * MiniMax requires all tool_call.id to be unique
-   */
-  private fixDuplicateToolCallIds(toolCalls: ToolCallItem[]): { fixed: ToolCallItem[]; mapping: Map<string, string> } {
-    // Filter out tool calls without id (they can't cause duplicates)
-    const validCalls = toolCalls.filter((tc) => tc.id !== undefined);
-    const invalidCount = toolCalls.length - validCalls.length;
-
-    // Count occurrences of each id
-    const idCountMap = new Map<string, number>();
-    for (const tc of validCalls) {
-      idCountMap.set(tc.id!, (idCountMap.get(tc.id!) || 0) + 1);
-    }
-
-    // Check if any duplicates exist
-    const hasDuplicates = Array.from(idCountMap.values()).some((count) => count > 1);
-    if (!hasDuplicates) {
-      // No duplicates, return original with empty mapping
-      return { fixed: toolCalls, mapping: new Map() };
-    }
-
-    console.log(`[FIX-DUP-ID] Found duplicate tool_call.id, fixing...`);
-    idCountMap.forEach((count, id) => {
-      if (count > 1) {
-        console.log(`[FIX-DUP-ID]   id="${id}" appears ${count} times`);
-      }
-    });
-
-    // Create id mapping: originalId -> fixedId
-    const mapping = new Map<string, string>();
-    const idOccurrence = new Map<string, number>();
-
-    for (const tc of validCalls) {
-      const currentCount = (idOccurrence.get(tc.id!) || 0) + 1;
-      idOccurrence.set(tc.id!, currentCount);
-      const totalCount = idCountMap.get(tc.id!) || 1;
-
-      if (totalCount > 1) {
-        // Duplicate id: first keeps original, others get suffix _0, _1, ...
-        if (currentCount === 1) {
-          mapping.set(tc.id!, tc.id!);
-        } else {
-          const fixedId = `${tc.id!}_${currentCount - 1}`;
-          mapping.set(tc.id!, fixedId);
-        }
-      }
-    }
-
-    // Apply mapping to create fixed toolCalls
-    const fixed = toolCalls.map((tc) => {
-      if (!tc.id) return tc; // Skip calls without id
-      const fixedId = mapping.get(tc.id);
-      if (fixedId !== undefined && fixedId !== tc.id) {
-        console.log(`[FIX-DUP-ID]   "${tc.id}" -> "${fixedId}"`);
-        return { ...tc, id: fixedId };
-      }
-      return tc;
-    });
-
-    console.log(`[FIX-DUP-ID] Done, mapping size: ${mapping.size}`);
-    return { fixed, mapping };
-  }
-
-  /**
-   * Get fixed tool_call_id using the mapping from original to fixed
-   */
-  private getFixedToolCallId(originalId: string): string {
-    const fixedId = this.toolCallIdMapping.get(originalId);
-    if (fixedId) {
-      return fixedId;
-    }
-    return originalId;
   }
 }
 

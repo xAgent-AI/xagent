@@ -77,8 +77,6 @@ export class InteractiveSession {
   private currentTaskId: string | null = null;
   private taskCompleted: boolean = false;
   private isFirstApiCall: boolean = true;
-  // Mapping for tool call IDs to handle MiniMax compatibility
-  private toolCallIdMapping: Map<string, string> = new Map();
 
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
@@ -1225,10 +1223,6 @@ export class InteractiveSession {
       );
       console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
       console.log('');
-
-      // Clear tool call ID mapping at the start of each user message processing
-      // This prevents stale data from previous requests from polluting the next task
-      this.toolCallIdMapping = new Map();
 
       this.conversation.push({
         role: 'assistant',

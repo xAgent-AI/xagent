@@ -28,6 +28,8 @@ export interface AIClientInterface {
   completeTask?(taskId: string): Promise<void>;
   cancelTask?(taskId: string): Promise<void>;
   failTask?(taskId: string, reason: 'timeout' | 'failure'): Promise<void>;
+  // VLM invocation for image analysis (only available in remote mode)
+  invokeVLM?(messages: Message[], systemPrompt: string, options?: { taskId?: string; status?: 'begin' | 'continue'; signal?: AbortSignal }): Promise<string>;
 }
 
 /**
@@ -64,6 +66,10 @@ class ProviderAdapter implements AIClientInterface {
   failTask?(taskId: string, reason: 'timeout' | 'failure'): Promise<void> {
     throw new Error('failTask is only available in remote mode');
   }
+
+  invokeVLM?(messages: Message[], systemPrompt: string, options?: { taskId?: string; status?: 'begin' | 'continue'; signal?: AbortSignal }): Promise<string> {
+    throw new Error('invokeVLM is only available in remote mode');
+  }
 }
 
 /**
@@ -98,6 +104,10 @@ class RemoteProviderAdapter implements AIClientInterface, RemoteTaskManager {
 
   async failTask(taskId: string, reason: 'timeout' | 'failure'): Promise<void> {
     return this.provider.failTask(taskId, reason);
+  }
+
+  async invokeVLM(messages: Message[], systemPrompt: string, options?: { taskId?: string; status?: 'begin' | 'continue'; signal?: AbortSignal }): Promise<string> {
+    return this.provider.invokeVLM(messages, systemPrompt, options);
   }
 }
 

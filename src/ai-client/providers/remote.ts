@@ -28,6 +28,7 @@ export class RemoteProvider implements AIProvider {
   private authToken: string;
   private webBaseUrl: string;
   private agentApi: string;
+  private vlmApi: string;
   private showDebugInfo: boolean;
   private client: AxiosInstance;
 
@@ -35,6 +36,7 @@ export class RemoteProvider implements AIProvider {
     this.authToken = config.authToken || '';
     this.webBaseUrl = (config.baseUrl || '').replace(/\/$/, '');
     this.agentApi = `${this.webBaseUrl}/api/agent`;
+    this.vlmApi = `${this.webBaseUrl}/api/agent/vlm`;
     this.showDebugInfo = config.showDebugInfo ?? false;
 
     this.client = axios.create({
@@ -305,6 +307,55 @@ export class RemoteProvider implements AIProvider {
     }
 
     return new Error(`Remote API Error: ${error.message}`);
+  }
+
+  /**
+   * Invoke VLM (Vision Language Model) for image analysis
+   * @param messages - Full messages array (consistent with local mode)
+   * @param _systemPrompt - System prompt (optional, for reference)
+   * @param remoteChatOptions - Other options including AbortSignal, taskId
+   */
+  async invokeVLM(
+    messages: Message[],
+    _systemPrompt: string,
+    remoteChatOptions: {
+      taskId?: string;
+      status?: 'begin' | 'continue';
+      context?: { cwd?: string; workspace?: string };
+      signal?: AbortSignal;
+    } = {}
+  ): Promise<string> {
+    // Forward complete messages to backend (same format as local mode)
+    const requestBody = {
+      messages,
+      taskId: remoteChatOptions.taskId,
+      status: remoteChatOptions.status || 'begin',
+      context: remoteChatOptions.context,
+    };
+
+    // Handle abort signal
+    const controller = remoteChatOptions.signal ? new AbortController() : undefined;
+    const abortSignal = remoteChatOptions.signal || controller?.signal;
+    if (remoteChatOptions.signal) {
+      remoteChatOptions.signal.addEventListener?.('abort', () => controller?.abort());
+    }
+
+    try {
+      const response = await axios.post(this.vlmApi, requestBody, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.authToken}`,
+        },
+        signal: abortSignal,
+        httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+        timeout: 120000,
+      });
+
+      const data = response.data as { content?: string };
+      return data.content || '';
+    } catch (error: any) {
+      throw this.handleError(error);
+    }
   }
 }
 

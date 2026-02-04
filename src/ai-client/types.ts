@@ -312,6 +312,7 @@ export interface RemoteTaskManager {
   completeTask(taskId: string): Promise<void>;
   cancelTask(taskId: string): Promise<void>;
   failTask(taskId: string, reason: 'timeout' | 'failure'): Promise<void>;
+  invokeVLM(messages: Message[], systemPrompt: string, options?: { taskId?: string; status?: 'begin' | 'continue'; signal?: AbortSignal }): Promise<string>;
 }
 
 /**

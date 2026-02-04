@@ -256,22 +256,6 @@ export class AnthropicProvider implements AIProvider {
     const systemContent = systemMessages[0]?.content;
     const system = typeof systemContent === 'string' ? systemContent : '';
 
-    // 记录输入消息中的 tool_calls 情况
-    const assistantWithToolCalls = otherMessages.filter(m => m.role === 'assistant' && m.tool_calls?.length);
-    if (assistantWithToolCalls.length > 0) {
-      console.log(`[AnthropicConvert] Found ${assistantWithToolCalls.length} assistant messages with tool_calls`);
-      for (const msg of assistantWithToolCalls) {
-        const toolCallIds = (msg.tool_calls as any[]).map((tc: any) => tc.id);
-        console.log(`[AnthropicConvert] Tool call IDs: ${JSON.stringify(toolCallIds)}`);
-      }
-    }
-
-    const toolResults = otherMessages.filter(m => m.role === 'tool' && m.tool_call_id);
-    if (toolResults.length > 0) {
-      const toolResultIds = toolResults.map(m => m.tool_call_id);
-      console.log(`[AnthropicConvert] Tool result IDs: ${JSON.stringify(toolResultIds)}`);
-    }
-
     const anthropicMessages: Array<{ role: string; content: ContentBlock[] }> = [];
 
     for (const msg of otherMessages) {
@@ -332,31 +316,6 @@ export class AnthropicProvider implements AIProvider {
           role: msg.role === 'tool' ? 'user' : msg.role,
           content: blocks,
         });
-      }
-    }
-
-    // 记录 Anthropic 消息中的 tool_use 和 tool_result IDs
-    const allToolUseIds: string[] = [];
-    const allToolResultIds: string[] = [];
-
-    for (const msg of anthropicMessages) {
-      for (const block of msg.content) {
-        if (block.type === 'tool_use') {
-          allToolUseIds.push((block as any).id);
-        } else if (block.type === 'tool_result') {
-          allToolResultIds.push((block as any).tool_use_id);
-        }
-      }
-    }
-
-    if (allToolUseIds.length > 0) {
-      console.log(`[AnthropicConvert] Output - tool_use IDs: ${JSON.stringify(allToolUseIds)}`);
-      console.log(`[AnthropicConvert] Output - tool_result IDs: ${JSON.stringify(allToolResultIds)}`);
-
-      // 检查是否有 tool_use 没有对应的 tool_result
-      const unmatchedToolUses = allToolUseIds.filter(id => !allToolResultIds.includes(id));
-      if (unmatchedToolUses.length > 0) {
-        console.log(`[AnthropicConvert] WARNING: Unmatched tool_use IDs: ${JSON.stringify(unmatchedToolUses)}`);
       }
     }
 

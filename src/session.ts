@@ -1259,12 +1259,13 @@ export class InteractiveSession {
       (this as any)._isOperationInProgress = false;
 
       if (error.message === 'Operation cancelled by user') {
-
+        // Notify backend to cancel the task
         if (this.remoteAIClient && this.currentTaskId) {
           await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
         }
         return;
       }
+
       // Distinguish error types: timeout vs other failures
       const isTimeout = error.message.includes('timeout') || error.message.includes('Timeout');
       const failureReason = isTimeout ? 'timeout' : 'failure';
@@ -1484,9 +1485,7 @@ export class InteractiveSession {
           }
 
           // 清理 conversation 中未完成的 tool_call
-          console.log(`[CancelFix] Tool cancelled, cleaning up conversation...`);
           this.cleanupIncompleteToolCalls();
-          console.log(`[CancelFix] Cleanup done`);
 
           (this as any)._isOperationInProgress = false;
           return;
@@ -1748,8 +1747,6 @@ export class InteractiveSession {
     // If GUI agent was cancelled by user, don't continue generating response
     // This avoids wasting API calls and tokens on cancelled tasks
     if (guiSubagentCancelled) {
-      console.log('');
-      console.log(`${indent}${colors.textMuted('GUI task cancelled by user')}`);
       (this as any)._isOperationInProgress = false;
       return;
     }
@@ -1771,15 +1768,11 @@ export class InteractiveSession {
    * This removes assistant messages with tool_calls that don't have corresponding tool_results
    */
   private async cleanupIncompleteToolCalls(): Promise<void> {
-    console.log(`[Cleanup] Starting cleanup, conversation length: ${this.conversation.length}`);
-
     // 从后往前找到包含 tool_calls 的 assistant 消息
     for (let i = this.conversation.length - 1; i >= 0; i--) {
       const msg = this.conversation[i];
 
       if (msg.role === 'assistant' && msg.tool_calls?.length) {
-        console.log(`[Cleanup] Found assistant message at index ${i} with ${msg.tool_calls.length} tool_calls`);
-
         // 收集所有 tool_call IDs
         const allToolCallIds = new Set(msg.tool_calls.map((tc: any) => tc.id));
 
@@ -1799,13 +1792,8 @@ export class InteractiveSession {
           id => !completedToolCallIds.has(id)
         );
 
-        console.log(`[Cleanup] All tool_call IDs: ${JSON.stringify([...allToolCallIds])}`);
-        console.log(`[Cleanup] Completed tool_call IDs: ${JSON.stringify([...completedToolCallIds])}`);
-        console.log(`[Cleanup] Incomplete tool_call IDs: ${JSON.stringify(incompleteToolCallIds)}`);
-
         // 如果所有 tool_call 都已完成，不需要清理
         if (incompleteToolCallIds.length === 0) {
-          console.log(`[Cleanup] All tool_calls completed, no cleanup needed`);
           break;
         }
 
@@ -1814,13 +1802,9 @@ export class InteractiveSession {
           (tc: any) => !incompleteToolCallIds.includes(tc.id)
         );
 
-        console.log(`[Cleanup] After filter, tool_calls count: ${msg.tool_calls.length}`);
-
         break;
       }
     }
-
-    console.log(`[Cleanup] Done, conversation length: ${this.conversation.length}`);
   }
 
   /**

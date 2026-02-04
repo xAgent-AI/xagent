@@ -375,10 +375,8 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           data.status !== GUIAgentStatus.RUNNING ||
           this.signal?.aborted
         ) {
-          console.log(`[GUIAgent-Debug] abort check: isStopped=${this.isStopped}, status=${data.status}, signal.aborted=${this.signal?.aborted}`);
           if (this.signal?.aborted) {
             data.status = GUIAgentStatus.USER_STOPPED;
-            console.log(`[GUIAgent-Debug] Set status to USER_STOPPED due to abort`);
           }
           break;
         }
@@ -513,7 +511,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
                     errorMsg === 'The operation was canceled' ||
                     errorMsg === 'This operation was aborted')
                 ) {
-                  console.log(`[GUIAgent-Debug] Abort detected in VLM call: ${errorMsg}`);
                   bail(error as Error);
                   return { prediction: '', parsedPredictions: [] };
                 }
@@ -543,7 +540,6 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
             );
           
           if (isAbortError || this.signal?.aborted) {
-            console.log(`[GUIAgent-Debug] Abort detected, setting USER_STOPPED status`);
             data.status = GUIAgentStatus.USER_STOPPED;
             data.conversations = data.conversations || [];
             return data;

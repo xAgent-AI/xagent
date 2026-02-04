@@ -9,61 +9,88 @@ export class CancellationManager extends EventEmitter {
   private operationId: string | null = null;
   private keyPressHandler: ((str: string, key: readline.Key) => void) | null = null;
   private sigintHandler: (() => void) | null = null;
+  private keyHandlerSetup: boolean = false;
 
   constructor() {
     super();
-    this.setupKeyHandler();
   }
 
   /**
-   * Set up key handler to listen for ESC key
+   * Set up key handler to listen for ESC key (public for external use)
    */
-  private setupKeyHandler(): void {
-    if (process.stdin.isTTY) {
-      // Use readline's keypress handling
-      readline.emitKeypressEvents(process.stdin);
+  async setupKeyHandler(): Promise<void> {
+    return new Promise((resolve) => {
+      console.log(`[CancellationManager] setupKeyHandler called`);
+      console.log(`[CancellationManager] process.stdin.isTTY: ${process.stdin.isTTY}`);
+      console.log(`[CancellationManager] process.env.TERM: ${process.env.TERM}`);
+      console.log(`[CancellationManager] process.platform: ${process.platform}`);
+      console.log(`[CancellationManager] stdin.resumed: ${(process.stdin as any)._readableState?.flowing}`);
+      console.log(`[CancellationManager] keyHandlerSetup: ${this.keyHandlerSetup}`);
 
-      this.keyPressHandler = (str: string, key: readline.Key) => {
-        logger.debug(`[CancellationManager] Key pressed: str='${str}', name='${key.name}'`);
-        if (str === '\u001B' || key.name === 'escape') {
-          logger.debug(`[CancellationManager] ESC key detected!`);
+      if (this.keyHandlerSetup) {
+        resolve();
+        return;
+      }
+
+      if (process.stdin.isTTY) {
+        // Use readline's keypress handling
+        readline.emitKeypressEvents(process.stdin);
+
+        // 保存 this 引用
+        const self = this;
+
+        this.keyPressHandler = function(str: string, key: readline.Key) {
+          // ESC 可以通过 str 为空且 name 为 'escape' 或 sequence 为 '\x1b' 来检测
+          if (str === '\u001B' || key.name === 'escape' || key.sequence === '\x1b' || key.code === 27) {
+            console.log(`[ESC-DETECT] ESC pressed! operationId=${self.operationId}, isCancelled=${self.isCancelled}`);
+            self.cancel();
+          }
+        };
+
+        process.stdin.on('keypress', this.keyPressHandler);
+
+        process.stdin.on('error', (error) => {
+          logger.error(`Error in stdin handler: ${error}`);
+        });
+
+        // Also listen for SIGINT (Ctrl+C)
+        this.sigintHandler = () => {
+          logger.debug('[CancellationManager] SIGINT received!');
           this.cancel();
-        }
-      };
+        };
+        process.on('SIGINT', this.sigintHandler);
 
-      process.stdin.on('keypress', this.keyPressHandler);
-
-      process.stdin.on('error', (error) => {
-        logger.error(`Error in stdin handler: ${error}`);
-      });
-
-      // Also listen for SIGINT (Ctrl+C)
-      this.sigintHandler = () => {
-        logger.debug('[CancellationManager] SIGINT received!');
-        this.cancel();
-      };
-      process.on('SIGINT', this.sigintHandler);
-    } else {
-      logger.debug('[CancellationManager] stdin is not a TTY, ESC cancellation disabled');
-    }
+        this.keyHandlerSetup = true;
+        console.log('[CancellationManager] Key handler setup completed');
+        resolve();
+      } else {
+        console.log('[CancellationManager] stdin is not a TTY, ESC cancellation disabled');
+        resolve();
+      }
+    });
   }
 
   /**
    * Start a new operation
    */
-  startOperation(operationId: string): void {
+  async startOperation(operationId: string): Promise<void> {
     this.operationId = operationId;
     this.isCancelled = false;
     this.emit('operationStarted', operationId);
+
+    // 延迟设置 key handler
+    await this.setupKeyHandler();
   }
 
   /**
    * Cancel current operation
    */
   cancel(): void {
+    logger.debug(`[CancellationManager] cancel() called: isCancelled=${this.isCancelled}, operationId=${this.operationId}`);
     if (!this.isCancelled) {
       this.isCancelled = true;
       this.emit('cancelled', this.operationId);
+      logger.debug(`[CancellationManager] 'cancelled' event emitted for operationId=${this.operationId}`);
     }
   }
 
@@ -78,6 +105,7 @@ export class CancellationManager extends EventEmitter {
    * Complete current operation
    */
   completeOperation(): void {
+    logger.debug(`[CancellationManager] completeOperation: operationId=${this.operationId}, isCancelled=${this.isCancelled}`);
     if (this.operationId) {
       this.emit('operationCompleted', this.operationId);
     }
@@ -121,10 +149,12 @@ export class CancellationManager extends EventEmitter {
    */
   async withCancellation<T>(
     promise: Promise<T>,
-    operationId: string
+    operationId: string,
+    abortController?: AbortController
   ): Promise<T> {
-    logger.debug(`[CancellationManager] withCancellation started: ${operationId}`);
-    this.startOperation(operationId);
+    logger.debug(`[CancellationManager] withCancellation started: ${operationId}, current operationId=${this.operationId}, isCancelled=${this.isCancelled}`);
+
+    await this.startOperation(operationId);
 
     // Create a promise that can be rejected externally
     let rejectCancellation: ((reason?: any) => void) | null = null;
@@ -133,10 +163,15 @@ export class CancellationManager extends EventEmitter {
     });
 
     // Listen for cancellation event
-    const onCancelled = () => {
-      logger.debug(`[CancellationManager] 'cancelled' event received: ${operationId}`);
+    const onCancelled = (opId: string | null) => {
+      logger.debug(`[CancellationManager] 'cancelled' event received: opId=${opId}, expected operationId=${operationId}`);
       if (rejectCancellation) {
+        logger.debug(`[CancellationManager] Rejecting promise with "Operation cancelled by user"`);
         rejectCancellation(new Error('Operation cancelled by user'));
+      }
+      // Also abort the controller to cancel the underlying HTTP request
+      if (abortController) {
+        abortController.abort();
       }
     };
 
@@ -167,10 +202,22 @@ export class CancellationManager extends EventEmitter {
 }
 
 let cancellationManagerInstance: CancellationManager | null = null;
+let initializationPromise: Promise<CancellationManager> | null = null;
 
 export function getCancellationManager(): CancellationManager {
   if (!cancellationManagerInstance) {
+    // 创建实例
     cancellationManagerInstance = new CancellationManager();
+
+    // 异步初始化 keyHandler
+    if (!initializationPromise) {
+      initializationPromise = cancellationManagerInstance.setupKeyHandler()
+        .then(() => cancellationManagerInstance!)
+        .catch((error) => {
+          console.error('[CancellationManager] Failed to setup key handler:', error);
+          return cancellationManagerInstance!;
+        });
+    }
   }
   return cancellationManagerInstance;
 }

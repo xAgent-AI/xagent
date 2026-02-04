@@ -5,6 +5,7 @@ import { getConfigManager } from './config.js';
 import { AuthType } from './types.js';
 import { getLogger } from './logger.js';
 import { colors, icons } from './theme.js';
+import { getCancellationManager } from './cancellation.js';
 
 const logger = getLogger();
 
@@ -389,10 +390,14 @@ Please return results in JSON format:
         },
       ];
 
-      const response = await this.aiClient.chatCompletion(messages, {
-        temperature: 0.3,
-        // maxTokens: 500
-      });
+      const controller = new AbortController();
+      const response = await getCancellationManager().withCancellation(
+        this.aiClient.chatCompletion(messages, {
+          temperature: 0.3,
+          signal: controller.signal,
+        }),
+        'smart-approval'
+      );
 
       const content =
         typeof response.choices[0].message.content === 'string'
@@ -422,6 +427,11 @@ Please return results in JSON format:
         error instanceof Error ? error.message : String(error)
       );
 
+      // Check if it was cancelled by user
+      const isCancelled = error.message === 'Operation cancelled by user' ||
+                         error.message.includes('cancelled') ||
+                         error.message.includes('aborted');
+
       // In Remote mode, remote LLM already approved, local failure means auto-approve
       const configManager = getConfigManager();
       const authConfig = configManager.getAuthConfig();
@@ -435,6 +445,17 @@ Please return results in JSON format:
         };
       }
 
+      // If user cancelled the AI review, reject the tool execution
+      if (isCancelled) {
+        return {
+          approved: false,
+          analysis: 'AI review cancelled by user',
+          riskLevel: RiskLevel.HIGH,
+          detectionMethod: 'manual',
+        };
+      }
+
+      // Other errors require manual confirmation
       return {
         approved: false,
         analysis: `AI review failed: ${error.message}, requires manual confirmation`,

@@ -1758,9 +1758,8 @@ export class SlashCommandHandler {
           console.log(chalk.gray(`  Location: ${result.skillPath}`));
           console.log(chalk.gray('  Type: Remote'));
           console.log();
-          console.log(chalk.cyan('  Note: Run "xagent start" to use the new skill\n'));
 
-          // Trigger system prompt update
+          // Trigger system prompt update - skill is immediately available
           this.onSystemPromptUpdate?.();
         } else {
           console.log(chalk.red(`\n❌ Failed to install skill: ${result.error}\n`));

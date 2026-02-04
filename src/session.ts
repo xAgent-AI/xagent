@@ -9,6 +9,7 @@ import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import fsPromises from 'fs/promises';
 import os from 'os';
 
 const require = createRequire(import.meta.url);
@@ -156,6 +157,11 @@ export class InteractiveSession {
    */
   async updateSystemPrompt(): Promise<void> {
     // Reload skills to pick up any newly added/removed skills
+    // First reset the SkillLoader to clear all cached skills
+    const { resetSkillLoader } = await import('./skill-loader.js');
+    resetSkillLoader();
+
+    // Then reload the skill invoker
     const skillInvoker = (await import('./skill-invoker.js')).getSkillInvoker();
     await skillInvoker.reload();
 
@@ -1810,19 +1816,20 @@ async function initializeSkillsOnDemand(): Promise<number> {
 
   // Check if user skills directory exists and has skills
   let hasSkills = false;
-  if (fs.existsSync(userSkillsPath)) {
-    try {
-      const entries = fs.readdirSync(userSkillsPath, { withFileTypes: true });
-      hasSkills = entries.some(e => e.isDirectory());
-    } catch {
-      hasSkills = false;
-    }
+  try {
+    const entries = await fsPromises.readdir(userSkillsPath, { withFileTypes: true });
+    hasSkills = entries.some(e => e.isDirectory());
+  } catch {
+    hasSkills = false;
   }
 
   // If skills already exist, skip initialization
   if (hasSkills) {
     return 0;
   }
+
+  // Ensure user skills directory exists
+  await fsPromises.mkdir(userSkillsPath, { recursive: true });
 
   // Define skill source directories
   const builtinSkillsDir = path.join(__dirname, '..', 'skills', 'skills');
@@ -1852,20 +1859,21 @@ async function initializeSkillsOnDemand(): Promise<number> {
     return 0;
   }
 
-  // Create user skills directory
-  fs.mkdirSync(userSkillsPath, { recursive: true });
+  // Create user skills directory (already done above, but ensure it exists)
+  await fsPromises.mkdir(userSkillsPath, { recursive: true });
 
   // Copy all skills
   for (const { source, name } of skillsToInstall) {
     const destPath = path.join(userSkillsPath, name);
     if (!fs.existsSync(destPath)) {
-      copyDirectoryRecursive(source, destPath);
+      await copyDirectoryRecursiveAsync(source, destPath);
     }
   }
 
   return skillsToInstall.length;
 }
 
+// Synchronous version (kept for backwards compatibility)
 function copyDirectoryRecursive(src: string, dest: string): void {
   if (!fs.existsSync(dest)) {
     fs.mkdirSync(dest, { recursive: true });
@@ -1880,6 +1888,23 @@ function copyDirectoryRecursive(src: string, dest: string): void {
       copyDirectoryRecursive(srcPath, destPath);
     } else if (entry.isFile()) {
       fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+// Asynchronous version for concurrent-safe initialization
+async function copyDirectoryRecursiveAsync(src: string, dest: string): Promise<void> {
+  await fsPromises.mkdir(dest, { recursive: true });
+  const entries = await fsPromises.readdir(src, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+
+    if (entry.isDirectory()) {
+      await copyDirectoryRecursiveAsync(srcPath, destPath);
+    } else if (entry.isFile()) {
+      await fsPromises.copyFile(srcPath, destPath);
     }
   }
 }

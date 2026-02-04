@@ -18,8 +18,8 @@ export interface SkillInfo {
 }
 
 export interface SkillLoaderConfig {
-  skillsRootPath?: string;
-  userSkillsRootPath?: string;  // User-installed skills path
+  /** User-installed skills path (~/.xagent/skills) */
+  userSkillsRootPath?: string;
   onError?: (error: SkillLoadError) => void;
   onWarning?: (warning: SkillLoadWarning) => void;
 }
@@ -40,7 +40,6 @@ export interface SkillLoadWarning {
 
 export class SkillLoader {
   private skillsRootPath: string;
-  private userSkillsRootPath?: string;
   private loadedSkills: Map<string, SkillInfo> = new Map();
   private skillDirectories: Map<string, string> = new Map(); // skillId -> path mapping
   private errorCallback?: (error: SkillLoadError) => void;
@@ -53,7 +52,7 @@ export class SkillLoader {
   } = { totalFound: 0, successfullyLoaded: 0, failed: 0, errors: [] };
 
   constructor(config?: SkillLoaderConfig) {
-    // Unified approach: All skills are in user directory
+    // All skills are loaded from user directory (default: ~/.xagent/skills)
     // Built-in skills are copied to user directory during initialization
     if (config?.userSkillsRootPath) {
       this.skillsRootPath = config.userSkillsRootPath;
@@ -62,8 +61,6 @@ export class SkillLoader {
       const userPath = configManager.getUserSkillsPath();
       this.skillsRootPath = userPath || path.join(require('os').homedir(), '.xagent', 'skills');
     }
-    
-    this.userSkillsRootPath = undefined; // Not used in unified mode
   }
   async loadAllSkills(): Promise<SkillInfo[]> {
     const skills: SkillInfo[] = [];
@@ -479,13 +476,27 @@ export class SkillLoader {
 let skillLoaderInstance: SkillLoader | null = null;
 
 export function getSkillLoader(config?: SkillLoaderConfig): SkillLoader {
+  // Always use the same user skills directory to avoid cache pollution
+  // Built-in skills are copied to user directory during initialization
+  const unifiedConfig: SkillLoaderConfig = {
+    userSkillsRootPath: config?.userSkillsRootPath
+  };
+
   if (!skillLoaderInstance) {
-    skillLoaderInstance = new SkillLoader(config);
+    skillLoaderInstance = new SkillLoader(unifiedConfig);
   }
   return skillLoaderInstance;
 }
 
+/**
+ * Force reset the skill loader instance (for testing or critical reload)
+ * WARNING: This clears all cached skills!
+ */
+export function resetSkillLoader(): void {
+  skillLoaderInstance = null;
+}
+
 export async function loadSkillsFromFolder(skillsPath: string): Promise<SkillInfo[]> {
-  const loader = new SkillLoader({ skillsRootPath: skillsPath });
+  const loader = new SkillLoader({ userSkillsRootPath: skillsPath });
   return await loader.loadAllSkills();
 }

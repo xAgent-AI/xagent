@@ -43,46 +43,26 @@ export class WorkflowManager {
     await this.loadSkills();
   }
 
-  private async findSkillsPath(): Promise<string | null> {
-    // First, try to get from config
-    const configManager = getConfigManager();
-    const configuredPath = configManager.getSkillsPath();
-
-    if (configuredPath) {
-      return configuredPath;
-    }
-
-    // Fallback: auto-detect relative to script location
-    const scriptDir = path.dirname(process.argv[1]);
-    const possiblePaths = [
-      path.join(scriptDir, '..', 'skills', 'skills'),
-      path.join(scriptDir, '..', '..', 'skills', 'skills'),
-      path.join(scriptDir, 'skills', 'skills'),
-      path.join(scriptDir, '..', '..', '..', 'skills', 'skills'),
-      path.join(process.cwd(), 'skills', 'skills')
-    ];
-
-    for (const p of possiblePaths) {
-      try {
-        const resolvedPath = path.resolve(p);
-        const stat = await fs.stat(resolvedPath);
-        if (stat.isDirectory()) {
-          return resolvedPath;
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    return null;
-  }
-
   async loadSkills(): Promise<void> {
     try {
-      const skillsPath = await this.findSkillsPath();
-      if (!skillsPath) return;
+      // All skills are loaded from user directory (~/.xagent/skills)
+      // Built-in skills are copied to user directory during initialization (see session.ts)
+      const configManager = getConfigManager();
+      const skillsPath = configManager.getUserSkillsPath();
 
-      const skillLoader = getSkillLoader({ skillsRootPath: skillsPath });
+      if (!skillsPath) {
+        return;
+      }
+
+      // Verify the path exists before loading
+      try {
+        await fs.access(skillsPath);
+      } catch {
+        // User skills directory doesn't exist yet (first run)
+        return;
+      }
+
+      const skillLoader = getSkillLoader({ userSkillsRootPath: skillsPath });
       await skillLoader.loadAllSkills();
 
       const workflows = await skillLoader.convertAllToWorkflows();
@@ -347,10 +327,12 @@ export class WorkflowManager {
 
   async listSkills(): Promise<{ id: string; name: string; description: string; category: string }[]> {
     try {
-      const skillsPath = await this.findSkillsPath();
+      // Always use user skills directory - built-in skills are copied there on init
+      const configManager = getConfigManager();
+      const skillsPath = configManager.getUserSkillsPath();
       if (!skillsPath) return [];
 
-      const skillLoader = getSkillLoader({ skillsRootPath: skillsPath });
+      const skillLoader = getSkillLoader();
       const skills = await skillLoader.loadAllSkills();
       
       return skills.map(skill => ({
@@ -371,10 +353,12 @@ export class WorkflowManager {
 
   async getSkillDetails(skillId: string): Promise<{ id: string; name: string; description: string; content: string; category: string } | null> {
     try {
-      const skillsPath = await this.findSkillsPath();
+      // Always use user skills directory - built-in skills are copied there on init
+      const configManager = getConfigManager();
+      const skillsPath = configManager.getUserSkillsPath();
       if (!skillsPath) return null;
 
-      const skillLoader = getSkillLoader({ skillsRootPath: skillsPath });
+      const skillLoader = getSkillLoader();
       
       // Reload skills to ensure we have the latest
       await skillLoader.loadAllSkills();

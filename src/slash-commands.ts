@@ -5,8 +5,8 @@ import ora from 'ora';
 import fs from 'fs/promises';
 import path from 'path';
 import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
-import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
-import { RemoteAIClient } from './remote-ai-client.js';
+import { Message, detectThinkingKeywords, getThinkingTokens } from './ai-client/types.js';
+import { fetchDefaultModels } from './ai-client/providers/remote.js';
 import { getToolRegistry } from './tools.js';
 import { getAgentManager } from './agents.js';
 import { getMemoryManager, MemoryFile } from './memory.js';
@@ -495,7 +495,7 @@ export class SlashCommandHandler {
 
           try {
             console.log(chalk.cyan('   Fetching default models from remote server...'));
-            const defaults = await RemoteAIClient.fetchDefaultModels(newAuthConfig.apiKey || '', webBaseUrl);
+            const defaults = await fetchDefaultModels(newAuthConfig.apiKey || '', webBaseUrl);
 
             if (defaults.llm?.name) {
               defaultLlmName = defaults.llm.name;
@@ -660,7 +660,7 @@ export class SlashCommandHandler {
       if (!defaults) {
         try {
           const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-          defaults = await RemoteAIClient.fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
+          defaults = await fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
         } catch (error: any) {
           console.log(chalk.yellow(`   ⚠️  Failed to fetch default models: ${error.message}`));
         }
@@ -712,7 +712,7 @@ export class SlashCommandHandler {
 
     // Get and display provider list
     try {
-      const models = await remoteClient.getModels();
+      const models = await remoteClient.getRemoteModels();
       const modelList = action === 'llm' ? models.llm : models.vlm;
 
       if (modelList.length === 0) {

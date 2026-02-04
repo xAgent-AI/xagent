@@ -1,5 +1,5 @@
 import { ChatMessage, CompressionConfig } from './types.js';
-import { AIClient, Message } from './ai-client.js';
+import type { Message } from './ai-client/types.js';
 import { AuthConfig } from './types.js';
 import { getCancellationManager } from './cancellation.js';
 import { createAIClient, AIClientInterface } from './ai-client-factory.js';

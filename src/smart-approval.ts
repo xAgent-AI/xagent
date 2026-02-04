@@ -1,5 +1,6 @@
 import { confirm } from '@clack/prompts';
-import { AIClient, Message } from './ai-client.js';
+import { Message } from './ai-client/types.js';
+import { createAIClient, AIClientInterface } from './ai-client-factory.js';
 import { getConfigManager } from './config.js';
 import { AuthType } from './types.js';
 import { getLogger } from './logger.js';
@@ -304,7 +305,7 @@ export class BlacklistChecker {
  * AI approval checker
  */
 export class AIApprovalChecker {
-  private aiClient: AIClient | null = null;
+  private aiClient: AIClientInterface | null = null;
   private isRemoteMode: boolean = false;
 
   constructor() {
@@ -325,7 +326,7 @@ export class AIApprovalChecker {
       // Remote mode: AI review handled by remote LLM, no local AIClient needed
       // Local mode: use local AIClient
       if (!this.isRemoteMode && authConfig.apiKey) {
-        this.aiClient = new AIClient(authConfig);
+        this.aiClient = createAIClient(authConfig);
       }
     } catch (error) {
       logger.error(

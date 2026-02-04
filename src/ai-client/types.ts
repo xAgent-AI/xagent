@@ -306,6 +306,14 @@ export function getThinkingTokens(mode: ThinkingMode): number {
 // ============================================================================
 
 /**
+ * Remote models response format
+ */
+export interface RemoteModelsResponse {
+  llm: Model[];
+  vlm: Model[];
+}
+
+/**
  * Extended interface for remote provider with task management methods
  */
 export interface RemoteTaskManager {
@@ -313,6 +321,8 @@ export interface RemoteTaskManager {
   cancelTask(taskId: string): Promise<void>;
   failTask(taskId: string, reason: 'timeout' | 'failure'): Promise<void>;
   invokeVLM(messages: Message[], systemPrompt: string, options?: { taskId?: string; status?: 'begin' | 'continue'; signal?: AbortSignal }): Promise<string>;
+  /** Get models including both LLM and VLM for remote provider */
+  getRemoteModels(): Promise<RemoteModelsResponse>;
 }
 
 /**

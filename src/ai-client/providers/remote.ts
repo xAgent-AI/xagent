@@ -9,6 +9,7 @@ import type {
   CompletionResponse,
   StreamEvent,
   Model,
+  RemoteModelsResponse,
 } from '../types';
 import { getLogger } from '../../logger';
 
@@ -47,6 +48,7 @@ export class RemoteProvider implements AIProvider {
 
   /**
    * Get available models from remote service
+   * Implements AIProvider interface - returns LLM models only
    */
   async getModels(): Promise<Model[]> {
     try {
@@ -55,11 +57,36 @@ export class RemoteProvider implements AIProvider {
         timeout: 10000,
       });
 
-      const data = response.data as { llm?: Model[]; vlm?: Model[] };
+      const data = response.data as RemoteModelsResponse;
       return data.llm || [];
     } catch {
       // Return default models if fetch fails
       return REMOTE_MODELS;
+    }
+  }
+
+  /**
+   * Get available models from remote service including both LLM and VLM
+   * Extended method for RemoteAIProvider interface
+   */
+  async getRemoteModels(): Promise<RemoteModelsResponse> {
+    try {
+      const response = await this.client.get(`${this.webBaseUrl}/api/models`, {
+        headers: this.getHeaders(),
+        timeout: 10000,
+      });
+
+      const data = response.data as RemoteModelsResponse;
+      return {
+        llm: data.llm || [],
+        vlm: data.vlm || [],
+      };
+    } catch {
+      // Return default models if fetch fails
+      return {
+        llm: REMOTE_MODELS,
+        vlm: [],
+      };
     }
   }
 

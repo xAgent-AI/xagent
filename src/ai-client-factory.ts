@@ -11,7 +11,7 @@
  *   const response = await aiClient.chatCompletion(messages, { model: 'gpt-4' });
  */
 
-import type { Message, CompletionOptions, CompletionResponse, AIConfig, RemoteTaskManager, Model } from './ai-client/types.js';
+import type { Message, CompletionOptions, CompletionResponse, AIConfig, RemoteTaskManager, Model, RemoteModelsResponse } from './ai-client/types.js';
 import { AuthConfig, AuthType } from './types.js';
 import { ProviderFactory, createOpenAI, createAnthropic, createRemote, type AIProvider } from './ai-client/index.js';
 import type { RemoteAIProvider } from './ai-client/types.js';
@@ -31,6 +31,8 @@ export interface AIClientInterface {
   failTask?(taskId: string, reason: 'timeout' | 'failure'): Promise<void>;
   // VLM invocation for image analysis (only available in remote mode)
   invokeVLM?(messages: Message[], systemPrompt: string, options?: { taskId?: string; status?: 'begin' | 'continue'; signal?: AbortSignal }): Promise<string>;
+  // Get remote models including both LLM and VLM (only available in remote mode)
+  getRemoteModels?(): Promise<RemoteModelsResponse>;
 }
 
 /**
@@ -75,6 +77,10 @@ class ProviderAdapter implements AIClientInterface {
   invokeVLM?(messages: Message[], systemPrompt: string, options?: { taskId?: string; status?: 'begin' | 'continue'; signal?: AbortSignal }): Promise<string> {
     throw new Error('invokeVLM is only available in remote mode');
   }
+
+  getRemoteModels?(): Promise<RemoteModelsResponse> {
+    throw new Error('getRemoteModels is only available in remote mode');
+  }
 }
 
 /**
@@ -117,6 +123,10 @@ class RemoteProviderAdapter implements AIClientInterface, RemoteTaskManager {
 
   async invokeVLM(messages: Message[], systemPrompt: string, options?: { taskId?: string; status?: 'begin' | 'continue'; signal?: AbortSignal }): Promise<string> {
     return this.provider.invokeVLM(messages, systemPrompt, options);
+  }
+
+  async getRemoteModels(): Promise<RemoteModelsResponse> {
+    return this.provider.getRemoteModels();
   }
 }
 

@@ -682,7 +682,7 @@ export class SlashCommandHandler {
 
     // 6. Get and display model list
     try {
-      const models = await remoteClient.getModels();
+      const models = await remoteClient.getRemoteModels();
       const modelList = action === 'llm' ? models.llm : models.vlm;
 
       if (modelList.length === 0) {

@@ -422,15 +422,19 @@ Please return results in JSON format:
         riskLevel: RiskLevel.MEDIUM,
       };
     } catch (error: any) {
+      // Check if it was cancelled by user first - don't log error for cancellations
+      const isCancelled = error.message === 'Operation cancelled by user' ||
+                         error.message.includes('cancelled') ||
+                         error.message.includes('aborted');
+
+      if (isCancelled) {
+        throw new Error('Operation cancelled by user');
+      }
+
       logger.error(
         'AI approval check failed',
         error instanceof Error ? error.message : String(error)
       );
-
-      // Check if it was cancelled by user
-      const isCancelled = error.message === 'Operation cancelled by user' ||
-                         error.message.includes('cancelled') ||
-                         error.message.includes('aborted');
 
       // In Remote mode, remote LLM already approved, local failure means auto-approve
       const configManager = getConfigManager();

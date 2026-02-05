@@ -63,7 +63,8 @@
     "string-width": "^7.0.0",
     "strip-ansi": "^7.1.0",
     "terminal-link": "^3.0.0",
-    "wrap-ansi": "^9.0.0"
+    "wrap-ansi": "^9.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/archiver": "^7.0.0",
@@ -82,8 +83,7 @@
     "node": ">=20.0.0"
   },
   "directories": {
-    "doc": "docs",
-    "test": "test"
+    "doc": "docs"
   },
   "types": "./dist/index.d.ts"
 }

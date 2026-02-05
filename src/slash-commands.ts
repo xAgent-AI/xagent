@@ -494,21 +494,23 @@ export class SlashCommandHandler {
           let defaultVlmName = '';
 
           try {
-            console.log(chalk.cyan('   Fetching default models from remote server...'));
+            console.log(chalk.cyan('\n📊 Fetching default models from remote server...'));
             const defaults = await fetchDefaultModels(newAuthConfig.apiKey || '', webBaseUrl);
 
             if (defaults.llm?.name) {
               defaultLlmName = defaults.llm.name;
-              console.log(chalk.cyan(`   Default LLM: ${defaults.llm.displayName || defaultLlmName}`));
+              console.log(chalk.cyan(`   LLM Model: ${defaults.llm.name}`));
             }
             if (defaults.vlm?.name) {
               defaultVlmName = defaults.vlm.name;
-              console.log(chalk.cyan(`   Default VLM: ${defaults.vlm.displayName || defaultVlmName}`));
+              console.log(chalk.cyan(`   VLM Model: ${defaults.vlm.name}`));
             }
           } catch (error: any) {
             console.log(chalk.yellow(`   ⚠️  Failed to fetch default models: ${error.message}`));
             console.log(chalk.yellow('   ⚠️  Use /model command to select models manually.'));
           }
+
+          console.log('');
 
           this.configManager.set('remote_llmModelName', defaultLlmName);
           this.configManager.set('remote_vlmModelName', defaultVlmName);
@@ -887,13 +889,13 @@ export class SlashCommandHandler {
 
     const apiKey = (await import('@clack/prompts').then(m =>
       m.password({
-        message: `Enter ${selectedProvider.name} API Key:`,
-        validate: (value: string | undefined) => {
-          if (!value || value.trim().length === 0) {
-            return 'API Key cannot be empty';
-          }
-          return undefined;
-        },
+      message: `Enter ${selectedProvider.name} API Key:`,
+      validate: (value: string | undefined) => {
+        if (!value || value.trim().length === 0) {
+          return 'API Key cannot be empty';
+        }
+        return undefined;
+      },
       })
     )) as string;
 

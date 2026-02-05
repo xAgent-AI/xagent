@@ -693,7 +693,7 @@ program
       console.log(`  ${colors.primaryBright('xagent skill --add https://docs.example.com/skill.md')}`);
       console.log('');
       console.log(colors.textMuted('To install a new skill, use the interactive command:'));
-      console.log(`  ${colors.primaryBright('/skills add')}`);
+      console.log(`  ${colors.primaryBright('/skill add')}`);
       console.log('');
     }
   });

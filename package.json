@@ -61,6 +61,7 @@
     "react-icons": "^5.5.0",
     "screenshot-desktop": "^1.15.3",
     "sharp": "^0.34.5",
+    "simple-git": "^3.30.0",
     "string-width": "^7.0.0",
     "strip-ansi": "^7.1.0",
     "terminal-link": "^3.0.0",

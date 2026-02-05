@@ -125,14 +125,9 @@ export class SlashCommandHandler {
       case 'mcp':
         await this.handleMcp(args);
         break;
-      case 'skills':
-        await this.handleSkills(args);
+      case 'skill':
+        await this.handleSkill(args);
         break;
-      case 'vlm':
-        await this.handleVlm();
-        break;
-      case 'provider':
-        await this.handleProvider();
       case 'model':
         await this.handleModel();
         break;
@@ -299,10 +294,10 @@ export class SlashCommandHandler {
         example: '/mcp list\n/mcp add server-name',
       },
       {
-        cmd: '/skills [list|add|remove]',
+        cmd: '/skill [list|add|remove]',
         desc: 'Manage skills',
         detail: 'Install, list, or remove skills from ~/.xagent/skills',
-        example: '/skills list\n/skills add ./my-skill\n/skills add owner/repo\n/skills remove my-skill'
+        example: '/skill list\n/skill add ./my-skill\n/skill add owner/repo\n/skill remove my-skill'
       },
       {
         cmd: '/vlm',
@@ -1649,7 +1644,7 @@ export class SlashCommandHandler {
     }
   }
 
-  private async handleSkills(args: string[]): Promise<void> {
+  private async handleSkill(args: string[]): Promise<void> {
     const os = await import('os');
     const path = await import('path');
     const { fileURLToPath } = await import('url');
@@ -1672,14 +1667,14 @@ export class SlashCommandHandler {
         console.log(chalk.cyan('\n🔧 Skills:\n'));
         console.log(`  Skills directory: ${chalk.yellow(userSkillsPath)}\n`);
         console.log(chalk.gray('Available commands:'));
-        console.log(chalk.gray('  /skills list                   - List installed skills'));
-        console.log(chalk.gray('  /skills add <source>           - Add a skill (local path or remote URL)'));
-        console.log(chalk.gray('  /skills remove <name>          - Remove a user-installed skill'));
+        console.log(chalk.gray('  /skill list                   - List installed skills'));
+        console.log(chalk.gray('  /skill add <source>           - Add a skill (local path or remote URL)'));
+        console.log(chalk.gray('  /skill remove <name>          - Remove a user-installed skill'));
         console.log();
         console.log(chalk.gray('Examples:'));
-        console.log(chalk.gray('  /skills add ./my-skill                    - Local path'));
-        console.log(chalk.gray('  /skills add owner/repo                     - GitHub shorthand'));
-        console.log(chalk.gray('  /skills add https://github.com/owner/repo  - GitHub URL'));
+        console.log(chalk.gray('  /skill add ./my-skill                    - Local path'));
+        console.log(chalk.gray('  /skill add owner/repo                     - GitHub shorthand'));
+        console.log(chalk.gray('  /skill add https://github.com/owner/repo  - GitHub URL'));
         console.log();
     }
   }
@@ -1694,7 +1689,7 @@ export class SlashCommandHandler {
       if (skills.length === 0) {
         console.log(chalk.gray('  No skills installed'));
         console.log(chalk.cyan('\n  To add a skill, use:'));
-        console.log(chalk.cyan('    /skills add <path-to-skill>\n'));
+        console.log(chalk.cyan('    /skill add <path-to-skill>\n'));
         return;
       }
 
@@ -1725,7 +1720,7 @@ export class SlashCommandHandler {
       if (error.code === 'ENOENT') {
         console.log(chalk.gray('  No skills installed'));
         console.log(chalk.cyan('\n  To add a skill, use:'));
-        console.log(chalk.cyan('    /skills add <path-to-skill>\n'));
+        console.log(chalk.cyan('    /skill add <path-to-skill>\n'));
       } else {
         console.log(chalk.red(`  Error: ${error.message}`));
       }
@@ -1735,11 +1730,11 @@ export class SlashCommandHandler {
   private async addSkill(source: string, userSkillsPath: string, fs: any, path: any): Promise<void> {
     if (!source) {
       console.log(chalk.yellow('\n⚠️  Please specify a skill source'));
-      console.log(chalk.cyan('  Usage: /skills add <source>\n'));
+      console.log(chalk.cyan('  Usage: /skill add <source>\n'));
       console.log(chalk.gray('  Examples:'));
-      console.log(chalk.gray('    /skills add ./my-skill           - Local path'));
-      console.log(chalk.gray('    /skills add owner/repo            - GitHub shorthand'));
-      console.log(chalk.gray('    /skills add https://github.com/owner/repo'));
+      console.log(chalk.gray('    /skill add ./my-skill           - Local path'));
+      console.log(chalk.gray('    /skill add owner/repo            - GitHub shorthand'));
+      console.log(chalk.gray('    /skill add https://github.com/owner/repo'));
       console.log();
       return;
     }
@@ -1772,7 +1767,7 @@ export class SlashCommandHandler {
         try {
           await fs.access(destPath);
           console.log(chalk.yellow(`\n⚠️  Skill "${skillName}" already installed`));
-          console.log(chalk.cyan(`  Use: /skills remove ${skillName} to remove it first\n`));
+          console.log(chalk.cyan(`  Use: /skill remove ${skillName} to remove it first\n`));
           return;
         } catch {
           // Doesn't exist, proceed
@@ -1830,7 +1825,7 @@ export class SlashCommandHandler {
   private async removeSkill(skillName: string, userSkillsPath: string, fs: any, path: any): Promise<void> {
     if (!skillName) {
       console.log(chalk.yellow('\n⚠️  Please specify a skill name'));
-      console.log(chalk.cyan('  Usage: /skills remove <skill-name>\n'));
+      console.log(chalk.cyan('  Usage: /skill remove <skill-name>\n'));
       return;
     }
 

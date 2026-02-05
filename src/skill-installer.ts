@@ -4,13 +4,16 @@
  */
 
 import fs from 'fs/promises';
-import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
+import { mkdtemp, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import simpleGit from 'simple-git';
 import { getConfigManager } from './config.js';
 import { getLogger } from './logger.js';
 
 const logger = getLogger();
+const CLONE_TIMEOUT_MS = 60000; // 60 seconds
 
 export interface RemoteSource {
   type: 'github' | 'direct-url' | 'local';
@@ -185,17 +188,6 @@ async function copyDir(src: string, dest: string): Promise<void> {
 }
 
 /**
- * Fetch remote file content via HTTP
- */
-async function fetchRemoteFile(url: string): Promise<string> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
-  }
-  return response.text();
-}
-
-/**
  * Find SKILL.md in a directory
  */
 async function findSkillMd(dirPath: string): Promise<string | null> {
@@ -206,7 +198,7 @@ async function findSkillMd(dirPath: string): Promise<string | null> {
       const fullPath = path.join(dirPath, entry.name);
 
       if (entry.isDirectory()) {
-        // Skip hidden directories
+        // Skip hidden directories (except .)
         if (entry.name.startsWith('.') && entry.name !== '.') continue;
 
         // Check subdirectory for SKILL.md
@@ -223,10 +215,56 @@ async function findSkillMd(dirPath: string): Promise<string | null> {
 }
 
 /**
- * Get GitHub raw content URL
+ * Fetch remote file content via HTTP with timeout
  */
-function getRawUrl(owner: string, repo: string, ref: string, filePath: string): string {
-  return `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${filePath}`;
+async function fetchRemoteFile(url: string, timeoutMs: number = 30000): Promise<string> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+    }
+    return response.text();
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Request timed out after ${timeoutMs}ms: ${url}`);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Clone a GitHub repository to a temporary directory
+ */
+async function cloneRepo(url: string, ref?: string): Promise<string> {
+  const tempDir = await mkdtemp(path.join(tmpdir(), 'xagent-skills-'));
+  const git = simpleGit({ timeout: { block: CLONE_TIMEOUT_MS } });
+  const cloneOptions = ref ? ['--depth', '1', '--branch', ref] : ['--depth', '1'];
+
+  try {
+    await git.clone(url, tempDir, cloneOptions);
+    return tempDir;
+  } catch (error) {
+    // Clean up temp dir on failure
+    await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isTimeout = errorMessage.includes('block timeout') || errorMessage.includes('timed out');
+    
+    if (isTimeout) {
+      throw new Error(
+        `Clone timed out after 60s. This often happens with private repos that require authentication.\n` +
+        `  Ensure you have access and your SSH keys or credentials are configured.`
+      );
+    }
+
+    throw new Error(`Failed to clone ${url}: ${errorMessage}`);
+  }
 }
 
 /**
@@ -267,7 +305,7 @@ async function installFromDirectUrl(source: RemoteSource): Promise<InstallResult
 }
 
 /**
- * Install skill from GitHub repository
+ * Install skill from GitHub repository using git clone
  */
 async function installFromGitHub(source: RemoteSource): Promise<InstallResult> {
   const configManager = getConfigManager();
@@ -283,86 +321,50 @@ async function installFromGitHub(source: RemoteSource): Promise<InstallResult> {
   const cleanRepo = repo.replace(/\.git$/, '');
   const ref = source.ref || 'main';
 
-  try {
-    let skillContent: string | null = null;
-    let skillName: string | null = null;
-    let tempDir: string | null = null;
+  let tempDir: string | null = null;
 
+  try {
+    // Clone the repository to a temporary directory
+    tempDir = await cloneRepo(source.url, ref);
+
+    // Find the skill directory in the cloned repo
+    let skillDir: string;
+    
     if (source.subpath) {
       // Specific path to skill provided
-      const skillMdUrl = getRawUrl(owner, cleanRepo, ref, `${source.subpath}/SKILL.md`);
+      skillDir = path.join(tempDir, source.subpath);
       try {
-        skillContent = await fetchRemoteFile(skillMdUrl);
+        await fs.access(skillDir);
       } catch {
-        // Try with skill instead of SKILL.md
-        const altUrl = getRawUrl(owner, cleanRepo, ref, `${source.subpath}/skill`);
-        try {
-          skillContent = await fetchRemoteFile(altUrl);
-        } catch {
-          return { success: false, error: `SKILL.md not found at ${source.subpath}` };
-        }
+        return { success: false, error: `Path "${source.subpath}" not found in repository` };
       }
     } else if (source.skillName) {
-      // @owner/repo@syntax - fetch specific skill
-      const skillMdUrl = getRawUrl(owner, cleanRepo, ref, `skills/${source.skillName}/SKILL.md`);
+      // @owner/repo@syntax - skill is in skills/<skill-name>/
+      skillDir = path.join(tempDir, 'skills', source.skillName);
       try {
-        skillContent = await fetchRemoteFile(skillMdUrl);
+        await fs.access(skillDir);
       } catch {
-        return { success: false, error: `Skill "${source.skillName}" not found` };
+        return { success: false, error: `Skill "${source.skillName}" not found in skills/` };
       }
     } else {
-      // No specific path - need to find SKILL.md in repo
-      // Try to fetch repository tree and find skills
-      const treeUrl = `https://api.github.com/repos/${owner}/${cleanRepo}/contents/skills?ref=${ref}`;
-      
-      try {
-        const response = await fetch(treeUrl);
-        if (response.ok) {
-          const data = await response.json() as Array<{ name: string; type: string; path: string }>;
-          const skills = data.filter(item => item.type === 'dir');
-          
-          if (skills.length > 0) {
-            // Install all skills from the repo
-            const firstSkill = skills[0];
-            const skillMdUrl = getRawUrl(owner, cleanRepo, ref, `${firstSkill.path}/SKILL.md`);
-            skillContent = await fetchRemoteFile(skillMdUrl);
-          } else {
-            return { success: false, error: 'No skills found in repository' };
-          }
-        } else if (response.status === 404) {
-          return { success: false, error: 'Repository or branch not found' };
-        } else {
-          throw new Error(`GitHub API error: ${response.status}`);
-        }
-      } catch (e) {
-        // Fallback: try common skill locations
-        const possiblePaths = [
-          `skills/${cleanRepo}/SKILL.md`,
-          `skill/SKILL.md`,
-          `SKILL.md`
-        ];
-
-        for (const p of possiblePaths) {
-          try {
-            const url = getRawUrl(owner, cleanRepo, ref, p);
-            skillContent = await fetchRemoteFile(url);
-            break;
-          } catch {
-            continue;
-          }
-        }
-
-        if (!skillContent) {
-          return { success: false, error: 'No SKILL.md found in repository' };
-        }
+      // No specific path - find SKILL.md in the repo
+      const skillMdPath = await findSkillMd(tempDir);
+      if (!skillMdPath) {
+        return { success: false, error: 'No SKILL.md found in repository' };
       }
+      skillDir = path.dirname(skillMdPath);
     }
 
-    if (!skillContent) {
-      return { success: false, error: 'Could not fetch skill content' };
+    // Read SKILL.md to get skill name
+    const skillMdPath = path.join(skillDir, 'SKILL.md');
+    let skillContent: string;
+    try {
+      skillContent = await fs.readFile(skillMdPath, 'utf-8');
+    } catch {
+      return { success: false, error: 'SKILL.md not found in skill directory' };
     }
 
-    skillName = extractSkillName(skillContent);
+    const skillName = extractSkillName(skillContent);
     if (!skillName) {
       return { success: false, error: 'Could not extract skill name from SKILL.md' };
     }
@@ -377,42 +379,17 @@ async function installFromGitHub(source: RemoteSource): Promise<InstallResult> {
       // Doesn't exist, proceed
     }
 
-    // Create skill directory
-    await ensureDir(skillPath);
-
-    // Write SKILL.md
-    await fs.writeFile(path.join(skillPath, 'SKILL.md'), skillContent, 'utf-8');
-
-    // Try to fetch additional files from the skill directory
-    if (source.subpath || source.skillName) {
-      const skillDirPath = source.subpath || `skills/${source.skillName}`;
-      
-      try {
-        const contentsUrl = `https://api.github.com/repos/${owner}/${cleanRepo}/contents/${skillDirPath}?ref=${ref}`;
-        const response = await fetch(contentsUrl);
-        
-        if (response.ok) {
-          const files = await response.json() as Array<{ name: string; type: string; download_url: string }>;
-          
-          for (const file of files) {
-            if (file.type === 'file' && file.name !== 'SKILL.md' && file.name !== 'package.json') {
-              try {
-                const fileContent = await fetchRemoteFile(file.download_url);
-                await fs.writeFile(path.join(skillPath, file.name), fileContent, 'utf-8');
-              } catch {
-                // Skip files that can't be fetched
-              }
-            }
-          }
-        }
-      } catch {
-        // Ignore errors fetching additional files
-      }
-    }
+    // Copy skill files to user skills directory
+    await copyDir(skillDir, skillPath);
 
     return { success: true, skillName, skillPath };
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    // Clean up temporary directory
+    if (tempDir) {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 }
 

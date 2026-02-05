@@ -84,8 +84,6 @@ sudo dnf install -y ImageMagick
 # GUI 自动化使用系统内置的截图功能
 ```
 
-> **注意**：GUI 自动化需要图形显示环境（X11 或 Wayland）。无显示环境的服务器可能无法支持 GUI 功能。
-
 ---
 
 ## 📊 功能对比

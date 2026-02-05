@@ -84,8 +84,6 @@ sudo dnf install -y ImageMagick
 # GUI automation uses built-in screenshot functionality
 ```
 
-> **Note**: GUI automation requires a display environment (X11 or Wayland). Server environments without a display may not support GUI features.
-
 ---
 
 ## 📊 Feature Comparison

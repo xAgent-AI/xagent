@@ -426,16 +426,24 @@ export class SlashCommandHandler {
 
     // Show current authentication configuration
     const authConfig = this.configManager.getAuthConfig();
-    const currentType =
-      authConfig.type === AuthType.OAUTH_XAGENT ? 'xAgent (Remote)' : 'Third-party API (Local)';
+    const isRemote = authConfig.type === AuthType.OAUTH_XAGENT;
+    const currentType = isRemote ? 'xAgent (Remote)' : 'Third-party API (Local)';
 
     console.log(chalk.cyan('\n📋 Current Authentication Configuration:\n'));
     console.log(`  ${chalk.yellow('Mode:')} ${currentType}`);
-    if (authConfig.baseUrl) {
-      console.log(`  ${chalk.yellow('API URL:')} ${authConfig.baseUrl}`);
-    }
-    if (authConfig.modelName) {
-      console.log(`  ${chalk.yellow('Model:')} ${authConfig.modelName}`);
+
+    if (isRemote) {
+      // Remote mode: show remote_llmModelName and remote_vlmModelName
+      const llmModel = authConfig.remote_llmModelName || 'Not set';
+      const vlmModel = authConfig.remote_vlmModelName || 'Not set';
+      console.log(`  ${chalk.yellow('LLM Model:')} ${llmModel}`);
+      console.log(`  ${chalk.yellow('VLM Model:')} ${vlmModel}`);
+    } else {
+      // Local mode: show modelName (LLM) and guiSubagentModel (VLM)
+      const llmModel = authConfig.modelName || 'Not set';
+      const vlmModel = this.configManager.get('guiSubagentModel') || 'Not set';
+      console.log(`  ${chalk.yellow('LLM Model:')} ${llmModel}`);
+      console.log(`  ${chalk.yellow('VLM Model:')} ${vlmModel}`);
     }
     console.log('');
 
@@ -767,12 +775,12 @@ export class SlashCommandHandler {
    */
   private async handleLocalModel(): Promise<void> {
     // Display current configuration
-    const currentLlm = this.configManager.get('modelName') || this.configManager.getAuthConfig().modelName;
+    const currentLlmModel = this.configManager.get('modelName') || this.configManager.getAuthConfig().modelName;
     const currentVlmModel = this.configManager.get('guiSubagentModel');
 
     console.log(chalk.cyan('\n📊 Current Local Model Configuration:\n'));
-    console.log(`  ${chalk.yellow('LLM Provider:')} ${currentLlm || 'Not configured'}`);
-    console.log(`  ${chalk.yellow('VLM Model:')} ${currentVlmModel || 'Not configured'}`);
+    console.log(`  ${chalk.yellow('LLM Model:')} ${currentLlmModel || 'Not set'}`);
+    console.log(`  ${chalk.yellow('VLM Model:')} ${currentVlmModel || 'Not set'}`);
     console.log('');
 
     // Main menu - choose to configure LLM or VLM
@@ -928,8 +936,8 @@ export class SlashCommandHandler {
     const currentBaseUrl = this.configManager.get('guiSubagentBaseUrl');
 
     console.log(chalk.cyan('\n📊 Current VLM Configuration:\n'));
-    console.log(`  ${chalk.yellow('Model:')} ${currentModel || 'Not configured'}`);
-    console.log(`  ${chalk.yellow('Base URL:')} ${currentBaseUrl || 'Not configured'}`);
+    console.log(`  ${chalk.yellow('Model:')} ${currentModel || 'Not set'}`);
+    console.log(`  ${chalk.yellow('Base URL:')} ${currentBaseUrl || 'Not set'}`);
     console.log('');
 
     // Step 1: Select VLM provider

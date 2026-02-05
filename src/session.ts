@@ -2031,6 +2031,58 @@ export class InteractiveSession {
 }
 
 /**
+ * Clean up stale temporary workspaces from previous sessions.
+ * Called at startup to ensure no leftover temp files accumulate.
+ */
+async function cleanupStaleWorkspaces(): Promise<void> {
+  try {
+    const configManager = getConfigManager();
+    const workspacePath = configManager.getWorkspacePath();
+    // Use default workspace path if workspacePath is empty or undefined
+    const effectiveWorkspacePath = (workspacePath && workspacePath.trim()) 
+      ? workspacePath 
+      : os.homedir();
+    const baseWorkspaceDir = path.join(effectiveWorkspacePath, '.xagent', 'workspace');
+
+    // First, verify the workspace directory exists before attempting cleanup
+    try {
+      const stats = await fsPromises.stat(baseWorkspaceDir);
+      if (!stats.isDirectory()) {
+        return; // Not a directory, skip cleanup
+      }
+    } catch {
+      // Directory doesn't exist - nothing to clean
+      return;
+    }
+
+    try {
+      const entries = await fsPromises.readdir(baseWorkspaceDir, { withFileTypes: true });
+
+      let cleanedCount = 0;
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const fullPath = path.join(baseWorkspaceDir, entry.name);
+          try {
+            await fsPromises.rm(fullPath, { recursive: true, force: true });
+            cleanedCount++;
+          } catch {
+            // Skip directories that can't be removed (in use or permission issues)
+          }
+        }
+      }
+
+      if (cleanedCount > 0) {
+        console.log(colors.textDim(`🧹 Cleaned up ${cleanedCount} stale workspace(s)`));
+      }
+    } catch {
+      // Can't read directory - skip cleanup
+    }
+  } catch {
+    // Config not available - skip cleanup
+  }
+}
+
+/**
  * Initialize built-in skills on first run.
  * Checks if user skills directory is empty or doesn't exist,
  * then copies all built-in skills including the protected find-skills.
@@ -2140,6 +2192,9 @@ async function copyDirectoryRecursiveAsync(src: string, dest: string): Promise<v
 }
 
 export async function startInteractiveSession(): Promise<void> {
+  // Clean up any leftover temp workspaces from previous sessions
+  await cleanupStaleWorkspaces();
+
   // Initialize built-in skills on first run (silent, returns count)
   const initializedCount = await initializeSkillsOnDemand();
 

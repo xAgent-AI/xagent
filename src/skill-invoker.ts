@@ -620,13 +620,13 @@ export class SkillInvoker {
       const executor = this.getSkillExecutor(skill.id);
       const result = await executor.execute(skill, { ...params, taskId });
 
-      // Add skillPath and workspaceDir to result
+      // Add skillPath and workspaceDir to result (delay creation until actually needed)
       if (result.success) {
         // Get skillPath directly from skillDirectories (more reliable)
         result.skillPath = this.skillLoader.getSkillDirectory?.(params.skillId) || skill.skillsPath || '';
         if (result.nextSteps && result.nextSteps.length > 0) {
           result.workspaceDir = getWorkspaceDir(taskId);
-          await ensureWorkspaceDir(result.workspaceDir);
+          // Don't pre-create workspace - only create when actually used by LLM
         }
       }
 

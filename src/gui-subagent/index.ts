@@ -55,6 +55,7 @@ export interface GUISubAgentConfig {
   loopIntervalInMs?: number;
   maxLoopCount?: number;
   showAIDebugInfo?: boolean;
+  indentLevel?: number;
 }
 
 /**
@@ -71,6 +72,7 @@ export const DEFAULT_GUI_CONFIG = {
   loopIntervalInMs: 0,
   maxLoopCount: 100,
   showAIDebugInfo: false,
+  indentLevel: 1,
 };
 
 /**
@@ -112,6 +114,7 @@ export async function createGUISubAgent<T extends Operator>(
     loopIntervalInMs: mergedConfig.loopIntervalInMs,
     maxLoopCount: mergedConfig.maxLoopCount,
     showAIDebugInfo: mergedConfig.showAIDebugInfo,
+    indentLevel: mergedConfig.indentLevel,
     signal: abortController.signal,
   };
 

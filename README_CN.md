@@ -56,6 +56,36 @@ xagent start
 
 ---
 
+## 🔧 GUI/VLM 前置依赖
+
+要使用 GUI 自动化功能，需要安装系统级截图依赖：
+
+### 🐧 Ubuntu / Debian Linux
+
+```bash
+sudo apt-get update
+sudo apt-get install -y imagemagick
+```
+
+### 🐧 CentOS / RHEL / Fedora
+
+```bash
+# CentOS/RHEL
+sudo yum install -y ImageMagick
+
+# Fedora
+sudo dnf install -y ImageMagick
+```
+
+### 🍎 macOS / 🪟 Windows
+
+```bash
+# 无需额外依赖
+# GUI 自动化使用系统内置的截图功能
+```
+
+---
+
 ## 📊 功能对比
 
 | 功能特性 | xAgent CLI | Claude Code | Gemini CLI |

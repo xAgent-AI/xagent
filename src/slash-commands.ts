@@ -5,8 +5,8 @@ import ora from 'ora';
 import fs from 'fs/promises';
 import path from 'path';
 import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
-import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
-import { RemoteAIClient } from './remote-ai-client.js';
+import { Message, detectThinkingKeywords, getThinkingTokens } from './ai-client/types.js';
+import { fetchDefaultModels } from './ai-client/providers/remote.js';
 import { getToolRegistry } from './tools.js';
 import { getAgentManager } from './agents.js';
 import { getMemoryManager, MemoryFile } from './memory.js';
@@ -23,7 +23,7 @@ import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { ensureTtySane } from './terminal.js';
-import { AuthService, selectAuthType } from './auth.js';
+import { AuthService, selectAuthType, ThirdPartyProvider, THIRD_PARTY_PROVIDERS, VLM_PROVIDERS, VLMProviderInfo } from './auth.js';
 
 const logger = getLogger();
 
@@ -439,16 +439,24 @@ export class SlashCommandHandler {
 
     // Show current authentication configuration
     const authConfig = this.configManager.getAuthConfig();
-    const currentType =
-      authConfig.type === AuthType.OAUTH_XAGENT ? 'xAgent (Remote)' : 'Third-party API (Local)';
+    const isRemote = authConfig.type === AuthType.OAUTH_XAGENT;
+    const currentType = isRemote ? 'xAgent (Remote)' : 'Third-party API (Local)';
 
     console.log(chalk.cyan('\n📋 Current Authentication Configuration:\n'));
     console.log(`  ${chalk.yellow('Mode:')} ${currentType}`);
-    if (authConfig.baseUrl) {
-      console.log(`  ${chalk.yellow('API URL:')} ${authConfig.baseUrl}`);
-    }
-    if (authConfig.modelName) {
-      console.log(`  ${chalk.yellow('Model:')} ${authConfig.modelName}`);
+
+    if (isRemote) {
+      // Remote mode: show remote_llmModelName and remote_vlmModelName
+      const llmModel = authConfig.remote_llmModelName || 'Not set';
+      const vlmModel = authConfig.remote_vlmModelName || 'Not set';
+      console.log(`  ${chalk.yellow('LLM Model:')} ${llmModel}`);
+      console.log(`  ${chalk.yellow('VLM Model:')} ${vlmModel}`);
+    } else {
+      // Local mode: show modelName (LLM) and guiSubagentModel (VLM)
+      const llmModel = authConfig.modelName || 'Not set';
+      const vlmModel = this.configManager.get('guiSubagentModel') || 'Not set';
+      console.log(`  ${chalk.yellow('LLM Model:')} ${llmModel}`);
+      console.log(`  ${chalk.yellow('VLM Model:')} ${vlmModel}`);
     }
     console.log('');
 
@@ -507,21 +515,23 @@ export class SlashCommandHandler {
           let defaultVlmName = '';
 
           try {
-            console.log(chalk.cyan('   Fetching default models from remote server...'));
-            const defaults = await RemoteAIClient.fetchDefaultModels(newAuthConfig.apiKey || '', webBaseUrl);
+            console.log(chalk.cyan('\n📊 Fetching default models from remote server...'));
+            const defaults = await fetchDefaultModels(newAuthConfig.apiKey || '', webBaseUrl);
 
             if (defaults.llm?.name) {
               defaultLlmName = defaults.llm.name;
-              console.log(chalk.cyan(`   Default LLM: ${defaults.llm.displayName || defaultLlmName}`));
+              console.log(chalk.cyan(`   LLM Model: ${defaults.llm.name}`));
             }
             if (defaults.vlm?.name) {
               defaultVlmName = defaults.vlm.name;
-              console.log(chalk.cyan(`   Default VLM: ${defaults.vlm.displayName || defaultVlmName}`));
+              console.log(chalk.cyan(`   VLM Model: ${defaults.vlm.name}`));
             }
           } catch (error: any) {
             console.log(chalk.yellow(`   ⚠️  Failed to fetch default models: ${error.message}`));
             console.log(chalk.yellow('   ⚠️  Use /model command to select models manually.'));
           }
+
+          console.log('');
 
           this.configManager.set('remote_llmModelName', defaultLlmName);
           this.configManager.set('remote_vlmModelName', defaultVlmName);
@@ -629,27 +639,38 @@ export class SlashCommandHandler {
   }
 
   /**
-   * Handle /model command - Configure LLM/VLM models for remote mode
+   * Handle /model command - Configure LLM/VLM models
+   * Supports both remote mode (xAgent) and local mode (third-party API)
    */
   private async handleModel(): Promise<void> {
     const authConfig = this.configManager.getAuthConfig();
 
-    // 1. Check if remote mode
-    if (authConfig.type !== AuthType.OAUTH_XAGENT) {
-      console.log(chalk.yellow('\n⚠️  This command is only available in remote mode.'));
-      return;
+    // Determine mode and show appropriate UI
+    if (authConfig.type === AuthType.OAUTH_XAGENT) {
+      // Remote mode - use backend models
+      await this.handleRemoteModel();
+    } else {
+      // Local mode - configure third-party API directly
+      await this.handleLocalModel();
     }
+  }
 
-    // 2. Auto-fetch default models if not set
+  /**
+   * Handle /model command for remote mode - Configure models from backend
+   */
+  private async handleRemoteModel(): Promise<void> {
+    const authConfig = this.configManager.getAuthConfig();
+
+    // Auto-fetch default models if not set
     let currentLlm = authConfig.remote_llmModelName;
     let currentVlm = authConfig.remote_vlmModelName;
 
     if (!currentLlm || !currentVlm) {
       console.log(chalk.cyan('\n📊 Fetching default models from remote server...'));
-      
+
       // Try to use RemoteAIClient first, otherwise fetch directly
       let defaults: { llm?: { name: string; displayName?: string }; vlm?: { name: string; displayName?: string } } | null = null;
-      
+
       if (this.remoteAIClient) {
         try {
           defaults = await this.remoteAIClient.getDefaultModels();
@@ -657,17 +678,17 @@ export class SlashCommandHandler {
           console.log(chalk.yellow(`   ⚠️  Failed to get defaults from RemoteAIClient: ${error.message}`));
         }
       }
-      
+
       // If RemoteAIClient failed or not available, fetch directly
       if (!defaults) {
         try {
           const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-          defaults = await RemoteAIClient.fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
+          defaults = await fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
         } catch (error: any) {
           console.log(chalk.yellow(`   ⚠️  Failed to fetch default models: ${error.message}`));
         }
       }
-      
+
       if (defaults) {
         if (!currentLlm && defaults.llm?.name) {
           currentLlm = defaults.llm.name;
@@ -686,16 +707,16 @@ export class SlashCommandHandler {
       }
     }
 
-    // 3. Get RemoteAIClient instance (from InteractiveSession) for model selection
+    // Get RemoteAIClient instance (from InteractiveSession) for model selection
     const remoteClient = this.remoteAIClient;
 
-    // 4. Display current configuration
+    // Display current configuration
     console.log(chalk.cyan('\n📊 Current Model Configuration:\n'));
     console.log(`  ${chalk.yellow('LLM Model:')} ${currentLlm || 'Not set'}`);
     console.log(`  ${chalk.yellow('VLM Model:')} ${currentVlm || 'Not set'}`);
     console.log('');
 
-    // 4. Main menu
+    // Main menu
     const action = await select({
       message: 'Select action:',
       options: [
@@ -703,19 +724,18 @@ export class SlashCommandHandler {
         { value: 'vlm', label: 'Change VLM model' },
         { value: 'back', label: 'Back' },
       ],
-    });
+    }) as string | symbol;
 
-    if (action === 'back') {
+    if (action === 'back' || typeof action === 'symbol') {
       return;
     }
 
     // Restore stdin raw mode after @clack/prompts interaction
-    // This is critical for the second select to work properly
     ensureTtySane();
 
     // Get and display provider list
     try {
-      const models = await remoteClient.getModels();
+      const models = await remoteClient.getRemoteModels();
       const modelList = action === 'llm' ? models.llm : models.vlm;
 
       if (modelList.length === 0) {
@@ -743,9 +763,6 @@ export class SlashCommandHandler {
       this.configManager.save('global');
 
       // Clear conversation history to avoid tool call ID conflicts between providers
-      // Different models generate different tool_call_id, mixing them causes "tool id not found" errors
-
-      // Clear conversation history to avoid tool call ID conflicts between providers
       if (this.onClearCallback) {
         this.onClearCallback();
         console.log(
@@ -762,6 +779,235 @@ export class SlashCommandHandler {
       console.log(`   ${action === 'llm' ? 'LLM' : 'VLM'}: ${selectedModel}`);
     } catch (error: any) {
       console.log(chalk.red(`\n❌ Failed to get models: ${error.message}`));
+    }
+  }
+
+  /**
+   * Handle /model command for local mode - Configure third-party API directly
+   * Reuses code from initial setup flow (authenticateWithOpenAICompatible and configureAndValidateVLM)
+   */
+  private async handleLocalModel(): Promise<void> {
+    // Display current configuration
+    const currentLlmModel = this.configManager.get('modelName') || this.configManager.getAuthConfig().modelName;
+    const currentVlmModel = this.configManager.get('guiSubagentModel');
+
+    console.log(chalk.cyan('\n📊 Current Local Model Configuration:\n'));
+    console.log(`  ${chalk.yellow('LLM Model:')} ${currentLlmModel || 'Not set'}`);
+    console.log(`  ${chalk.yellow('VLM Model:')} ${currentVlmModel || 'Not set'}`);
+    console.log('');
+
+    // Main menu - choose to configure LLM or VLM
+    const action = await select({
+      message: 'Select action:',
+      options: [
+        { value: 'llm', label: 'Change LLM (select provider and API)' },
+        { value: 'vlm', label: 'Change VLM (for GUI automation)' },
+        { value: 'back', label: 'Back' },
+      ],
+    }) as string | symbol;
+
+    if (action === 'back' || typeof action === 'symbol') {
+      return;
+    }
+
+    if (action === 'llm') {
+      await this.configureLocalLLM();
+    } else if (action === 'vlm') {
+      await this.configureLocalVLM();
+    }
+  }
+
+  /**
+   * Configure LLM for local mode - Reuses authenticateWithOpenAICompatible logic
+   */
+  private async configureLocalLLM(): Promise<void> {
+    // THIRD_PARTY_PROVIDERS already imported at top level
+    const provider = await select({
+      message: 'Select third-party model provider:',
+      options: THIRD_PARTY_PROVIDERS.map((p) => ({
+        value: p,
+        label: `${p.name} - ${p.description}`,
+      })),
+    }) as ThirdPartyProvider | symbol;
+
+    if (typeof provider === 'symbol') {
+      return;
+    }
+
+    const selectedProvider = provider;
+
+    let baseUrl = selectedProvider.baseUrl;
+    let modelName = selectedProvider.defaultModel;
+
+    if (selectedProvider.name === 'Custom') {
+      baseUrl = (await import('@clack/prompts').then(m =>
+        m.text({
+          message: 'Enter API Base URL:',
+          defaultValue: 'https://api.openai.com/v1',
+          validate: (value: string | undefined) => {
+            if (!value || value.trim().length === 0) {
+              return 'Base URL cannot be empty';
+            }
+            return undefined;
+          },
+        })
+      )) as string;
+
+      modelName = (await import('@clack/prompts').then(m =>
+        m.text({
+          message: 'Enter model name:',
+          defaultValue: 'gpt-4',
+          validate: (value: string | undefined) => {
+            if (!value || value.trim().length === 0) {
+              return 'Model name cannot be empty';
+            }
+            return undefined;
+          },
+        })
+      )) as string;
+
+      baseUrl = baseUrl.trim();
+      modelName = modelName.trim();
+    } else {
+      console.log(chalk.cyan(`\nSelected: ${selectedProvider.name}`));
+      console.log(chalk.cyan(`API URL: ${baseUrl}`));
+
+      if (selectedProvider.models && selectedProvider.models.length > 0) {
+        console.log(chalk.cyan(`Available models: ${selectedProvider.models.join(', ')}`));
+
+        const selectedModel = await select({
+          message: 'Select model:',
+          options: selectedProvider.models.map((model) => ({
+            value: model,
+            label: model === selectedProvider.defaultModel ? `${model} (default)` : model,
+          })),
+        }) as string | symbol;
+
+        if (typeof selectedModel === 'symbol') {
+          return;
+        }
+
+        modelName = selectedModel as string;
+      } else {
+        console.log(chalk.cyan(`Default model: ${modelName}`));
+
+        const confirmModel = (await import('@clack/prompts').then(m =>
+          m.text({
+            message: `Enter model name (press Enter to use default value ${modelName}):`,
+            defaultValue: modelName,
+            validate: (value: string | undefined) => {
+              if (!value || value.trim().length === 0) {
+                return 'Model name cannot be empty';
+              }
+              return undefined;
+            },
+          })
+        )) as string;
+
+        modelName = confirmModel.trim();
+      }
+    }
+
+    const apiKey = (await import('@clack/prompts').then(m =>
+      m.password({
+      message: `Enter ${selectedProvider.name} API Key:`,
+      validate: (value: string | undefined) => {
+        if (!value || value.trim().length === 0) {
+          return 'API Key cannot be empty';
+        }
+        return undefined;
+      },
+      })
+    )) as string;
+
+    // Update config
+    this.configManager.set('baseUrl', baseUrl);
+    this.configManager.set('apiKey', apiKey.trim());
+    this.configManager.set('modelName', modelName);
+    this.configManager.save('global');
+
+    console.log(chalk.green('\n✅ LLM configuration updated successfully!'));
+    console.log(chalk.cyan(`   Provider: ${selectedProvider.name}`));
+    console.log(chalk.cyan(`   Model: ${modelName}`));
+    console.log(chalk.cyan(`   API URL: ${baseUrl}`));
+
+    // Clear conversation and notify config update
+    if (this.onClearCallback) {
+      this.onClearCallback();
+    }
+    if (this.onConfigUpdate) {
+      this.onConfigUpdate();
+    }
+  }
+
+  /**
+   * Configure VLM for local mode - Select provider and modelName (baseUrl from VLM_PROVIDERS)
+   */
+  private async configureLocalVLM(): Promise<void> {
+    // Get current VLM config
+    const currentModel = this.configManager.get('guiSubagentModel');
+    const currentBaseUrl = this.configManager.get('guiSubagentBaseUrl');
+
+    console.log(chalk.cyan('\n📊 Current VLM Configuration:\n'));
+    console.log(`  ${chalk.yellow('Model:')} ${currentModel || 'Not set'}`);
+    console.log(`  ${chalk.yellow('Base URL:')} ${currentBaseUrl || 'Not set'}`);
+    console.log('');
+
+    // Step 1: Select VLM provider
+    const provider = await select({
+      message: 'Select VLM provider:',
+      options: VLM_PROVIDERS.map((p) => ({
+        value: p,
+        label: `${p.name} - ${p.defaultModel}`,
+      })),
+    }) as VLMProviderInfo | symbol;
+
+    // User cancelled
+    if (typeof provider === 'symbol') {
+      return;
+    }
+
+    const selectedProvider = provider;
+
+    // Step 2: Select model from provider's models list
+    const model = await select({
+      message: 'Select VLM Model:',
+      options: selectedProvider.models.map((m) => ({
+        value: m,
+        label: m,
+      })),
+    }) as string | symbol;
+
+    // User cancelled
+    if (typeof model === 'symbol') {
+      return;
+    }
+
+    // Step 3: Get API Key
+    const apiKey = (await text({
+      message: `Enter ${selectedProvider.name} API Key:`,
+      validate: (value: string | undefined) => {
+        if (!value || value.trim().length === 0) {
+          return 'API Key cannot be empty';
+        }
+        return undefined;
+      },
+    })) as string;
+
+    // Save configuration
+    this.configManager.set('guiSubagentModel', model);
+    this.configManager.set('guiSubagentBaseUrl', selectedProvider.baseUrl);
+    this.configManager.set('guiSubagentApiKey', apiKey);
+    this.configManager.save('global');
+
+    console.log(chalk.green('\n✅ VLM configuration updated successfully!'));
+    console.log(chalk.cyan(`   Provider: ${selectedProvider.name}`));
+    console.log(chalk.cyan(`   Model: ${model}`));
+    console.log(chalk.cyan(`   Base URL: ${selectedProvider.baseUrl}`));
+
+    // Notify config update
+    if (this.onConfigUpdate) {
+      this.onConfigUpdate();
     }
   }
 
@@ -995,7 +1241,11 @@ export class SlashCommandHandler {
         { value: 'sse', label: 'HTTP/SSE' },
         { value: 'http', label: 'HTTP (POST)' },
       ],
-    });
+    }) as string | symbol;
+
+    if (typeof transport === 'symbol') {
+      return;
+    }
 
     let command = '';
     let serverArgs: string[] = [];
@@ -1142,7 +1392,11 @@ export class SlashCommandHandler {
     const serverName = (await select({
       message: 'Select MCP server to remove:',
       options: serverOptions,
-    })) as string;
+    })) as string | symbol;
+
+    if (typeof serverName === 'symbol') {
+      return;
+    }
 
     await this.removeMcpServer(serverName);
   }
@@ -1390,7 +1644,11 @@ export class SlashCommandHandler {
       const checkpointId = await select({
         message: 'Select checkpoint to restore:',
         options: checkpointOptions,
-      });
+      }) as string | symbol;
+
+      if (typeof checkpointId === 'symbol') {
+        return;
+      }
 
       try {
         await this.checkpointManager.restoreCheckpoint(checkpointId);
@@ -1469,7 +1727,11 @@ export class SlashCommandHandler {
         { value: 'zh', label: 'Chinese' },
         { value: 'en', label: 'English' },
       ],
-    })) as 'zh' | 'en';
+    })) as 'zh' | 'en' | symbol;
+
+    if (typeof language === 'symbol') {
+      return;
+    }
 
     this.configManager.setLanguage(language);
     logger.success(

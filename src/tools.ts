@@ -7,7 +7,8 @@ import { spawn, ChildProcess } from 'child_process';
 import { glob } from 'glob';
 import axios from 'axios';
 import { Tool, ExecutionMode, AuthType } from './types.js';
-import type { Message, ToolDefinition } from './ai-client.js';
+import type { Message, ToolDefinition } from './ai-client/types.js';
+import type { AIClientInterface } from './ai-client-factory.js';
 import { colors, icons, styleHelpers } from './theme.js';
 import { getLogger } from './logger.js';
 import { getCancellationManager } from './cancellation.js';
@@ -17,7 +18,6 @@ import { ripgrep, fdFind } from './ripgrep.js';
 import { getShellConfig, killProcessTree, quoteShellCommand } from './shell.js';
 import { truncateTail, buildTruncationNotice } from './truncate.js';
 import { createAIClient } from './ai-client-factory.js';
-import { AIClient } from './ai-client.js';
 
 //
 // Tool Description Pattern
@@ -1720,7 +1720,7 @@ export class TaskTool implements Tool {
       if (!baseUrl || !apiKey || !modelName) {
         return {
           success: false,
-          message: `GUI task "${description}" failed: VLM not configured. Please run /vlm to configure Vision-Language Model first.`,
+          message: `GUI task "${description}" failed: VLM not configured. Please run /model to configure Vision-Language Model first.`,
         };
       }
       console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
@@ -1758,14 +1758,16 @@ export class TaskTool implements Tool {
     const logger = getLogger();
 
     const setupStdinPolling = () => {
+      logger.debug(`[GUIAgent ESC] setupStdinPolling called, process.stdin.isTTY: ${process.stdin.isTTY}`);
       if (process.stdin.isTTY) {
         try {
           process.stdin.setRawMode(true);
           rawModeEnabled = true;
           process.stdin.resume();
           readline.emitKeypressEvents(process.stdin);
-        } catch (e) {
-          logger.debug(`[GUIAgent] Could not set raw mode: ${e}`);
+          logger.debug(`[GUIAgent ESC] Raw mode enabled successfully`);
+        } catch (e: any) {
+          logger.debug(`[GUIAgent ESC] Could not set raw mode: ${e.message}`);
         }
 
         stdinPollingInterval = setInterval(() => {
@@ -1776,12 +1778,18 @@ export class TaskTool implements Tool {
                 const code = chunk[0];
                 if (code === 0x1b) {
                   // ESC
-                  logger.debug('[GUIAgent] ESC detected!');
+                  logger.debug('[GUIAgent ESC Polling] ESC detected! Code: 0x1b');
                   cancellationManager.cancel();
+                } else {
+                  // Log other key codes for debugging
+                  logger.debug(`[GUIAgent ESC Polling] Key code: 0x${code.toString(16)}`);
                 }
               }
+            } else {
+              logger.debug('[GUIAgent ESC Polling] rawModeEnabled is false');
             }
-          } catch (e) {
+          } catch (e: any) {
+            logger.debug(`[GUIAgent ESC Polling] Error: ${e.message}`);
             // Ignore polling errors
           }
         }, 10);
@@ -1803,7 +1811,9 @@ export class TaskTool implements Tool {
     cancellationManager.on('cancelled', cancelHandler);
 
     // Start polling for ESC
+    logger.debug(`[GUIAgent ESC] About to call setupStdinPolling`);
     setupStdinPolling();
+    logger.debug(`[GUIAgent ESC] setupStdinPolling called`);
 
     try {
       // Import and create GUIAgent
@@ -1820,6 +1830,7 @@ export class TaskTool implements Tool {
         maxLoopCount: 100,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
+        indentLevel: indentLevel,
       });
 
       // Add constraints to prompt if any
@@ -2057,13 +2068,15 @@ export class TaskTool implements Tool {
       }
     } else {
       // Local mode: create client with subagent-specific model config
-      subAgentClient = new AIClient({
+      const subAuthConfig = {
+        ...authConfig,
         type: AuthType.OPENAI_COMPATIBLE,
         apiKey: apiKey,
         baseUrl: baseUrl,
         modelName: modelName,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
-      });
+      };
+      subAgentClient = createAIClient(subAuthConfig);
     }
 
     const indent = '  '.repeat(indentLevel);

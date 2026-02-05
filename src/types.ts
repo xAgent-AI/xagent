@@ -121,7 +121,7 @@ export interface ChatMessage {
   content: string;
   images?: string[];
   timestamp: number;
-  reasoningContent?: string;
+  reasoning_content?: string;
   tool_calls?: any[];
   tool_call_id?: string;
 }
@@ -172,7 +172,7 @@ export interface SessionOutput {
   toolResult?: any;
   timestamp: number;
   duration?: number;
-  reasoningContent?: string;
+  reasoning_content?: string;
   tool_calls?: any[];
 }
 

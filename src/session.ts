@@ -22,8 +22,10 @@ import {
   AgentConfig,
   ToolCallItem,
 } from './types.js';
-import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
-import { RemoteAIClient, TokenInvalidError } from './remote-ai-client.js';
+import { createAIClient, type AIClientInterface } from './ai-client-factory.js';
+import { detectThinkingKeywords, getThinkingTokens } from './ai-client/types.js';
+import { TokenInvalidError } from './ai-client/types.js';
+import { fetchDefaultModels } from './ai-client/providers/remote.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { getToolRegistry } from './tools.js';
@@ -54,6 +56,10 @@ import {
 import { Logger, LogLevel, getLogger } from './logger.js';
 import { ensureTtySane, setupEscKeyHandler } from './terminal.js';
 
+// Type aliases for backward compatibility
+type AIClient = AIClientInterface;
+type RemoteAIClient = AIClientInterface;
+
 const logger = getLogger();
 
 export class InteractiveSession {
@@ -80,8 +86,6 @@ export class InteractiveSession {
   private currentTaskId: string | null = null;
   private taskCompleted: boolean = false;
   private isFirstApiCall: boolean = true;
-  // Mapping for tool call IDs to handle MiniMax compatibility
-  private toolCallIdMapping: Map<string, string> = new Map();
 
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
@@ -151,12 +155,7 @@ export class InteractiveSession {
       }
       // Switch to remote: clear local client, create remote client
       this.aiClient = null;
-      const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-      this.remoteAIClient = new RemoteAIClient(
-        authConfig.apiKey || '',
-        webBaseUrl,
-        authConfig.showAIDebugInfo
-      );
+      this.remoteAIClient = createAIClient(authConfig);
     } else {
       // Already in local mode, no change needed
       if (this.aiClient !== null) {
@@ -164,7 +163,7 @@ export class InteractiveSession {
       }
       // Switch to local: clear remote client, create local client
       this.remoteAIClient = null;
-      this.aiClient = new AIClient(authConfig);
+      this.aiClient = createAIClient(authConfig);
     }
 
     this.slashCommandHandler.setRemoteAIClient(this.remoteAIClient);
@@ -442,7 +441,7 @@ export class InteractiveSession {
           const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
           
           try {
-            const defaults = await RemoteAIClient.fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
+            const defaults = await fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
 
             if (!currentLlm && defaults.llm?.name) {
               this.configManager.set('remote_llmModelName', defaults.llm.name);
@@ -457,17 +456,12 @@ export class InteractiveSession {
         }
 
         // Remote mode: create RemoteAIClient and use it for context compression
-        const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-        this.remoteAIClient = new RemoteAIClient(
-          authConfig.apiKey || '',
-          webBaseUrl,
-          authConfig.showAIDebugInfo
-        );
+        this.remoteAIClient = createAIClient(authConfig);
         this.contextCompressor.setAIClient(this.remoteAIClient);
         logger.debug('[DEBUG Initialize] RemoteAIClient created successfully');
       } else {
         // Local mode: create local AIClient
-        this.aiClient = new AIClient(authConfig);
+        this.aiClient = createAIClient(authConfig);
         this.contextCompressor.setAIClient(this.aiClient);
         logger.debug('[DEBUG Initialize] RemoteAIClient NOT created (not OAuth XAGENT mode)');
       }
@@ -649,7 +643,7 @@ export class InteractiveSession {
     if (authType !== AuthType.OAUTH_XAGENT) {
       console.log('');
       console.log(colors.info(`${icons.info} VLM configuration is optional.`));
-      console.log(colors.info(`You can configure it later using the /vlm command if needed.`));
+      console.log(colors.info(`You can configure it later using the /model command if needed.`));
       console.log('');
     }
 
@@ -1288,15 +1282,11 @@ export class InteractiveSession {
       console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
       console.log('');
 
-      // Clear tool call ID mapping at the start of each user message processing
-      // This prevents stale data from previous requests from polluting the next task
-      this.toolCallIdMapping = new Map();
-
       this.conversation.push({
         role: 'assistant',
         content,
         timestamp: Date.now(),
-        reasoningContent,
+        reasoning_content: reasoningContent,
         tool_calls: assistantMessage.tool_calls,
       });
 
@@ -1305,12 +1295,12 @@ export class InteractiveSession {
         role: 'assistant',
         content,
         timestamp: Date.now(),
-        reasoningContent,
+        reasoning_content: reasoningContent,
         tool_calls: assistantMessage.tool_calls,
       });
 
       if (assistantMessage.tool_calls) {
-        await this.handleToolCalls(assistantMessage.tool_calls);
+        await this.handleToolCalls(assistantMessage.tool_calls as unknown as import('./types.js').ToolCallItem[]);
       } else {
         await this.checkAndCompressContext();
       }
@@ -1333,12 +1323,13 @@ export class InteractiveSession {
       (this as any)._isOperationInProgress = false;
 
       if (error.message === 'Operation cancelled by user') {
-        // 用户手动取消 → 发送 cancel
+        // Notify backend to cancel the task
         if (this.remoteAIClient && this.currentTaskId) {
-          await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
+          await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
         }
         return;
       }
+
       // Distinguish error types: timeout vs other failures
       const isTimeout = error.message.includes('timeout') || error.message.includes('Timeout');
       const failureReason = isTimeout ? 'timeout' : 'failure';
@@ -1347,7 +1338,7 @@ export class InteractiveSession {
         `[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}, reason: ${failureReason}`
       );
       if (this.remoteAIClient && this.currentTaskId) {
-        await this.remoteAIClient.failTask(this.currentTaskId, failureReason).catch(() => {});
+        await this.remoteAIClient.failTask?.(this.currentTaskId, failureReason).catch(() => {});
       }
 
       console.log(colors.error(`Error: ${error.message}`));
@@ -1393,8 +1384,8 @@ export class InteractiveSession {
 
       // Mark task as completed (发送 status: 'end')
       logger.debug(`[Session] Task completed: taskId=${this.currentTaskId}`);
-      if (this.currentTaskId) {
-        await this.remoteAIClient.completeTask(this.currentTaskId);
+      if (this.remoteAIClient && this.currentTaskId) {
+        await this.remoteAIClient.completeTask?.(this.currentTaskId);
       }
     } catch (error: any) {
       // Clear the operation flag
@@ -1403,7 +1394,7 @@ export class InteractiveSession {
       if (error.message === 'Operation cancelled by user') {
         // Notify backend to cancel the task
         if (this.remoteAIClient && this.currentTaskId) {
-          await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
+          await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
         }
         return;
       }
@@ -1446,15 +1437,10 @@ export class InteractiveSession {
 
         // Reinitialize RemoteAIClient with new token
         if (authConfig.apiKey) {
-          const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
           logger.debug(
             '[DEBUG generateRemoteResponse] Reinitializing RemoteAIClient with new token'
           );
-          this.remoteAIClient = new RemoteAIClient(
-            authConfig.apiKey,
-            webBaseUrl,
-            authConfig.showAIDebugInfo
-          );
+          this.remoteAIClient = createAIClient(authConfig);
         } else {
           logger.debug(
             '[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!'
@@ -1479,7 +1465,7 @@ export class InteractiveSession {
         `[Session] Task failed: taskId=${this.currentTaskId}, error: ${error.message}, reason: ${failureReason}`
       );
       if (this.remoteAIClient && this.currentTaskId) {
-        await this.remoteAIClient.failTask(this.currentTaskId, failureReason).catch(() => {});
+        await this.remoteAIClient.failTask?.(this.currentTaskId, failureReason).catch(() => {});
       }
 
       console.log(colors.error(`Error: ${error.message}`));
@@ -1559,8 +1545,12 @@ export class InteractiveSession {
         if (error === 'Operation cancelled by user') {
           // Notify backend to cancel the task
           if (this.remoteAIClient && this.currentTaskId) {
-            await this.remoteAIClient.cancelTask(this.currentTaskId).catch(() => {});
+            await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
           }
+
+          // 清理 conversation 中未完成的 tool_call
+          this.cleanupIncompleteToolCalls();
+
           (this as any)._isOperationInProgress = false;
           return;
         }
@@ -1820,8 +1810,6 @@ export class InteractiveSession {
     // If GUI agent was cancelled by user, don't continue generating response
     // This avoids wasting API calls and tokens on cancelled tasks
     if (guiSubagentCancelled) {
-      console.log('');
-      console.log(`${indent}${colors.textMuted('GUI task cancelled by user')}`);
       (this as any)._isOperationInProgress = false;
       return;
     }
@@ -1835,6 +1823,50 @@ export class InteractiveSession {
       await this.checkAndCompressContext();
       // Local mode: default behavior - continue with generateResponse
       await this.generateResponse();
+    }
+  }
+
+  /**
+   * Clean up incomplete tool calls from conversation after cancellation
+   * This removes assistant messages with tool_calls that don't have corresponding tool_results
+   */
+  private async cleanupIncompleteToolCalls(): Promise<void> {
+    // 从后往前找到包含 tool_calls 的 assistant 消息
+    for (let i = this.conversation.length - 1; i >= 0; i--) {
+      const msg = this.conversation[i];
+
+      if (msg.role === 'assistant' && msg.tool_calls?.length) {
+        // 收集所有 tool_call IDs
+        const allToolCallIds = new Set(msg.tool_calls.map((tc: any) => tc.id));
+
+        // 找出哪些 tool_call IDs 已经有对应的 tool_result
+        const completedToolCallIds = new Set<string>();
+        for (let k = i + 1; k < this.conversation.length; k++) {
+          const resultMsg = this.conversation[k];
+          if (resultMsg.role === 'tool' && resultMsg.tool_call_id) {
+            completedToolCallIds.add(resultMsg.tool_call_id);
+          } else if (resultMsg.role === 'user' || resultMsg.role === 'assistant') {
+            break; // 遇到下一个角色消息就停止
+          }
+        }
+
+        // 找出未完成的 tool_call IDs
+        const incompleteToolCallIds = [...allToolCallIds].filter(
+          id => !completedToolCallIds.has(id)
+        );
+
+        // 如果所有 tool_call 都已完成，不需要清理
+        if (incompleteToolCallIds.length === 0) {
+          break;
+        }
+
+        // 只移除未完成的 tool_call，不移除已完成的 tool_result
+        msg.tool_calls = msg.tool_calls.filter(
+          (tc: any) => !incompleteToolCallIds.includes(tc.id)
+        );
+
+        break;
+      }
     }
   }
 

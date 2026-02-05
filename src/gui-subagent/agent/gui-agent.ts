@@ -93,6 +93,7 @@ export interface GUIAgentConfig<T extends Operator> {
   onData?: (data: GUIAgentData) => void;
   onError?: (error: Error) => void;
   showAIDebugInfo?: boolean;
+  indentLevel?: number;
   retry?: {
     screenshot?: {
       maxRetries?: number;
@@ -158,6 +159,7 @@ export class GUIAgent<T extends Operator> {
   private readonly onData?: (data: GUIAgentData) => void;
   private readonly onError?: (error: Error) => void;
   private readonly showAIDebugInfo: boolean;
+  private readonly indentLevel: number;
   private readonly retry?: GUIAgentConfig<T>['retry'];
 
   private isPaused = false;
@@ -182,6 +184,7 @@ export class GUIAgent<T extends Operator> {
     this.onData = config.onData;
     this.onError = config.onError;
     this.showAIDebugInfo = config.showAIDebugInfo ?? false;
+    this.indentLevel = config.indentLevel ?? 1;
     this.retry = config.retry;
 
     this.systemPrompt = config.systemPrompt || this.buildSystemPrompt();
@@ -349,7 +352,8 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     // Start running agent
     data.status = GUIAgentStatus.RUNNING;
     data.systemPrompt = this.systemPrompt;
-    console.log(`${colors.primaryBright(`${icons.rocket} GUI Agent started`)}`);
+    const indent = '  '.repeat(this.indentLevel);
+    console.log(`${indent}${colors.primaryBright(`${icons.rocket} GUI Agent started`)}`);
     console.log('');
     await this.onData?.({ ...data, conversations: [] });
 
@@ -477,7 +481,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         // Display screenshot notification
         const latestScreenshot = data.conversations[data.conversations.length - 1];
         if (latestScreenshot && latestScreenshot.from === 'human' && latestScreenshot.screenshotBase64) {
-          this.displayConversationResult(latestScreenshot, loopCnt);
+          this.displayConversationResult(latestScreenshot, loopCnt, this.indentLevel);
         }
 
         // Build messages for model
@@ -499,10 +503,17 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
                 const result = await this.callModelAPI(messages, screenContext, this.remoteVlmCaller!);
                 return result;
               } catch (error: unknown) {
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                // 捕获各种 abort 相关的错误
                 if (
                   error instanceof Error &&
                   (error.name === 'AbortError' ||
-                    error.message?.includes('aborted'))
+                    errorMsg.includes('aborted') ||
+                    errorMsg.includes('canceled') ||
+                    errorMsg.includes('cancelled') ||
+                    errorMsg === 'Operation was canceled' ||
+                    errorMsg === 'The operation was canceled' ||
+                    errorMsg === 'This operation was aborted')
                 ) {
                   bail(error as Error);
                   return { prediction: '', parsedPredictions: [] };
@@ -519,11 +530,27 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           prediction = modelResult.prediction;
           parsedPredictions = modelResult.parsedPredictions;
         } catch (modelError) {
+          // 首先检查是否是取消/abort 错误
+          const errorMsg = modelError instanceof Error ? modelError.message : String(modelError);
+          const isAbortError = 
+            modelError instanceof Error && (
+              modelError.name === 'AbortError' ||
+              errorMsg.includes('aborted') ||
+              errorMsg.includes('canceled') ||
+              errorMsg.includes('cancelled') ||
+              errorMsg === 'Operation was canceled' ||
+              errorMsg === 'The operation was canceled' ||
+              errorMsg === 'This operation was aborted'
+            );
+          
+          if (isAbortError || this.signal?.aborted) {
+            data.status = GUIAgentStatus.USER_STOPPED;
+            data.conversations = data.conversations || [];
+            return data;
+          }
+
           // Handle multimodal model API errors with specific error messages
           data.status = GUIAgentStatus.ERROR;
-          const errorMsg = modelError instanceof Error ? modelError.message : String(modelError);
-
-          // Provide specific error message based on error type
           if (errorMsg.includes('401') || errorMsg.includes('authentication') || errorMsg.includes('API key') || errorMsg.includes('api_key') || errorMsg.includes('Unauthorized') || errorMsg.includes('invalid_api_key')) {
             data.error = '[Multimodal Model Authentication Failed] The guiSubagentApiKey configuration is invalid.\n' +
               'Error details: HTTP 401 - API key is invalid or expired\n' +
@@ -603,7 +630,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         // Display assistant response
         const latestAssistant = data.conversations[data.conversations.length - 1];
         if (latestAssistant && latestAssistant.from === 'assistant') {
-          this.displayConversationResult(latestAssistant, loopCnt);
+          this.displayConversationResult(latestAssistant, loopCnt, this.indentLevel);
         }
 
         // Check if we need to switch operator based on first action
@@ -736,10 +763,11 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       // Save final status
       const finalStatus = data.status;
       const finalError = data.error;
+      const indent = '  '.repeat(this.indentLevel);
 
       // Output error immediately if task failed
       if (finalStatus === GUIAgentStatus.ERROR && finalError) {
-        console.log(`\n${colors.error('✖')} ${finalError}\n`);
+        console.log(`\n${indent}${colors.error('✖')} ${finalError}\n`);
       }
 
       // Call onData callback if set

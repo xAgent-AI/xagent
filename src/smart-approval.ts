@@ -1,9 +1,11 @@
 import { confirm } from '@clack/prompts';
-import { AIClient, Message } from './ai-client.js';
+import { Message } from './ai-client/types.js';
+import { createAIClient, AIClientInterface } from './ai-client-factory.js';
 import { getConfigManager } from './config.js';
 import { AuthType } from './types.js';
 import { getLogger } from './logger.js';
 import { colors, icons } from './theme.js';
+import { getCancellationManager } from './cancellation.js';
 
 const logger = getLogger();
 
@@ -304,7 +306,7 @@ export class BlacklistChecker {
  * AI approval checker
  */
 export class AIApprovalChecker {
-  private aiClient: AIClient | null = null;
+  private aiClient: AIClientInterface | null = null;
   private isRemoteMode: boolean = false;
 
   constructor() {
@@ -325,7 +327,7 @@ export class AIApprovalChecker {
       // Remote mode: AI review handled by remote LLM, no local AIClient needed
       // Local mode: use local AIClient
       if (!this.isRemoteMode && authConfig.apiKey) {
-        this.aiClient = new AIClient(authConfig);
+        this.aiClient = createAIClient(authConfig);
       }
     } catch (error) {
       logger.error(
@@ -388,10 +390,14 @@ Please return results in JSON format:
         },
       ];
 
-      const response = await this.aiClient.chatCompletion(messages, {
-        temperature: 0.3,
-        // maxTokens: 500
-      });
+      const controller = new AbortController();
+      const response = await getCancellationManager().withCancellation(
+        this.aiClient.chatCompletion(messages, {
+          temperature: 0.3,
+          signal: controller.signal,
+        }),
+        'smart-approval'
+      );
 
       const content =
         typeof response.choices[0].message.content === 'string'
@@ -416,6 +422,15 @@ Please return results in JSON format:
         riskLevel: RiskLevel.MEDIUM,
       };
     } catch (error: any) {
+      // Check if it was cancelled by user first - don't log error for cancellations
+      const isCancelled = error.message === 'Operation cancelled by user' ||
+                         error.message.includes('cancelled') ||
+                         error.message.includes('aborted');
+
+      if (isCancelled) {
+        throw new Error('Operation cancelled by user');
+      }
+
       logger.error(
         'AI approval check failed',
         error instanceof Error ? error.message : String(error)
@@ -434,6 +449,13 @@ Please return results in JSON format:
         };
       }
 
+      // If user cancelled the AI review, directly cancel the entire task
+      // instead of just canceling the AI review and continuing
+      if (isCancelled) {
+        throw new Error('Operation cancelled by user');
+      }
+
+      // Other errors require manual confirmation
       return {
         approved: false,
         analysis: `AI review failed: ${error.message}, requires manual confirmation`,

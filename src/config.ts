@@ -21,7 +21,7 @@ const DEFAULT_SETTINGS: Settings = {
   // xAgent API - for token validation and other backend calls (without /v1)
   xagentApiBaseUrl: '',
   // VLM API - for GUI automation (browser/desktop operations)
-  // NOTE: guiSubagent* fields are only set when user runs /vlm command
+  // NOTE: guiSubagent* fields are only set when user runs /model command
   guiSubagentModel: '',
   guiSubagentBaseUrl: '',
   guiSubagentApiKey: '',

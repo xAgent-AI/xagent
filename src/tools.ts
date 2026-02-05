@@ -1642,7 +1642,7 @@ export class TaskTool implements Tool {
       if (!baseUrl || !apiKey || !modelName) {
         return {
           success: false,
-          message: `GUI task "${description}" failed: VLM not configured. Please run /vlm to configure Vision-Language Model first.`,
+          message: `GUI task "${description}" failed: VLM not configured. Please run /model to configure Vision-Language Model first.`,
         };
       }
       console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);

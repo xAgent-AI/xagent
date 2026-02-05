@@ -581,7 +581,7 @@ export class InteractiveSession {
     if (authType !== AuthType.OAUTH_XAGENT) {
       console.log('');
       console.log(colors.info(`${icons.info} VLM configuration is optional.`));
-      console.log(colors.info(`You can configure it later using the /vlm command if needed.`));
+      console.log(colors.info(`You can configure it later using the /model command if needed.`));
       console.log('');
     }
 

@@ -1752,6 +1752,7 @@ export class TaskTool implements Tool {
         maxLoopCount: 100,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
+        indentLevel: indentLevel,
       });
 
       // Add constraints to prompt if any

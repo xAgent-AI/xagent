@@ -910,15 +910,21 @@ class GenericSkillExecutor implements SkillExecutor {
            `  - ❌ Wrong: \`cd "${taskWorkspace}" && node script.js\` (fails in PowerShell 5.1)\n` +
            `  - ✅ Correct: \`python "${taskWorkspace}/script.py"\`\n\n` +
            `**📦 Dependency Management**:\n` +
-           `  - BashTool automatically sets NODE_PATH when executing, scripts can use require() directly\n` +
-           `  - ✅ Correct: Bash(command="node script.js", cwd="${taskWorkspace}")\n` +
-           `  - ❌ Wrong: cd "${taskWorkspace}" && node script.js (loses NODE_PATH!)\n` +
-           `  - If script needs to run by user manually, pass NODE_PATH in command:\n` +
-           `    Windows: set NODE_PATH=xAgent/node_modules/path && node script.js\n` +
-           `    Linux/Mac: NODE_PATH=xAgent/node_modules/path node script.js\n\n` +
+           `  - Use \`skillPath\` parameter to install dependencies to skill's node_modules (persists across invocations)\n` +
+           `  - ✅ Correct: Bash(command="npm install <package>", skillPath="${skillPath}")\n` +
+           `  - ✅ Correct: Bash(command="npm install", skillPath="${skillPath}")\n` +
+           `  - Dependencies are saved to: <userSkillsPath>/<skillName>/node_modules\n` +
+           `  - 💡 Tip: Install once, reuse forever - no need to reinstall on each call!\n` +
+           `  - After install, scripts can use require() directly with NODE_PATH auto-set\n` +
+           `  - NODE_PATH precedence: skill's node_modules > xAgent's node_modules\n` +
+           `  - Manual execution (Windows): set "NODE_PATH=${skillPath}/node_modules;<xAgentPath>/node_modules" && node script.js\n` +
+           `  - Manual execution (Linux/Mac): NODE_PATH=${skillPath}/node_modules:${process.cwd()}/node_modules node script.js\n` +
+           `  - ⚠️ If skillPath approach fails (module not found errors): Install directly in workspace\n` +
+           `    Priority: skill's node_modules > workspace's node_modules > xAgent's node_modules\n\n` +
            `**🧹 Cleanup**: Delete all intermediate/temporary files when task completes:\n` +
            `  - Remove: all files generated during the task\n` +
-           `  - Keep: Only the final output file (output.pptx/docx/xlsx/pdf)\n\n` +
+           `  - Keep: Only the final output file (output.pptx/docx/xlsx/pdf or other file format required by user)\n` +
+           `  - ⚠️ If user needs to check results or make adjustments: RETAIN intermediate/temporary files for debugging\n\n` +
            `**Instructions**: read_file the documentation, understand the API, and create your own execution plan.\n` +
            `**If you encounter issues**: Explain what went wrong and suggest a different approach.\n`;
   }

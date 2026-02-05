@@ -327,8 +327,8 @@ export class ContextCompressor {
         break;
       }
       case 'assistant': {
-        if (message.reasoningContent) {
-          chars += message.reasoningContent.length;
+        if (message.reasoning_content) {
+          chars += message.reasoning_content.length;
         }
         const toolCalls = message.tool_calls as any[] | undefined;
         if (toolCalls && toolCalls.length > 0) {
@@ -886,7 +886,7 @@ export class ContextCompressor {
             content: msg.content,
             timestamp: msg.timestamp,
             images: msg.images,
-            reasoningContent: msg.reasoningContent,
+            reasoning_content: msg.reasoning_content,
             tool_calls: msg.tool_calls,
             tool_call_id: msg.tool_call_id
           });
@@ -909,7 +909,7 @@ export class ContextCompressor {
             content: msg.content,
             timestamp: msg.timestamp,
             images: msg.images,
-            reasoningContent: msg.reasoningContent,
+            reasoning_content: msg.reasoning_content,
             tool_calls: msg.tool_calls,
             tool_call_id: msg.tool_call_id
           });
@@ -924,7 +924,7 @@ export class ContextCompressor {
           content: msg.content,
           timestamp: msg.timestamp,
           images: msg.images,
-          reasoningContent: msg.reasoningContent,
+          reasoning_content: msg.reasoning_content,
           tool_calls: msg.tool_calls,
           tool_call_id: msg.tool_call_id
         });

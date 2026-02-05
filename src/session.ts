@@ -1224,7 +1224,7 @@ export class InteractiveSession {
         role: 'assistant',
         content,
         timestamp: Date.now(),
-        reasoningContent,
+        reasoning_content: reasoningContent,
         tool_calls: assistantMessage.tool_calls,
       });
 
@@ -1233,7 +1233,7 @@ export class InteractiveSession {
         role: 'assistant',
         content,
         timestamp: Date.now(),
-        reasoningContent,
+        reasoning_content: reasoningContent,
         tool_calls: assistantMessage.tool_calls,
       });
 

@@ -142,9 +142,9 @@ export class RemoteProvider implements AIProvider {
           index: 0,
           message: {
             role: 'assistant',
-            content: data?.content || '',
-            reasoning_content: data?.reasoningContent || '',
-            tool_calls: data?.tool_calls,
+            content: data?.message || data?.content || '',
+            reasoning_content: data?.reasoning_content || data?.reasoningContent || '',
+            tool_calls: data?.tool_calls || data?.toolCalls,
           },
           finish_reason: 'stop',
         }],

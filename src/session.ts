@@ -786,12 +786,6 @@ export class InteractiveSession {
     }
 
     if (trimmedInput.startsWith('/')) {
-      // Close readline interface before using @clack/prompts to avoid conflicts
-      if (this.rl) {
-        this.rl.close();
-        this.rl = null as any;
-      }
-
       const handled = await this.slashCommandHandler.handleCommand(trimmedInput);
       if (handled) {
         this.executionMode =
@@ -799,12 +793,6 @@ export class InteractiveSession {
         // Sync conversation history to slashCommandHandler
         this.slashCommandHandler.setConversationHistory(this.conversation);
       }
-
-      // Re-create readline interface for next prompt
-      this.rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-      });
       return;
     }
 

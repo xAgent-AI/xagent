@@ -18,7 +18,7 @@ import {
   straightTo,
   clipboard,
 } from '@computer-use/nut-js';
-import screenshot from 'screenshot-desktop';
+import { Jimp } from 'jimp';
 import type { OperatorConfig, ScreenContext, ScreenshotOutput, ExecuteParams, ExecuteOutput } from '../types/operator.js';
 import { Operator, type OperatorManual, parseBoxToScreenCoords } from './base-operator.js';
 import { getLogger } from '../../logger.js';
@@ -62,10 +62,11 @@ export class ComputerOperator extends Operator {
 
   private async getScreenSize(): Promise<{ width: number; height: number; scaleFactor: number }> {
     try {
-      // screenshot-desktop returns raw image buffer, get dimensions via nut-js screen module
-      const width = await screen.width();
-      const height = await screen.height();
-      const scaleFactor = this.config.deviceScaleFactor || 1;
+      const grabImage = await screen.grab();
+      const screenWithScale = await grabImage.toRGB();
+      const scaleFactor = screenWithScale.pixelDensity.scaleX;
+      const width = screenWithScale.width / scaleFactor;
+      const height = screenWithScale.height / scaleFactor;
       return { width, height, scaleFactor };
     } catch {
       return {
@@ -113,19 +114,31 @@ export class ComputerOperator extends Operator {
 
   protected async screenshot(): Promise<ScreenshotOutput> {
     try {
-      // Use screenshot-desktop for memory-safe screenshots
-      const imageBuffer = await screenshot({ format: 'png' });
+      const grabImage = await screen.grab();
+      const screenWithScale = await grabImage.toRGB();
+      const scaleFactor = screenWithScale.pixelDensity.scaleX;
 
-      // Get screen dimensions from nut-js screen module
-      const width = await screen.width();
-      const height = await screen.height();
-      const scaleFactor = this.config.deviceScaleFactor || 1;
+      const screenWithScaleImage = await Jimp.fromBitmap({
+        width: screenWithScale.width,
+        height: screenWithScale.height,
+        data: Buffer.from(screenWithScale.data),
+      });
+
+      const width = screenWithScale.width / scaleFactor;
+      const height = screenWithScale.height / scaleFactor;
+
+      const physicalScreenImage = await screenWithScaleImage
+        .resize({
+          w: width,
+          h: height,
+        })
+        .getBuffer('image/png');
 
       this.logger.debug(`[ComputerOperator] screenshot: ${width}x${height}, scaleFactor: ${scaleFactor}`);
 
       return {
         status: 'success',
-        base64: imageBuffer.toString('base64'),
+        base64: physicalScreenImage.toString('base64'),
         scaleFactor,
       };
     } catch (error) {

@@ -56,6 +56,7 @@ xagent start
 
 ---
 
+<<<<<<< HEAD
 ## 🔧 GUI/VLM Prerequisites
 
 To use GUI automation features (GUI SubAgent), you need to install system-level dependencies for screenshot functionality:
@@ -86,6 +87,8 @@ sudo dnf install -y ImageMagick
 
 ---
 
+=======
+>>>>>>> parent of 06af304 (fix(readme) gui dependency for linux platform)
 ## 📊 Feature Comparison
 
 | Feature | xAgent CLI | Claude Code | Gemini CLI |

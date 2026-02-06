@@ -28,16 +28,19 @@ export class SystemPromptGenerator {
   private executionMode: ExecutionMode;
   private agentConfig?: AgentConfig;
   private mcpManager?: MCPManager;
+  private cachedEnvironmentInfo: string;
 
   constructor(toolRegistry: ToolRegistry, executionMode: ExecutionMode, agentConfig?: AgentConfig, mcpManager?: MCPManager) {
     this.toolRegistry = toolRegistry;
     this.executionMode = executionMode;
     this.agentConfig = agentConfig;
     this.mcpManager = mcpManager;
+    this.cachedEnvironmentInfo = this.generateEnvironmentInfo();
   }
 
   /**
-   * Generate system environment information for the LLM
+   * Generate and cache system environment information
+   * Called once in constructor, reused for all subsequent prompts
    */
   private generateEnvironmentInfo(): string {
     const platform = os.platform();
@@ -105,8 +108,8 @@ export class SystemPromptGenerator {
 
     let enhancedPrompt = baseSystemPrompt;
 
-    // Add system environment information
-    enhancedPrompt += this.generateEnvironmentInfo();
+    // Add system environment information (cached in constructor)
+    enhancedPrompt += this.cachedEnvironmentInfo;
 
     // Only add tool-related content if tools are available
     if (allAvailableTools.length > 0) {

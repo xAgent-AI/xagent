@@ -84,7 +84,12 @@ jobs:
         id: changelog
         run: |
           TAG="${GITHUB_REF_NAME}"
-          echo "changelog=$(git log --pretty=format:'* %h %s' "v$(echo $TAG | sed 's/v//')^..$TAG" 2>/dev/null || echo 'Release $TAG')" >> $GITHUB_OUTPUT
+          PREV_TAG=$(git describe --abbrev=0 --tags "v$(echo $TAG | sed 's/v//')^" 2>/dev/null || echo '')
+          if [ -n "$PREV_TAG" ]; then
+            echo "changelog=$(git log --pretty=format:'## %s' "$PREV_TAG..$TAG" 2>/dev/null | sed 's/^/- /' | sed 's/\n/\\n/g')" >> $GITHUB_OUTPUT
+          else
+            echo "changelog=$(git log --pretty=format:'## %s' -10 | sed 's/^/- /' | sed 's/\n/\\n/g')" >> $GITHUB_OUTPUT
+          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

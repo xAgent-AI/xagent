@@ -56,6 +56,7 @@ xagent start
 
 ---
 
+<<<<<<< HEAD
 ## 🔧 GUI/VLM 前置依赖
 
 要使用 GUI 自动化功能，需要安装系统级截图依赖：
@@ -86,6 +87,8 @@ sudo dnf install -y ImageMagick
 
 ---
 
+=======
+>>>>>>> parent of 06af304 (fix(readme) gui dependency for linux platform)
 ## 📊 功能对比
 
 | 功能特性 | xAgent CLI | Claude Code | Gemini CLI |

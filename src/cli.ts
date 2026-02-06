@@ -331,9 +331,16 @@ program
   .command('mcp')
   .description('Add, list, or remove MCP servers')
   .option('-l, --list', 'List all MCP servers')
-  .option('-a, --add <name>', 'Add a new MCP server')
+  .option('-a, --add [name]', 'Add a new MCP server (interactive if no name provided)')
   .option('-r, --remove <name>', 'Remove an MCP server')
   .option('--scope <scope>', 'Scope (global or project)', 'global')
+  .option('-t, --transport <type>', 'Transport type: stdio, http')
+  .option('-c, --command <cmd>', 'Command for stdio transport')
+  .option('--args <args>', 'Arguments for stdio transport (comma-separated)')
+  .option('-u, --url <url>', 'URL for HTTP transport')
+  .option('-k, --token <token>', 'Authentication token (Bearer)')
+  .option('--header <headers>', 'Custom headers (can be used multiple times)')
+  .option('-y, --yes', 'Skip confirmation')
   .action(async (options) => {
     const configManager = getConfigManager(process.cwd());
     const mcpManager = getMCPManager();
@@ -344,7 +351,7 @@ program
       if (servers.length === 0) {
         console.log('');
         console.log(colors.warning('No MCP servers configured'));
-        console.log(colors.textMuted('Use /mcp add in interactive mode to add servers'));
+        console.log(colors.textMuted('Use "xagent mcp --add" to add servers'));
         console.log('');
       } else {
         const separator = icons.separator.repeat(40);
@@ -363,11 +370,279 @@ program
           console.log('');
         });
       }
-    } else if (options.add) {
-      console.log('');
-      console.log(colors.warning('MCP server addition not implemented yet'));
-      console.log(colors.textMuted('Use /mcp add in interactive mode'));
-      console.log('');
+    } else if (options.add !== undefined) {
+      // Check if running in non-interactive mode (transport and required params provided)
+      const hasTransport = options.transport;
+      const hasCommand = options.command;
+      const hasUrl = options.url;
+      const isNonInteractive = hasTransport && (hasCommand || hasUrl);
+
+      if (isNonInteractive) {
+        // Non-interactive mode: use command line arguments
+        const name = options.add || `mcp-${options.transport}-${Date.now().toString(36)}`;
+        const transport = options.transport;
+        
+        const config: any = {
+          transport: transport,
+        };
+
+        if (transport === 'stdio') {
+          if (!options.command) {
+            console.log('');
+            console.log(colors.error('Error: --command is required for stdio transport'));
+            console.log('');
+            process.exit(1);
+          }
+          config.command = options.command;
+          if (options.args) {
+            config.args = options.args.split(',').map((a: string) => a.trim());
+          }
+        } else if (transport === 'http') {
+          if (!options.url) {
+            console.log('');
+            console.log(colors.error('Error: --url is required for http transport'));
+            console.log('');
+            process.exit(1);
+          }
+          config.url = options.url;
+          if (options.token) {
+            config.authToken = options.token;
+          }
+          // Handle multiple --header flags
+          if (options.header) {
+            const headers: Record<string, string> = {};
+            const headerArray = Array.isArray(options.header) ? options.header : [options.header];
+            for (const h of headerArray) {
+              const colonIndex = h.indexOf(':');
+              if (colonIndex > 0) {
+                const key = h.substring(0, colonIndex).trim();
+                const value = h.substring(colonIndex + 1).trim();
+                headers[key] = value;
+              }
+            }
+            if (Object.keys(headers).length > 0) {
+              config.headers = headers;
+            }
+          }
+        } else {
+          console.log('');
+          console.log(colors.error(`Error: Unknown transport type: ${transport}`));
+          console.log(colors.textMuted('Valid types: stdio, http'));
+          console.log('');
+          process.exit(1);
+        }
+
+        // Skip confirmation in non-interactive mode
+        if (!options.yes) {
+          console.log('');
+          console.log(colors.textMuted('Server configuration:'));
+          console.log(`  ${colors.primaryBright('Name:')} ${name}`);
+          console.log(`  ${colors.primaryBright('Transport:')} ${config.transport}`);
+          if (config.command) {
+            console.log(`  ${colors.primaryBright('Command:')} ${config.command} ${(config.args || []).join(' ')}`);
+          }
+          if (config.url) {
+            console.log(`  ${colors.primaryBright('URL:')} ${config.url}`);
+            if (config.authToken) {
+              console.log(`  ${colors.primaryBright('Token:')} [hidden]`);
+            }
+          }
+          console.log('');
+        }
+
+        try {
+          // Save to config
+          configManager.addMcpServer(name, config);
+          configManager.save(options.scope);
+
+          // Register with MCP manager
+          mcpManager.registerServer(name, config);
+
+          // Try to connect
+          let connected = false;
+          try {
+            await mcpManager.connectServer(name);
+            connected = true;
+          } catch (error: any) {
+            console.log(colors.textMuted(`  ⚠️  Connection failed: ${error.message}`));
+            console.log(colors.textMuted('  The server is saved but not connected.'));
+          }
+
+          if (connected) {
+            console.log('');
+            console.log(colors.success(`✅ MCP server '${name}' added and connected successfully`));
+          } else {
+            console.log('');
+            console.log(colors.success(`✅ MCP server '${name}' added successfully`));
+          }
+          console.log('');
+        } catch (error: any) {
+          console.log('');
+          console.log(colors.error(`Failed to add MCP server: ${error.message}`));
+          console.log('');
+        }
+      } else {
+        // Interactive mode
+        const { text, select, confirm } = await import('@clack/prompts');
+        
+        const separator = icons.separator.repeat(40);
+        console.log('');
+        console.log(colors.primaryBright(`${icons.tool} Add MCP Server`));
+        console.log(colors.border(separator));
+        console.log('');
+
+        // Step 1: Enter server name
+        let name = options.add;
+        if (!name) {
+          name = await text({
+            message: 'Enter MCP server name:',
+            validate: (value: string | undefined) => {
+              if (!value || !value.trim()) {
+                return 'Server name is required';
+              }
+              if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
+                return 'Server name must contain only alphanumeric characters, hyphens, and underscores';
+              }
+              return undefined;
+            },
+          }) as string;
+        }
+
+        // Step 2: Select transport type
+        const transport = await select({
+          message: 'Select transport type:',
+          options: [
+            { value: 'stdio', label: 'Stdio (stdin/stdout)' },
+            { value: 'http', label: 'HTTP (Streamable HTTP)' },
+          ],
+        }) as string | symbol;
+
+        if (typeof transport === 'symbol') {
+          console.log('');
+          console.log(colors.textMuted('Cancelled'));
+          console.log('');
+          return;
+        }
+
+        const config: any = {
+          transport: transport as 'stdio' | 'http',
+        };
+
+        if (transport === 'stdio') {
+          // Step 3: Enter command
+          config.command = await text({
+            message: 'Enter command (for stdio transport):',
+            validate: (value: string | undefined) =>
+              value && value.trim() ? undefined : 'Command is required',
+          }) as string;
+
+          // Step 4: Enter arguments
+          const argsInput = await text({
+            message: 'Enter arguments (comma-separated, for stdio transport):',
+            defaultValue: '',
+          }) as string;
+
+          if (argsInput.trim()) {
+            config.args = argsInput.split(',').map((a: string) => a.trim());
+          }
+        } else {
+          // Step 3: Enter URL
+          let url = '';
+          while (!url) {
+            url = await text({
+              message: 'Enter server URL (for HTTP transport):',
+              validate: (value: string | undefined) => {
+                if (!value || !value.trim()) {
+                  return 'URL is required';
+                }
+                try {
+                  new URL(value);
+                  return undefined;
+                } catch {
+                  return 'Invalid URL format (e.g., https://example.com)';
+                }
+              },
+            }) as string;
+          }
+          config.url = url;
+
+          // Step 4: Enter auth token (optional)
+          config.authToken = await text({
+            message: 'Enter Bearer token (optional):',
+            defaultValue: '',
+          }) as string;
+
+          // Step 5: Enter custom headers (optional)
+          const headersInput = await text({
+            message: 'Enter custom headers as JSON (optional):',
+            defaultValue: '',
+          }) as string;
+
+          if (headersInput.trim()) {
+            try {
+              config.headers = JSON.parse(headersInput);
+            } catch {
+              // Ignore invalid JSON
+            }
+          }
+        }
+
+        // Step 6: Confirm and save
+        console.log('');
+        console.log(colors.textMuted('Server configuration:'));
+        console.log(`  ${colors.primaryBright('Name:')} ${name}`);
+        console.log(`  ${colors.primaryBright('Transport:')} ${config.transport}`);
+        if (config.command) {
+          console.log(`  ${colors.primaryBright('Command:')} ${config.command} ${(config.args || []).join(' ')}`);
+        }
+        if (config.url) {
+          console.log(`  ${colors.primaryBright('URL:')} ${config.url}`);
+        }
+        console.log('');
+
+        const shouldSave = await confirm({
+          message: 'Save this MCP server configuration?',
+        }) as boolean | symbol;
+
+        if (typeof shouldSave === 'symbol' || !shouldSave) {
+          console.log('');
+          console.log(colors.textMuted('Cancelled'));
+          console.log('');
+          return;
+        }
+
+        try {
+          // Save to config
+          configManager.addMcpServer(name, config);
+          configManager.save(options.scope);
+
+          // Register with MCP manager
+          mcpManager.registerServer(name, config);
+
+          // Try to connect
+          let connected = false;
+          try {
+            await mcpManager.connectServer(name);
+            connected = true;
+          } catch (error: any) {
+            console.log(colors.textMuted(`  ⚠️  Connection failed: ${error.message}`));
+            console.log(colors.textMuted('  The server is saved but not connected. Use "/mcp refresh" in interactive mode to retry.'));
+          }
+
+          if (connected) {
+            console.log('');
+            console.log(colors.success(`✅ MCP server '${name}' added and connected successfully`));
+          } else {
+            console.log('');
+            console.log(colors.success(`✅ MCP server '${name}' added successfully (not connected)`));
+          }
+          console.log('');
+        } catch (error: any) {
+          console.log('');
+          console.log(colors.error(`Failed to add MCP server: ${error.message}`));
+          console.log('');
+        }
+      }
     } else if (options.remove) {
       try {
         mcpManager.disconnectServer(options.remove);
@@ -387,6 +662,23 @@ program
     } else {
       console.log('');
       console.log(colors.warning('Please specify an action: --list, --add, or --remove'));
+      console.log('');
+      console.log(colors.textMuted('Usage:'));
+      console.log(`  ${colors.primaryBright('xagent mcp --list')}                    ${colors.textMuted('| List all MCP servers')}`);
+      console.log(`  ${colors.primaryBright('xagent mcp --add')}                     ${colors.textMuted('| Add MCP server (interactive)')}`);
+      console.log('');
+      console.log(colors.textMuted('Non-interactive examples:'));
+      console.log(`  ${colors.primaryBright('xagent mcp --add -t stdio -c "npx" --args "-y,@modelcontextprotocol/server-github"')}`);
+      console.log(`  ${colors.primaryBright('xagent mcp --add -t http -u "https://example.com/mcp" -k "token"')}`);
+      console.log('');
+      console.log(colors.textMuted('Options:'));
+      console.log(`  ${colors.primaryBright('-t, --transport')}   ${colors.textMuted('Transport: stdio or http')}`);
+      console.log(`  ${colors.primaryBright('-c, --command')}    ${colors.textMuted('Command for stdio transport')}`);
+      console.log(`  ${colors.primaryBright('--args')}          ${colors.textMuted('Arguments (comma-separated)')}`);
+      console.log(`  ${colors.primaryBright('-u, --url')}       ${colors.textMuted('URL for HTTP transport')}`);
+      console.log(`  ${colors.primaryBright('-k, --token')}     ${colors.textMuted('Bearer authentication token')}`);
+      console.log(`  ${colors.primaryBright('--header')}        ${colors.textMuted('Custom header (key:value)')}`);
+      console.log(`  ${colors.primaryBright('-y, --yes')}       ${colors.textMuted('Skip confirmation')}`);
       console.log('');
     }
   });

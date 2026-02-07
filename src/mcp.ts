@@ -4,7 +4,7 @@ import { MCPServerConfig } from './types.js';
 export interface MCPTool {
   name: string;
   description: string;
-  inputSchema: any;
+  inputSchema: Record<string, unknown>;
 }
 
 export class MCPServer {
@@ -60,7 +60,7 @@ export class MCPServer {
       return;  // Tools already loaded
     }
 
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve, _reject) => {
       const checkInterval = 100;
       const startTime = Date.now();
 
@@ -77,7 +77,7 @@ export class MCPServer {
         }
       };
 
-      const intervalId = setInterval(check, checkInterval);
+      const _intervalId = setInterval(check, checkInterval);
       check();  // Check immediately first
     });
   }
@@ -247,6 +247,7 @@ export class MCPServer {
         const decoder = new TextDecoder();
         let buffer = '';
 
+        // eslint-disable-next-line no-constant-condition
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -260,7 +261,7 @@ export class MCPServer {
               try {
                 const data = JSON.parse(line.slice(6));
                 this.handleJsonRpcMessage(data);
-              } catch (e) {
+              } catch {
                 // Ignore parse errors
               }
             }
@@ -482,26 +483,26 @@ export class MCPServer {
                 resultData = parsed;
                 break;
               }
-            } catch (e) {
+            } catch {
               continue;
             }
           }
         }
-        
+
         // Fallback: try to parse the last data block if no matching one found
         if (!resultData) {
           const dataMatch = responseStr.match(/data:({.*})/);
           if (dataMatch) {
             try {
               resultData = JSON.parse(dataMatch[1]);
-            } catch (e) {
+            } catch {
               throw new Error('Failed to parse SSE response');
             }
           } else if (!resultData) {
             // Try to parse the entire response as JSON
             try {
               resultData = JSON.parse(responseStr);
-            } catch (e) {
+            } catch {
               throw new Error('No valid data field found in SSE response');
             }
           }

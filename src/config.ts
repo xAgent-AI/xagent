@@ -9,7 +9,7 @@ const logger = getLogger();
 // Environment variable support for backend URL configuration
 // Set these to use local development server instead of cloud
 const CLOUD_BASE_URL = 'https://www.xagent-colife.net';
-const LOCAL_BASE_URL = process.env.XAGENT_BASE_URL || CLOUD_BASE_URL;
+const _LOCAL_BASE_URL = process.env.XAGENT_BASE_URL || CLOUD_BASE_URL;
 
 const DEFAULT_SETTINGS: Settings = {
   theme: 'Default',

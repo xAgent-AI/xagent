@@ -44,7 +44,7 @@ export class SystemPromptGenerator {
    */
   private generateEnvironmentInfo(): string {
     const platform = os.platform();
-    const arch = os.arch();
+    const _arch = os.arch();
     const nodeVersion = process.version;
     const cwd = process.cwd();
     const homeDir = os.homedir();
@@ -104,7 +104,7 @@ export class SystemPromptGenerator {
     }
 
     // Get available local tools (includes MCP wrapper tools registered via registerMCPTools)
-    let allAvailableTools = localTools;
+    const allAvailableTools = localTools;
 
     let enhancedPrompt = baseSystemPrompt;
 
@@ -739,7 +739,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
     return output;
   }
 
-  private generateDecisionMakingGuide(availableTools: any[], skills: SkillInfo[] = []): string {
+  private generateDecisionMakingGuide(availableTools: any[], _skills: SkillInfo[] = []): string {
     // Tool name to short description mapping
     const toolDescriptions: Record<string, string> = {
       'Read': 'When you need to understand existing code, configuration, or documentation',

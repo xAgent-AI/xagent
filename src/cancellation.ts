@@ -29,13 +29,10 @@ export class CancellationManager extends EventEmitter {
         // Use readline's keypress handling
         readline.emitKeypressEvents(process.stdin);
 
-        // 保存 this 引用
-        const self = this;
-
-        this.keyPressHandler = function(str: string, key: readline.Key) {
+        this.keyPressHandler = (str: string, key: readline.Key) => {
           // ESC 可以通过 str 为空且 name 为 'escape' 或 sequence 为 '\x1b' 来检测
           if (str === '\u001B' || key.name === 'escape' || key.sequence === '\x1b') {
-            self.cancel();
+            this.cancel();
           }
         };
 
@@ -148,7 +145,7 @@ export class CancellationManager extends EventEmitter {
     });
 
     // Listen for cancellation event
-    const onCancelled = (opId: string | null) => {
+    const onCancelled = (_opId: string | null) => {
       if (rejectCancellation) {
         rejectCancellation(new Error('Operation cancelled by user'));
       }

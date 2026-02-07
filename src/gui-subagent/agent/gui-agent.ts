@@ -9,20 +9,20 @@
 import type {
   ScreenContext,
   ScreenshotOutput,
-  ExecuteParams,
-  ExecuteOutput,
+  _ExecuteParams,
+  _ExecuteOutput,
   PredictionParsed,
 } from '../types/operator.js';
 import type { Operator } from '../operator/base-operator.js';
 import { sleep, asyncRetry } from '../utils.js';
 import { actionParser } from '../action-parser/index.js';
-import { colors, icons, renderMarkdown } from '../../theme.js';
+import { colors, icons, _renderMarkdown } from '../../theme.js';
 import { getLogger } from '../../logger.js';
 
 /**
  * Helper function to truncate long text
  */
-function truncateText(text: string, maxLength: number = 200): string {
+function _truncateText(text: string, maxLength: number = 200): string {
   if (!text) return '';
   return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
 }
@@ -30,7 +30,7 @@ function truncateText(text: string, maxLength: number = 200): string {
 /**
  * Helper function to indent multiline text
  */
-function indentMultiline(text: string, indent: string): string {
+function _indentMultiline(text: string, indent: string): string {
   return text.split('\n').map(line => indent + line).join('\n');
 }
 
@@ -204,7 +204,7 @@ export class GUIAgent<T extends Operator> {
   private displayConversationResult(conversation: Conversation, iteration: number, indentLevel: number = 1): void {
     const indent = '  '.repeat(indentLevel);
     const innerIndent = '  '.repeat(indentLevel + 1);
-    const maxWidth = process.stdout.columns || 80;
+    const _maxWidth = process.stdout.columns || 80;
 
     if (conversation.from === 'assistant') {
       // Display assistant response (action)
@@ -273,11 +273,11 @@ left_double(point='<point>x1 y1</point>')
 right_single(point='<point>x1 y1</point>')
 drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')
 hotkey(key='ctrl c') # Split keys with a space and use lowercase. Also, do not use more than 3 keys in one hotkey action.
-type(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content. 
+type(content='xxx') # Use escape characters ', ", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content. 
 scroll(point='<point>x1 y1</point>', direction='down or up or right or left') # Show more information on the \`direction\` side.
 open_url(url='https://xxx') # Open URL in browser
 wait() #Sleep for 5s and take a screenshot to check for any changes.
-finished(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format.
+finished(content='xxx') # Use escape characters ', ", and \n in content part to ensure we can parse the content in normal python string format.
 
 
 
@@ -336,7 +336,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       return data;
     }
 
-    const currentTime = Date.now();
+    const _currentTime = Date.now();
 
     if (this.showAIDebugInfo) {
       this.logger.debug('[GUIAgent] run:', {
@@ -1003,20 +1003,15 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       this.debugRequest(messages);
     }
 
-    let response;
-    try {
-      response = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(requestBody),
-        signal: this.signal,
-      });
-    } catch (fetchError) {
-      throw fetchError;
-    }
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(requestBody),
+      signal: this.signal,
+    });
 
     // Handle non-200 responses
     if (!response.ok) {

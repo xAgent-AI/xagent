@@ -13,7 +13,7 @@
 
 import type { Message, CompletionOptions, CompletionResponse, AIConfig, RemoteTaskManager, Model, RemoteModelsResponse } from './ai-client/types.js';
 import { AuthConfig, AuthType } from './types.js';
-import { ProviderFactory, createOpenAI, createAnthropic, createRemote, type AIProvider } from './ai-client/index.js';
+import { ProviderFactory, type AIProvider } from './ai-client/index.js';
 import type { RemoteAIProvider } from './ai-client/types.js';
 
 /**
@@ -62,19 +62,19 @@ class ProviderAdapter implements AIClientInterface {
   }
 
   // Optional methods - not available in local mode
-  completeTask?(taskId: string): Promise<void> {
+  completeTask?(_taskId: string): Promise<void> {
     throw new Error('completeTask is only available in remote mode');
   }
 
-  cancelTask?(taskId: string): Promise<void> {
+  cancelTask?(_taskId: string): Promise<void> {
     throw new Error('cancelTask is only available in remote mode');
   }
 
-  failTask?(taskId: string, reason: 'timeout' | 'failure'): Promise<void> {
+  failTask?(_taskId: string, _reason: 'timeout' | 'failure'): Promise<void> {
     throw new Error('failTask is only available in remote mode');
   }
 
-  invokeVLM?(messages: Message[], systemPrompt: string, options?: { taskId?: string; status?: 'begin' | 'continue'; signal?: AbortSignal }): Promise<string> {
+  invokeVLM?(_messages: Message[], _systemPrompt: string, _options?: { taskId?: string; status?: 'begin' | 'continue'; signal?: AbortSignal }): Promise<string> {
     throw new Error('invokeVLM is only available in remote mode');
   }
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import chalk from 'chalk';
 import { confirm } from '@clack/prompts';
 import { startInteractiveSession } from './session.js';
 import { getConfigManager } from './config.js';
@@ -10,14 +9,13 @@ import { AuthType } from './types.js';
 import { fetchDefaultModels } from './ai-client/providers/remote.js';
 import { getAgentManager } from './agents.js';
 import { getMCPManager } from './mcp.js';
-import { getLogger, setConfigProvider } from './logger.js';
-import { theme, icons, colors } from './theme.js';
+import { setConfigProvider } from './logger.js';
+import { icons, colors } from './theme.js';
 import { getCancellationManager } from './cancellation.js';
-import { readFileSync, promises as fs, writeFileSync, existsSync } from 'fs';
+import { readFileSync, promises as fs } from 'fs';
 import path from 'path';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { glob } from 'glob';
 
 // Get current directory
 const __filename = fileURLToPath(import.meta.url);
@@ -39,7 +37,7 @@ async function notifySkillUpdate(userSkillsPath: string): Promise<void> {
     await fs.writeFile(stateFilePath, JSON.stringify(state, null, 2), 'utf-8');
     
     console.log(colors.textMuted('  ℹ️  Skills updated for running xAgent sessions'));
-  } catch (error) {
+  } catch {
     // Silent fail - notification is optional
   }
 }
@@ -47,8 +45,6 @@ async function notifySkillUpdate(userSkillsPath: string): Promise<void> {
 // Read package.json
 const packageJsonPath = join(__dirname, '../package.json');
 const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8'));
-
-const logger = getLogger();
 
 // Initialize CancellationManager early to set up ESC handler
 getCancellationManager();
@@ -789,13 +785,13 @@ program
     const configManager = getConfigManager();
     const { promises: fs } = await import('fs');
     const pathModule = await import('path');
-    const { exec, spawn } = await import('child_process');
+    const { exec } = await import('child_process');
     const { promisify } = await import('util');
     const os = await import('os');
 
-    const execAsync = promisify(exec);
+    const _execAsync = promisify(exec);
     const userSkillsPath = configManager.getUserSkillsPath() || pathModule.join(os.homedir(), '.xagent', 'skills');
-    const userNodeModulesPath = configManager.getUserNodeModulesPath() || pathModule.join(os.homedir(), '.xagent', 'node_modules');
+    const _userNodeModulesPath = configManager.getUserNodeModulesPath() || pathModule.join(os.homedir(), '.xagent', 'node_modules');
 
     if (options.add) {
       const separator = icons.separator.repeat(40);
@@ -937,7 +933,7 @@ program
 
         console.log(colors.textMuted(`Skills directory: ${userSkillsPath}`));
         console.log('');
-      } catch (error) {
+      } catch {
         console.log(colors.textMuted('No user skills installed'));
         console.log('');
       }
@@ -972,7 +968,7 @@ program
         // Notify running xAgent to update system prompt
         await notifySkillUpdate(userSkillsPath);
         console.log('');
-      } catch (error) {
+      } catch {
         console.log('');
         console.log(colors.error(`Skill not found: ${options.remove}`));
         console.log('');
@@ -1101,7 +1097,7 @@ program
         };
       }
 
-      const guiAgent = await createGUISubAgent({
+      const _guiAgent = await createGUISubAgent({
         headless: options.headless ?? false,
         model: isLocalMode ? modelName : undefined,
         modelBaseUrl: isLocalMode ? baseUrl : undefined,
@@ -1211,7 +1207,7 @@ program
 
         console.log(colors.textMuted(`Total: ${files.length} memory file(s)`));
         console.log('');
-      } catch (error) {
+      } catch {
         console.log(colors.textMuted('No memory files found.'));
         console.log('');
       }
@@ -1385,7 +1381,7 @@ if (!process.argv.slice(2).length) {
 // ============================================================
 
 // Handle uncaught promise rejections
-process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
+process.on('unhandledRejection', (reason: any, _promise: Promise<any>) => {
   console.error('\n❌ An unexpected error occurred');
   if (reason instanceof Error) {
     console.error(`   ${reason.message}`);

@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'child_process';
 /**
  * Find bash executable on PATH (Windows).
  */
-function findBashOnPath(): string | null {
+function _findBashOnPath(): string | null {
 	try {
 		const result = spawnSync('where', ['bash.exe'], { encoding: 'utf-8', timeout: 5000 });
 		if (result.status === 0 && result.stdout) {
@@ -121,7 +121,7 @@ export function killProcessTree(pid: number): void {
 		// Use SIGKILL on Unix/Linux/Mac
 		try {
 			process.kill(-pid, 'SIGKILL');
-		} catch (error) {
+		} catch {
 			// Fallback to killing just the child if process group kill fails
 			try {
 				process.kill(pid, 'SIGKILL');

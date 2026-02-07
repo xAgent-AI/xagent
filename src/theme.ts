@@ -8,7 +8,7 @@ function getTerminalBackground(): 'dark' | 'light' {
   // Check common environment variables
   const colorfgbg = process.env.COLORFGBG; // e.g., "15;0" (light fg, dark bg)
   const termProgram = process.env.TERM_PROGRAM;
-  const termProgramVersion = process.env.TERM_PROGRAM_VERSION;
+  const _termProgramVersion = process.env.TERM_PROGRAM_VERSION;
 
   // Try to parse COLORFGBG (format: "fg;bg" or "fg;color;bg")
   if (colorfgbg) {
@@ -82,7 +82,7 @@ interface SubAgentBoxOptions {
   accentColor?: ColorFunction;
 }
 
-interface BoxFunctions {
+interface _BoxFunctions {
   single: (content: string, options?: BoxOptions) => string;
   double: (content: string, options?: BoxOptions) => string;
   minimal: (content: string, options?: Omit<BoxOptions, 'title' | 'titleAlign'>) => string;
@@ -284,13 +284,13 @@ export const styleHelpers = {
       const chars = styleHelpers.border.single;
       const availableWidth = width - 4;
 
-      let lines: string[] = [];
+      const lines: string[] = [];
 
       if (title) {
         const titleContent = ` ${title} `;
         const paddingNeeded = availableWidth - titleContent.length;
-        let leftPad = titleAlign === 'center' ? Math.floor(paddingNeeded / 2) : (titleAlign === 'right' ? paddingNeeded : 0);
-        let rightPad = titleAlign === 'center' ? Math.ceil(paddingNeeded / 2) : (titleAlign === 'right' ? 0 : paddingNeeded);
+        const leftPad = titleAlign === 'center' ? Math.floor(paddingNeeded / 2) : (titleAlign === 'right' ? paddingNeeded : 0);
+        const rightPad = titleAlign === 'center' ? Math.ceil(paddingNeeded / 2) : (titleAlign === 'right' ? 0 : paddingNeeded);
 
         lines.push(`${indent}${chars.topLeft}${' '.repeat(leftPad)}${titleContent}${' '.repeat(rightPad)}${chars.topRight}`);
       } else {
@@ -314,13 +314,13 @@ export const styleHelpers = {
       const chars = styleHelpers.border.double;
       const availableWidth = width - 4;
 
-      let lines: string[] = [];
+      const lines: string[] = [];
 
       if (title) {
         const titleContent = ` ${title} `;
         const paddingNeeded = availableWidth - titleContent.length;
-        let leftPad = titleAlign === 'center' ? Math.floor(paddingNeeded / 2) : (titleAlign === 'right' ? paddingNeeded : 0);
-        let rightPad = titleAlign === 'center' ? Math.ceil(paddingNeeded / 2) : (titleAlign === 'right' ? 0 : paddingNeeded);
+        const leftPad = titleAlign === 'center' ? Math.floor(paddingNeeded / 2) : (titleAlign === 'right' ? paddingNeeded : 0);
+        const rightPad = titleAlign === 'center' ? Math.ceil(paddingNeeded / 2) : (titleAlign === 'right' ? 0 : paddingNeeded);
 
         lines.push(`${indent}${chars.topLeft}${' '.repeat(leftPad)}${titleContent}${' '.repeat(rightPad)}${chars.topRight}`);
       } else {
@@ -364,7 +364,7 @@ export const styleHelpers = {
       const availableWidth = width - 2;
 
       const headerContent = `${colors.primaryBright(agentName)}: ${description}`;
-      const headerContentLength = headerContent.replace(/\x1b\[[0-9;]*m/g, '').length;
+      const headerContentLength = headerContent.replace(/\033\[[0-9;]*m/g, '').length;
       const headerFillLength = Math.max(0, availableWidth - 3 - headerContentLength);
       const headerLine = `${indent}${accentColor(chars.topLeft)}${accentColor('─── ')}${headerContent} ${accentColor('─'.repeat(headerFillLength))}${accentColor(chars.topRight)}`;
 

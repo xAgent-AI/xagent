@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
-import fsSync from 'fs';
+import _fsSync from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { _fileURLToPath } from 'url';
 import { WorkflowConfig } from './workflow.js';
 import { getConfigManager } from './config.js';
 
@@ -59,7 +59,7 @@ export class SkillLoader {
     } else {
       const configManager = getConfigManager();
       const userPath = configManager.getUserSkillsPath();
-      this.skillsRootPath = userPath || path.join(require('os').homedir(), '.xagent', 'skills');
+      this.skillsRootPath = userPath || path.join(os.homedir(), '.xagent', 'skills');
     }
   }
   async loadAllSkills(): Promise<SkillInfo[]> {
@@ -356,19 +356,19 @@ export class SkillLoader {
     // Try to extract frontmatter - support both formats:
     // 1. Standard YAML: ---name: docx...--- 2. No opening ---: name: docx...
     let frontmatter = '';
-    let contentStart = 0;
+    let _contentStart = 0;
 
-    const frontmatterMatch = normalizedContent.match(/^---\n([\s\S]*?)\n---/);
+    const frontmatterMatch = normalizedContent.match(/^---([\s\S]*?)\n---/);
     if (frontmatterMatch) {
       // Standard format with --- at start and end
       frontmatter = frontmatterMatch[1];
-      contentStart = frontmatterMatch[0].length;
+      _contentStart = frontmatterMatch[0].length;
     } else {
       // Check for format without opening --- (just YAML at the start)
       const yamlMatch = normalizedContent.match(/^([\s\S]*?)\n---/);
       if (yamlMatch) {
         frontmatter = yamlMatch[1];
-        contentStart = yamlMatch[0].length;
+        _contentStart = yamlMatch[0].length;
       }
     }
 

@@ -1,11 +1,10 @@
-import readline from 'readline';
 import { select, confirm, text } from '@clack/prompts';
 import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'fs/promises';
 import path from 'path';
-import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
-import { Message, detectThinkingKeywords, getThinkingTokens } from './ai-client/types.js';
+import { ExecutionMode, ChatMessage, InputType, _ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
+import { _Message, _detectThinkingKeywords, _getThinkingTokens } from './ai-client/types.js';
 import { fetchDefaultModels } from './ai-client/providers/remote.js';
 import { getToolRegistry } from './tools.js';
 import { getAgentManager } from './agents.js';
@@ -21,7 +20,7 @@ import {
 } from './context-compressor.js';
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
-import { SystemPromptGenerator } from './system-prompt-generator.js';
+import { _SystemPromptGenerator } from './system-prompt-generator.js';
 import { ensureTtySane } from './terminal.js';
 import { AuthService, selectAuthType, ThirdPartyProvider, THIRD_PARTY_PROVIDERS, VLM_PROVIDERS, VLMProviderInfo } from './auth.js';
 
@@ -626,7 +625,6 @@ export class SlashCommandHandler {
       const success = await authService.authenticate();
 
       if (success) {
-        const newConfig = this.configManager.getAuthConfig();
         console.log(chalk.green('\n✅ Login successful!'));
         console.log(chalk.cyan(`   Token saved to: ~/.xagent/settings.json`));
         console.log(chalk.gray('   You can now use xAgent CLI with remote AI services.\n'));
@@ -1216,7 +1214,7 @@ export class SlashCommandHandler {
   }
 
   private async addMcpServerInteractive(serverName?: string): Promise<void> {
-    let name = (await text({
+    const name = (await text({
       message: 'Enter MCP server name:',
       defaultValue: serverName,
       validate: (value: string | undefined) => {
@@ -1345,10 +1343,8 @@ export class SlashCommandHandler {
 
       this.mcpManager.registerServer(name, config);
 
-      let connected = false;
       try {
         await this.mcpManager.connectServer(name);
-        connected = true;
       } catch (error: any) {
         this.mcpManager.disconnectServer(name);
         this.configManager.removeMcpServer(name);
@@ -1403,11 +1399,6 @@ export class SlashCommandHandler {
 
   private async removeMcpServer(serverName: string): Promise<void> {
     try {
-      // Get server info before disconnecting to notify LLM
-      const server = this.mcpManager.getServer(serverName);
-      const removedTools = server ? server.getToolNames() : [];
-      const removedToolNames = removedTools.map((t: string) => `${serverName}__${t}`).join(', ');
-
       // Disconnect
       this.mcpManager.disconnectServer(serverName);
 
@@ -1909,7 +1900,6 @@ export class SlashCommandHandler {
   private async handleSkill(args: string[]): Promise<void> {
     const os = await import('os');
     const path = await import('path');
-    const { fileURLToPath } = await import('url');
     const { promises: fs } = await import('fs');
 
     const action = args[0] || 'list';

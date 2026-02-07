@@ -5,9 +5,10 @@
  * - Removes distinction between built-in and user skills
  */
 import fs from 'fs/promises';
-import fsSync from 'fs';
+import os from 'os';
+import _fsSync from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { _fileURLToPath } from 'url';
 import { getConfigManager } from './config.js';
 import { getLogger } from './logger.js';
 
@@ -50,7 +51,7 @@ export class SkillManager {
       this.userSkillsRoot = config.userSkillsRoot;
     } else {
       this.userSkillsRoot = configManager.getUserSkillsPath() ||
-        path.join(require('os').homedir(), '.xagent', 'skills');
+        path.join(os.homedir(), '.xagent', 'skills');
     }
   }
 
@@ -184,7 +185,7 @@ export class SkillManager {
     try {
       const resolvedPath = path.resolve(sourcePath);
       const skillName = path.basename(resolvedPath);
-      const destPath = path.join(this.userSkillsRoot, skillName);
+      const _destPath = path.join(this.userSkillsRoot, skillName);
 
       // Check if source exists
       await fs.access(resolvedPath);

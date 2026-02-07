@@ -96,7 +96,7 @@ function execCommand(cmd: string, args: string[]): Promise<CmdResult> {
       resolve({ stdout, stderr, exitCode: code });
     });
 
-    child.on('error', (error) => {
+    child.on('error', (_error) => {
       resolve({ stdout, stderr, exitCode: null });
     });
   });
@@ -106,7 +106,7 @@ function execCommand(cmd: string, args: string[]): Promise<CmdResult> {
  * Download file from URL
  */
 async function downloadFile(url: string, dest: string): Promise<void> {
-  const { exec } = await import('child_process');
+  const { exec: _exec } = await import('child_process');
   const { finished } = await import('stream/promises');
   const { Readable } = await import('stream');
 
@@ -232,7 +232,9 @@ async function downloadTool(config: RgConfig | FdConfig, version: string): Promi
     try {
       if (existsSync(archivePath)) unlinkSync(archivePath);
       if (existsSync(extractDir)) rmSync(extractDir, { recursive: true });
-    } catch {}
+    } catch {
+      // Ignore cleanup errors
+    }
   }
 }
 

@@ -18,7 +18,7 @@ import {
   ChatMessage,
   ToolCall,
   AuthType,
-  AuthConfig,
+  _AuthConfig,
   AgentConfig,
   ToolCallItem,
 } from './types.js';
@@ -29,13 +29,13 @@ import { fetchDefaultModels } from './ai-client/providers/remote.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { getToolRegistry } from './tools.js';
-import { getAgentManager, DEFAULT_AGENTS, AgentManager } from './agents.js';
+import { getAgentManager, _DEFAULT_AGENTS, AgentManager } from './agents.js';
 import { getMemoryManager, MemoryManager } from './memory.js';
 import { getMCPManager, MCPManager } from './mcp.js';
 import { getCheckpointManager, CheckpointManager } from './checkpoint.js';
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { getSessionManager, SessionManager } from './session-manager.js';
-import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
+import { SlashCommandHandler, parseInput, _detectImageInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import {
   theme,
@@ -45,7 +45,7 @@ import {
   renderMarkdown,
   renderDiff,
   renderLines,
-  TERMINAL_BG,
+  _TERMINAL_BG,
 } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 import {
@@ -53,7 +53,7 @@ import {
   ContextCompressor,
   CompressionResult,
 } from './context-compressor.js';
-import { Logger, LogLevel, getLogger } from './logger.js';
+import { _Logger, _LogLevel, getLogger } from './logger.js';
 import { ensureTtySane, setupEscKeyHandler } from './terminal.js';
 
 // Type aliases for backward compatibility
@@ -245,7 +245,7 @@ export class InteractiveSession {
             console.log(colors.textMuted('  🔄 Skills updated from CLI'));
           }
         }
-      } catch (error) {
+      } catch {
         // Silent fail - watcher is optional
       }
     }, 2000);
@@ -265,7 +265,7 @@ export class InteractiveSession {
     // Initialize taskId for GUI operations
     this.currentTaskId = crypto.randomUUID();
 
-    const separator = icons.separator.repeat(60);
+    const _separator = icons.separator.repeat(60);
     console.log('');
     console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
     console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
@@ -301,9 +301,9 @@ export class InteractiveSession {
     this.startSkillUpdateWatcher();
     // Set up ESC key handler using the terminal module
     // This avoids conflicts with readline and provides clean ESC detection
-    let escCleanup: (() => void) | undefined;
+    let _escCleanup: (() => void) | undefined;
     if (process.stdin.isTTY) {
-      escCleanup = setupEscKeyHandler(() => {
+      _escCleanup = setupEscKeyHandler(() => {
         if ((this as any)._isOperationInProgress) {
           // An operation is running, let it be cancelled
           this.cancellationManager.cancel();
@@ -596,7 +596,7 @@ export class InteractiveSession {
       } else {
         return null;
       }
-    } catch (error: any) {
+    } catch {
       return null;
     }
   }
@@ -829,7 +829,7 @@ export class InteractiveSession {
     await this.processUserMessage(task, agent);
   }
 
-  public async processUserMessage(message: string, agent?: AgentConfig): Promise<void> {
+  public async processUserMessage(message: string, _agent?: AgentConfig): Promise<void> {
     const inputs = parseInput(message);
     const textInput = inputs.find((i) => i.type === 'text');
     const fileInputs = inputs.filter((i) => i.type === 'file');
@@ -923,7 +923,7 @@ export class InteractiveSession {
         console.log(`${indent}${colors.textDim(reasoningContent.replace(/^/gm, indent))}`);
         break;
 
-      case 'compact':
+      case 'compact': {
         // Compact display, truncate partial content
         const maxLength = 500;
         const truncatedContent =
@@ -936,6 +936,7 @@ export class InteractiveSession {
         console.log(`${indent}${colors.textDim(truncatedContent.replace(/^/gm, indent))}`);
         console.log(`${indent}${colors.textDim(`[${reasoningContent.length} chars total]`)}`);
         break;
+      }
 
       case 'indicator':
         // Show indicator only
@@ -966,7 +967,7 @@ export class InteractiveSession {
     }
 
     const indent = this.getIndent();
-    const currentTokens = this.contextCompressor.estimateContextTokens(this.conversation);
+    const _currentTokens = this.contextCompressor.estimateContextTokens(this.conversation);
     const currentMessages = this.conversation.length;
     const { needsCompression, reason, tokenCount } = this.contextCompressor.needsCompression(
       this.conversation,
@@ -1135,7 +1136,7 @@ export class InteractiveSession {
   /**
    * Create remote mode LLM caller
    */
-  private createRemoteCaller(taskId: string, status: 'begin' | 'continue') {
+  private createRemoteCaller(taskId: string, _status: 'begin' | 'continue') {
     const client = this.remoteAIClient!;
 
 
@@ -1423,7 +1424,7 @@ export class InteractiveSession {
         const authConfig = this.configManager.getAuthConfig();
 
         logger.debug('[DEBUG generateRemoteResponse] After re-auth:');
-        logger.debug('  - authConfig.apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
+        logger.debug('  - authConfig.apiKey exists:', authConfig.apiKey ? 'true' : 'false');
 
         // Recreate readline interface after interactive prompt
         this.rl.close();
@@ -1491,7 +1492,7 @@ export class InteractiveSession {
       let parsedParams: any;
       try {
         parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
-      } catch (e) {
+      } catch {
         parsedParams = params;
       }
 
@@ -1532,7 +1533,7 @@ export class InteractiveSession {
     }
 
     // Process results in the original tool_calls order (critical for Anthropic format APIs)
-    let hasError = false;
+    let _hasError = false;
     for (let i = 0; i < preparedToolCalls.length; i++) {
       const toolCall = preparedToolCalls[i];
       const { name: tool, params } = toolCall;
@@ -1555,7 +1556,7 @@ export class InteractiveSession {
           return;
         }
 
-        hasError = true;
+        _hasError = true;
 
         console.log('');
         console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${tool} - ${error}`)}`);
@@ -2188,7 +2189,7 @@ async function initializeSkillsOnDemand(): Promise<number> {
 }
 
 // Synchronous version (kept for backwards compatibility)
-function copyDirectoryRecursive(src: string, dest: string): void {
+function _copyDirectoryRecursive(src: string, dest: string): void {
   if (!fs.existsSync(dest)) {
     fs.mkdirSync(dest, { recursive: true });
   }
@@ -2279,7 +2280,7 @@ export async function startInteractiveSession(): Promise<void> {
   try {
     const { checkUpdatesOnStartup } = await import('./update.js');
     await checkUpdatesOnStartup();
-  } catch (error) {
+  } catch {
     // Silently ignore update check failures
   }
 

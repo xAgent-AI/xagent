@@ -2,8 +2,8 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { getSkillLoader, SkillInfo, SkillLoader } from './skill-loader.js';
-import { getToolRegistry } from './tools.js';
-import { ExecutionMode, Tool } from './types.js';
+import { _getToolRegistry } from './tools.js';
+import { ExecutionMode, _Tool } from './types.js';
 import { getConfigManager } from './config.js';
 
 // Re-export SkillInfo for other modules
@@ -579,7 +579,7 @@ export class SkillInvoker {
    * NOTE: SKILL_TRIGGERS disabled. Let LLM decide based on system prompt.
    * Returns null to indicate no explicit match - LLM should use its own judgment.
    */
-  async matchSkill(userInput: string): Promise<SkillMatcherResult | null> {
+  async matchSkill(_userInput: string): Promise<SkillMatcherResult | null> {
     // SKILL_TRIGGERS is disabled for experiment purposes.
     // The LLM should decide which skill to use based on system prompt information.
     return null;
@@ -684,7 +684,7 @@ export class SkillInvoker {
    * Get executor for skill
    * Unified dynamic approach - all skills use GenericSkillExecutor
    */
-  private getSkillExecutor(skillId: string): SkillExecutor {
+  private getSkillExecutor(_skillId: string): SkillExecutor {
     return new GenericSkillExecutor();
   }
 

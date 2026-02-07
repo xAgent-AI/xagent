@@ -11,9 +11,6 @@ import type {
   Model,
   RemoteModelsResponse,
 } from '../types';
-import { getLogger } from '../../logger.js';
-
-const logger = getLogger();
 
 // ============================================================================
 // Remote Provider (xAgent Web Service)

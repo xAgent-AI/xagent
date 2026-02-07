@@ -132,7 +132,7 @@ export async function withRetry<T>(
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= mergedConfig.maxRetries; attempt++) {
-    const attemptStartTime = Date.now();
+    const _attemptStartTime = Date.now();
 
     try {
       const data = await fn();

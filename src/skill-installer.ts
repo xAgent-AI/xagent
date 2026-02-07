@@ -12,7 +12,7 @@ import simpleGit from 'simple-git';
 import { getConfigManager } from './config.js';
 import { getLogger } from './logger.js';
 
-const logger = getLogger();
+const _logger = getLogger();
 const CLONE_TIMEOUT_MS = 60000; // 60 seconds
 
 export interface RemoteSource {
@@ -317,8 +317,8 @@ async function installFromGitHub(source: RemoteSource): Promise<InstallResult> {
     return { success: false, error: 'Invalid GitHub URL' };
   }
 
-  const [, owner, repo] = urlMatch;
-  const cleanRepo = repo.replace(/\.git$/, '');
+  const [, _owner, repo] = urlMatch;
+  const _cleanRepo = repo.replace(/\.git$/, '');
   const ref = source.ref || 'main';
 
   let tempDir: string | null = null;

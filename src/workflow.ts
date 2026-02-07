@@ -1,10 +1,9 @@
 import fs from 'fs/promises';
-import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
 import axios from 'axios';
 import { AgentConfig, MCPServerConfig } from './types.js';
-import { SkillLoader, getSkillLoader } from './skill-loader.js';
+import { getSkillLoader } from './skill-loader.js';
 import { getConfigManager } from './config.js';
 
 export interface WorkflowConfig {
@@ -78,7 +77,7 @@ export class WorkflowManager {
     }
   }
 
-  private async loadWorkflowsFromDirectory(dirPath: string, scope: 'global' | 'project'): Promise<void> {
+  private async loadWorkflowsFromDirectory(dirPath: string, _scope: 'global' | 'project'): Promise<void> {
     try {
       const files = await fs.readdir(dirPath);
       
@@ -449,7 +448,6 @@ export class WorkflowManager {
   }
 
   async createWorkflowPackage(projectRoot: string): Promise<Buffer> {
-    const workflowId = path.basename(projectRoot);
     const workflowConfigPath = path.join(projectRoot, '.xagent', 'workflow.json');
     
     let workflowConfig: WorkflowConfig;

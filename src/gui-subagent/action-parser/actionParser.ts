@@ -302,7 +302,7 @@ function parseAction(actionStr: string) {
           value = `(${value})`;
         }
 
-        //@ts-ignore
+        //@ts-expect-error - kwargs type mismatch with function signature
         kwargs[key.trim()] = value;
       }
     }
@@ -311,7 +311,7 @@ function parseAction(actionStr: string) {
       function: functionName,
       args: kwargs,
     };
-  } catch (e) {
+  } catch {
     logger.debug(`[ActionParser] Skipping invalid action: '${actionStr}'`);
     return null;
   }

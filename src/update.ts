@@ -103,7 +103,7 @@ export class UpdateManager {
     return false;
   }
 
-  private async promptUpdate(versionInfo: VersionInfo): Promise<{ shouldUpdate: boolean }> {
+  private async promptUpdate(_versionInfo: VersionInfo): Promise<{ shouldUpdate: boolean }> {
     const shouldUpdate = await confirm({
       message: 'Do you want to update now?',
     });
@@ -223,9 +223,12 @@ export class UpdateManager {
   }
 
   async enableAutoUpdate(enabled: boolean): Promise<void> {
-    const fs = await import('fs/promises');
-    const path = await import('path');
-    const os = await import('os');
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _fs = await import('fs/promises');
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _path = await import('path');
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _os = await import('os');
     const { getConfigManager } = await import('./config.js');
 
     const configManager = getConfigManager();

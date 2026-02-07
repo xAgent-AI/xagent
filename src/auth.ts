@@ -1,6 +1,6 @@
 import axios from 'axios';
 import open from 'open';
-import { select, confirm, text, password } from '@clack/prompts';
+import { select, text, password } from '@clack/prompts';
 import https from 'https';
 import { AuthConfig, AuthType } from './types.js';
 import { getLogger } from './logger.js';
@@ -182,7 +182,7 @@ export class AuthService {
       // 2. 调用后端验证用户
       const xagentApiBaseUrl = this.authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
       const httpsAgent = new https.Agent({ rejectUnauthorized: false });
-      const response = await axios.get(`${xagentApiBaseUrl}/api/auth/me`, {
+      await axios.get(`${xagentApiBaseUrl}/api/auth/me`, {
         headers: { Authorization: `Bearer ${token}` },
         httpsAgent,
       });
@@ -405,14 +405,13 @@ export class AuthService {
     // Local dev: frontend runs on port 3000
     // Production: frontend is served via nginx reverse proxy at the same domain
     let loginUrl: string;
-    let callbackUrl: string;
 
     // Always use frontend URL for login page
     const frontendUrl = isLocalDev
       ? process.env.FRONTEND_URL || 'http://localhost:3000'
       : webBaseUrl;
 
-    callbackUrl = `${webBaseUrl}/callback`;
+    const callbackUrl = `${webBaseUrl}/callback`;
     loginUrl = `${frontendUrl}/login?callback=${encodeURIComponent(callbackUrl)}`;
 
     // 如果已有保存的token，通过URL参数传给Web页面

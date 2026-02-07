@@ -2,7 +2,7 @@ import type { AIProvider, AIConfig, RemoteAIProvider, Model } from './types.js';
 import { isOpenAIConfig, isAnthropicConfig, isRemoteConfig } from './types.js';
 import { createOpenAIProvider } from './providers/openai.js';
 import { createAnthropicProvider } from './providers/anthropic.js';
-import { createRemoteProvider, type RemoteProvider } from './providers/remote.js';
+import { createRemoteProvider } from './providers/remote.js';
 import { getAllModels, listProviderTypes } from './registry.js';
 
 // ============================================================================
@@ -100,41 +100,6 @@ export class ProviderFactory {
 // ============================================================================
 // Factory Helpers
 // ============================================================================
-
-/**
- * Create OpenAI provider with configuration
- */
-export function createOpenAI(apiKey?: string, baseUrl?: string, model?: string): AIProvider {
-  return ProviderFactory.create({
-    type: 'openai',
-    apiKey,
-    baseUrl,
-    model,
-  });
-}
-
-/**
- * Create Anthropic provider with configuration
- */
-export function createAnthropic(apiKey?: string, baseUrl?: string, model?: string): AIProvider {
-  return ProviderFactory.create({
-    type: 'anthropic',
-    apiKey,
-    baseUrl,
-    model,
-  });
-}
-
-/**
- * Create Remote provider with configuration
- */
-export function createRemote(authToken?: string, baseUrl?: string): AIProvider {
-  return ProviderFactory.create({
-    type: 'remote',
-    authToken,
-    baseUrl,
-  });
-}
 
 /**
  * Get all available models

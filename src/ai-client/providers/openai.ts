@@ -9,7 +9,6 @@ import type {
   StreamEvent,
   Model,
 } from '../types';
-import { withRetry, RetryConfig } from '../../retry.js';
 import { getLogger } from '../../logger.js';
 
 const logger = getLogger();

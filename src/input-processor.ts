@@ -74,7 +74,7 @@ export class InputProcessor {
     return imageInputs;
   }
 
-  private async getImageFromClipboard(imageId: string): Promise<string> {
+  private async getImageFromClipboard(_imageId: string): Promise<string> {
     try {
       const clipboardContent = await clipboardy.read();
       
@@ -84,7 +84,7 @@ export class InputProcessor {
 
       const imageData = await this.readImageFile(clipboardContent);
       return imageData;
-    } catch (error) {
+    } catch {
       throw new Error('Failed to read image from clipboard');
     }
   }

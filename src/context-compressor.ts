@@ -291,9 +291,9 @@ export class ContextCompressor {
     config?: Partial<CompressionConfig>,
     modelName?: string
   ): { needsCompression: boolean; reason: string; tokenCount: number } {
-    const cfg = { ...this.defaultConfig, ...config };
+    const _cfg = { ...this.defaultConfig, ...config };
+    const _messageCount = messages.length;
     const tokenCount = this.estimateContextTokens(messages);
-    const messageCount = messages.length;
 
     // Get model context window
     const contextWindow = getModelContextWindow(modelName);
@@ -449,8 +449,8 @@ export class ContextCompressor {
       modified: new Set<string>()
     };
 
-    let totalToolCalls = 0;
-    let matchedToolCalls = 0;
+    let _totalToolCalls = 0;
+    let _matchedToolCalls = 0;
 
     // Normalize tool name (handle both API format and internal format)
     const isReadTool = (name: string) => name === 'read_file' || name === 'Read';
@@ -458,7 +458,7 @@ export class ContextCompressor {
     const isEditTool = (name: string) => name === 'Edit';
     const isDeleteTool = (name: string) => name === 'DeleteFile';
 
-    const getFilePath = (args: any): string => {
+    const getFilePath = (args: Record<string, unknown>): string => {
       return args.filePath || args.absolute_path || args.path || '';
     };
 
@@ -466,7 +466,7 @@ export class ContextCompressor {
       // Case 1: assistant with tool_calls field
       if (msg.role === 'assistant' && msg.tool_calls) {
         for (const toolCall of msg.tool_calls) {
-          totalToolCalls++;
+          _totalToolCalls++;
           const toolName = toolCall.function?.name || '';
           let args = {};
 
@@ -481,10 +481,10 @@ export class ContextCompressor {
 
           if (isReadTool(toolName)) {
             fileOps.read.add(filePath);
-            matchedToolCalls++;
+            _matchedToolCalls++;
           } else if (isWriteTool(toolName) || isEditTool(toolName) || isDeleteTool(toolName)) {
             fileOps.modified.add(filePath);
-            matchedToolCalls++;
+            _matchedToolCalls++;
           }
         }
       }
@@ -493,7 +493,7 @@ export class ContextCompressor {
       if (msg.role === 'tool' && typeof msg.content === 'string') {
         try {
           const content = JSON.parse(msg.content);
-          totalToolCalls++;
+          _totalToolCalls++;
           const toolName = content.name || '';
           const args = content.parameters || {};
 
@@ -502,10 +502,10 @@ export class ContextCompressor {
 
           if (isReadTool(toolName)) {
             fileOps.read.add(filePath);
-            matchedToolCalls++;
+            _matchedToolCalls++;
           } else if (isWriteTool(toolName) || isEditTool(toolName) || isDeleteTool(toolName)) {
             fileOps.modified.add(filePath);
-            matchedToolCalls++;
+            _matchedToolCalls++;
           }
         } catch {
           // Not JSON, skip
@@ -779,10 +779,10 @@ export class ContextCompressor {
     previousSummary?: string,
     modelName?: string
   ): Promise<CompressionResult> {
-    const cfg = { ...this.defaultConfig, ...config };
+    const _cfg = { ...this.defaultConfig, ...config };
     const originalMessageCount = messages.length;
     const originalSize = messages.reduce((total, msg) => total + msg.content.length, 0);
-    const originalTokens = this.estimateContextTokens(messages);
+    const _originalTokens = this.estimateContextTokens(messages);
     const contextWindow = getModelContextWindow(modelName);
 
     // Check if compression is needed
@@ -932,8 +932,8 @@ export class ContextCompressor {
     }
 
     const compressedSize = compressedMessages.reduce((total, msg) => total + msg.content.length, 0);
-    const compressedTokens = this.estimateContextTokens(compressedMessages);
-    const reductionPercent = Math.round((1 - compressedSize / originalSize) * 100);
+    const _compressedTokens = this.estimateContextTokens(compressedMessages);
+    const _reductionPercent = Math.round((1 - compressedSize / originalSize) * 100);
 
     return {
       compressedMessages,

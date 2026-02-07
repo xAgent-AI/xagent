@@ -2,7 +2,6 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
-import { glob } from 'glob';
 import crypto from 'crypto';
 
 export interface MemoryFile {
@@ -35,7 +34,7 @@ export class MemoryManager {
 
   private getProjectMemoryPath(projectRoot: string): string {
     const hash = crypto.createHash('md5').update(projectRoot).digest('hex').substring(0, 16);
-    const sanitizedName = projectRoot.replace(/[:\\\/]/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '');
+    const sanitizedName = projectRoot.replace(/[:/\\]/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
     const name = sanitizedName.length > 50 ? sanitizedName.substring(0, 50) : sanitizedName;
     return path.join(this.memoriesDir, `project_${name}_${hash}.md`);
   }
@@ -149,7 +148,7 @@ export class MemoryManager {
       }
     };
 
-    let maxIterations = 10;
+    const maxIterations = 10;
     let iterations = 0;
 
     while (importRegex.test(processedContent) && iterations < maxIterations) {
@@ -298,7 +297,7 @@ export class MemoryManager {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
       return JSON.parse(content);
-    } catch (error) {
+    } catch {
       return null;
     }
   }

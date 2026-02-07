@@ -3,13 +3,12 @@ import { select, text } from '@clack/prompts';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'readline';
-import { spawn, ChildProcess } from 'child_process';
+import { spawn } from 'child_process';
 import { glob } from 'glob';
 import axios from 'axios';
 import { Tool, ExecutionMode, AuthType } from './types.js';
 import type { Message, ToolDefinition } from './ai-client/types.js';
-import type { AIClientInterface } from './ai-client-factory.js';
-import { colors, icons, styleHelpers } from './theme.js';
+import { colors, icons } from './theme.js';
 import { getLogger } from './logger.js';
 import { getCancellationManager } from './cancellation.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
@@ -343,7 +342,7 @@ This is useful when working with skills that have local dependencies.
     truncationNotice?: string;
     skillPath?: string;
   }> {
-    const { command, cwd, description, timeout = 120, run_in_bg = false, skillPath } = params;
+    const { command, cwd, _description, timeout = 120, run_in_bg = false, skillPath } = params;
 
     // Determine effective working directory
     // Only use cwd if the command doesn't contain 'cd' (let LLM control directory)
@@ -484,7 +483,7 @@ This is useful when working with skills that have local dependencies.
           output.push(text);
         });
 
-        childProcess.on('close', (code: number) => {
+        childProcess.on('close', (_code: number) => {
           // Silent cleanup - don't log to avoid noise during normal operation
           // Note: On Windows with PowerShell, the shell process exits after
           // the command completes
@@ -515,8 +514,8 @@ This is useful when working with skills that have local dependencies.
         const stdoutResult = truncateTail(result.stdout);
         const stderrResult = truncateTail(result.stderr);
 
-        let stdout = stdoutResult.content;
-        let stderr = stderrResult.content;
+        const stdout = stdoutResult.content;
+        const stderr = stderrResult.content;
         let truncationNotice = '';
 
         if (stdoutResult.truncated) {
@@ -1096,7 +1095,7 @@ edit(
     old_string: string;
     new_string: string;
   }): Promise<{ success: boolean; message: string; diff?: string; firstChangedLine?: number }> {
-    const { file_path, instruction, old_string, new_string } = params;
+    const { file_path, _instruction, old_string, new_string } = params;
 
     try {
       const absolutePath = path.resolve(file_path);
@@ -1735,7 +1734,7 @@ export class TaskTool implements Tool {
         const { getSingletonSession } = await import('./session.js');
         const session = getSingletonSession();
         taskId = session?.getTaskId() || null;
-      } catch (e) {
+      } catch {
         taskId = null;
       }
     }
@@ -2007,7 +2006,7 @@ export class TaskTool implements Tool {
         if (session) {
           remoteAIClient = session.getRemoteAIClient();
         }
-      } catch (e) {
+      } catch {
         // Session not available, keep undefined
         remoteAIClient = undefined;
       }
@@ -2080,7 +2079,7 @@ export class TaskTool implements Tool {
     }
 
     const indent = '  '.repeat(indentLevel);
-    const indentNext = '  '.repeat(indentLevel + 1);
+    const _indentNext = '  '.repeat(indentLevel + 1);
     const agentName = agent.name || subagent_type;
 
     // Track execution history for better reporting to main agent
@@ -2144,7 +2143,7 @@ export class TaskTool implements Tool {
                 }
               }
             }
-          } catch (e) {
+          } catch {
             // Ignore polling errors
           }
         }, 10);
@@ -2176,7 +2175,7 @@ export class TaskTool implements Tool {
       }
     };
 
-    let messages: Message[] = [
+    const messages: Message[] = [
       { role: 'system', content: enhancedSystemPrompt },
       { role: 'user', content: fullPrompt },
     ];
@@ -2307,7 +2306,7 @@ export class TaskTool implements Tool {
           let parsedParams: any;
           try {
             parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
-          } catch (e) {
+          } catch {
             parsedParams = params;
           }
 
@@ -2568,7 +2567,7 @@ export class TaskTool implements Tool {
                 }
               }
             }
-          } catch (e) {
+          } catch {
             // Ignore polling errors
           }
         }, 10);
@@ -2598,7 +2597,7 @@ export class TaskTool implements Tool {
 
     const startTime = Date.now();
 
-    const agentPromises = agents.map(async (agentTask, index) => {
+    const agentPromises = agents.map(async (agentTask, _index) => {
       // Check if cancelled
       if (cancelled || cancellationManager.isOperationCancelled()) {
         return {
@@ -3319,7 +3318,6 @@ export class InvokeSkillTool implements Tool {
 
     try {
       const { getSkillInvoker } = await import('./skill-invoker.js');
-      const { SkillExecutionParams } = (await import('./skill-invoker.js')) as any;
       const skillInvoker = getSkillInvoker();
 
       await skillInvoker.initialize();
@@ -4124,7 +4122,7 @@ export class ToolRegistry {
           };
           break;
 
-        default:
+        default: {
           // For MCP tools, use their inputSchema; for other unknown tools, keep empty schema
           const mcpTool = tool as any;
           if (mcpTool._isMcpTool && mcpTool.inputSchema) {
@@ -4154,6 +4152,7 @@ export class ToolRegistry {
               required: [],
             };
           }
+        }
       }
 
       return {
@@ -4190,11 +4189,11 @@ export class ToolRegistry {
     }
 
     // Try to find MCP tool with just the tool name (try each server)
-    for (const [fullName, tool] of allMcpTools) {
+    for (const [fullName, _tool] of allMcpTools) {
       // Split only on the first __ to preserve underscores in tool names
       const firstUnderscoreIndex = fullName.indexOf('__');
       if (firstUnderscoreIndex === -1) continue;
-      const [serverName, actualToolName] = [
+      const [_serverName, actualToolName] = [
         fullName.substring(0, firstUnderscoreIndex),
         fullName.substring(firstUnderscoreIndex + 2),
       ];
@@ -4352,7 +4351,7 @@ export class ToolRegistry {
 
     // Get server info for display
     const server = mcpManager.getServer(serverName);
-    const serverTools = server?.getToolNames() || [];
+    const _serverTools = server?.getToolNames() || [];
 
     // Display tool call info
     console.log('');

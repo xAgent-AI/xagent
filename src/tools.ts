@@ -342,7 +342,9 @@ This is useful when working with skills that have local dependencies.
     truncationNotice?: string;
     skillPath?: string;
   }> {
-    const { command, cwd, _description, timeout = 120, run_in_bg = false, skillPath } = params;
+    const { command, cwd, description, timeout = 120, run_in_bg = false, skillPath } = params;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    void description;
 
     // Determine effective working directory
     // Only use cwd if the command doesn't contain 'cd' (let LLM control directory)
@@ -1095,7 +1097,9 @@ edit(
     old_string: string;
     new_string: string;
   }): Promise<{ success: boolean; message: string; diff?: string; firstChangedLine?: number }> {
-    const { file_path, _instruction, old_string, new_string } = params;
+    const { file_path, instruction, old_string, new_string } = params;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    void instruction;
 
     try {
       const absolutePath = path.resolve(file_path);

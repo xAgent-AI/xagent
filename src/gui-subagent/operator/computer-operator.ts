@@ -195,7 +195,9 @@ export class ComputerOperator extends Operator {
     inputs: Record<string, any>,
     context: { startX: number; startY: number; screenWidth: number; screenHeight: number; scaleFactor: number }
   ): Promise<'end' | void> {
-    const { startX, startY, screenWidth, screenHeight, _scaleFactor } = context;
+    const { startX, startY, screenWidth, screenHeight, scaleFactor } = context;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    void scaleFactor;
 
     const moveStraightTo = async (x: number, y: number) => {
       await mouse.move(straightTo(new Point(x, y)));

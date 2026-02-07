@@ -2,8 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { getSkillLoader, SkillInfo, SkillLoader } from './skill-loader.js';
-import { _getToolRegistry } from './tools.js';
-import { ExecutionMode, _Tool } from './types.js';
+import { ExecutionMode } from './types.js';
 import { getConfigManager } from './config.js';
 
 // Re-export SkillInfo for other modules

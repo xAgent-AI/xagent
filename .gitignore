@@ -13,8 +13,6 @@ coverage
 # 测试相关
 test-*.ts
 test-*.js
-*.test.ts
-*.test.js
 test-output/
 test-reports/
 

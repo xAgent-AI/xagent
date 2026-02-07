@@ -9,14 +9,12 @@
 import type {
   ScreenContext,
   ScreenshotOutput,
-  _ExecuteParams,
-  _ExecuteOutput,
   PredictionParsed,
 } from '../types/operator.js';
 import type { Operator } from '../operator/base-operator.js';
 import { sleep, asyncRetry } from '../utils.js';
 import { actionParser } from '../action-parser/index.js';
-import { colors, icons, _renderMarkdown } from '../../theme.js';
+import { colors, icons} from '../../theme.js';
 import { getLogger } from '../../logger.js';
 
 /**
@@ -259,6 +257,7 @@ export class GUIAgent<T extends Operator> {
   }
 
   private buildSystemPrompt(): string {
+    /* eslint-disable no-useless-escape */
     return `You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
 
 ## Output Format
@@ -287,6 +286,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 - Write a small plan and finally summarize your next action (with its target element) in one sentence in \`Thought\` part.
 
 `;
+    /* eslint-enable no-useless-escape */
   }
 
 

@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import _fsSync from 'fs';
 import path from 'path';
-import { _fileURLToPath } from 'url';
+import os from 'os';
 import { WorkflowConfig } from './workflow.js';
 import { getConfigManager } from './config.js';
 

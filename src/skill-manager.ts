@@ -8,7 +8,7 @@ import fs from 'fs/promises';
 import os from 'os';
 import _fsSync from 'fs';
 import path from 'path';
-import { _fileURLToPath } from 'url';
+import { fileURLToPath } from 'url';
 import { getConfigManager } from './config.js';
 import { getLogger } from './logger.js';
 

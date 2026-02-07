@@ -18,10 +18,8 @@ import {
   ChatMessage,
   ToolCall,
   AuthType,
-  _AuthConfig,
-  AgentConfig,
-  ToolCallItem,
 } from './types.js';
+import type { AgentConfig, ToolCallItem } from './types.js';
 import { createAIClient, type AIClientInterface } from './ai-client-factory.js';
 import { detectThinkingKeywords, getThinkingTokens } from './ai-client/types.js';
 import { TokenInvalidError } from './ai-client/types.js';
@@ -29,13 +27,13 @@ import { fetchDefaultModels } from './ai-client/providers/remote.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { getToolRegistry } from './tools.js';
-import { getAgentManager, _DEFAULT_AGENTS, AgentManager } from './agents.js';
+import { getAgentManager, AgentManager } from './agents.js';
 import { getMemoryManager, MemoryManager } from './memory.js';
 import { getMCPManager, MCPManager } from './mcp.js';
 import { getCheckpointManager, CheckpointManager } from './checkpoint.js';
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { getSessionManager, SessionManager } from './session-manager.js';
-import { SlashCommandHandler, parseInput, _detectImageInput } from './slash-commands.js';
+import { SlashCommandHandler, parseInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import {
   theme,
@@ -45,7 +43,6 @@ import {
   renderMarkdown,
   renderDiff,
   renderLines,
-  _TERMINAL_BG,
 } from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 import {
@@ -53,7 +50,7 @@ import {
   ContextCompressor,
   CompressionResult,
 } from './context-compressor.js';
-import { _Logger, _LogLevel, getLogger } from './logger.js';
+import { getLogger } from './logger.js';
 import { ensureTtySane, setupEscKeyHandler } from './terminal.js';
 
 // Type aliases for backward compatibility
@@ -2200,7 +2197,7 @@ function _copyDirectoryRecursive(src: string, dest: string): void {
     const destPath = path.join(dest, entry.name);
 
     if (entry.isDirectory()) {
-      copyDirectoryRecursive(srcPath, destPath);
+      _copyDirectoryRecursive(srcPath, destPath);
     } else if (entry.isFile()) {
       fs.copyFileSync(srcPath, destPath);
     }

@@ -364,7 +364,8 @@ export const styleHelpers = {
       const availableWidth = width - 2;
 
       const headerContent = `${colors.primaryBright(agentName)}: ${description}`;
-      const headerContentLength = headerContent.replace(/\033\[[0-9;]*m/g, '').length;
+      // eslint-disable-next-line no-control-regex
+      const headerContentLength = headerContent.replace(/\x1b\[[0-9;]*m/g, '').length;
       const headerFillLength = Math.max(0, availableWidth - 3 - headerContentLength);
       const headerLine = `${indent}${accentColor(chars.topLeft)}${accentColor('─── ')}${headerContent} ${accentColor('─'.repeat(headerFillLength))}${accentColor(chars.topRight)}`;
 

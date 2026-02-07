@@ -459,7 +459,7 @@ export class ContextCompressor {
     const isDeleteTool = (name: string) => name === 'DeleteFile';
 
     const getFilePath = (args: Record<string, unknown>): string => {
-      return args.filePath || args.absolute_path || args.path || '';
+      return (args.filePath as string) || (args.absolute_path as string) || (args.path as string) || '';
     };
 
     for (const msg of messages) {
@@ -468,7 +468,7 @@ export class ContextCompressor {
         for (const toolCall of msg.tool_calls) {
           _totalToolCalls++;
           const toolName = toolCall.function?.name || '';
-          let args = {};
+          let args: Record<string, unknown> = {};
 
           try {
             args = JSON.parse(toolCall.function?.arguments || '{}');

@@ -3,8 +3,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import fs from 'fs/promises';
 import path from 'path';
-import { ExecutionMode, ChatMessage, InputType, _ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
-import { _Message, _detectThinkingKeywords, _getThinkingTokens } from './ai-client/types.js';
+import { ExecutionMode, ChatMessage, InputType, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
 import { fetchDefaultModels } from './ai-client/providers/remote.js';
 import { getToolRegistry } from './tools.js';
 import { getAgentManager } from './agents.js';
@@ -20,7 +19,6 @@ import {
 } from './context-compressor.js';
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
-import { _SystemPromptGenerator } from './system-prompt-generator.js';
 import { ensureTtySane } from './terminal.js';
 import { AuthService, selectAuthType, ThirdPartyProvider, THIRD_PARTY_PROVIDERS, VLM_PROVIDERS, VLMProviderInfo } from './auth.js';
 

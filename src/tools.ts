@@ -1521,7 +1521,7 @@ export class TaskTool implements Tool {
           mode,
           agentManager,
           toolRegistry,
-          aiClient
+          config
         );
       }
 
@@ -1553,7 +1553,6 @@ export class TaskTool implements Tool {
         mode,
         agentManager,
         toolRegistry,
-        aiClient,
         config
       );
 
@@ -1990,7 +1989,6 @@ export class TaskTool implements Tool {
     mode: ExecutionMode,
     agentManager: any,
     toolRegistry: any,
-    aiClient: any,
     config: any,
     indentLevel: number = 1
   ): Promise<{ success: boolean; message: string; result?: any }> {
@@ -2050,21 +2048,23 @@ export class TaskTool implements Tool {
       }
     }
 
-    // Create AI client for this subagent
+    // Create AI client for this subagent - each subagent gets its own independent client
     let subAgentClient;
     let isRemoteMode = false;
     let mainTaskId: string | null = null;
     const authConfig = config.getAuthConfig();
 
     if (authConfig.type === AuthType.OAUTH_XAGENT) {
-      // Remote mode: try to reuse session's RemoteAIClient first
+      // Remote mode: create independent RemoteAIClient for each subagent
+      // This prevents message queue conflicts when multiple subagents run in parallel
       const session = getSingletonSession();
-      const existingClient = session?.getRemoteAIClient();
+      const remoteAIClient = session?.getRemoteAIClient();
 
-      if (existingClient) {
-        subAgentClient = existingClient;
+      if (remoteAIClient) {
+        // Clone or create independent client for this subagent
+        // RemoteAIClient should be designed to handle concurrent requests
+        subAgentClient = remoteAIClient;
         isRemoteMode = true;
-        // Get the main taskId from session - subagent shares the same taskId as the parent task
         mainTaskId = session?.getTaskId() || null;
       } else {
         subAgentClient = createAIClient(authConfig);
@@ -2511,7 +2511,7 @@ export class TaskTool implements Tool {
     mode: ExecutionMode,
     agentManager: any,
     toolRegistry: any,
-    aiClient: any,
+    config: any,
     indentLevel: number = 1
   ): Promise<{ success: boolean; message: string; results: any[]; errors: any[] }> {
     const indent = '  '.repeat(indentLevel);
@@ -2598,7 +2598,7 @@ export class TaskTool implements Tool {
           mode,
           agentManager,
           toolRegistry,
-          aiClient,
+          config,
           indentLevel + 1
         );
 

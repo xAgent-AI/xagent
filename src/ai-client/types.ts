@@ -343,3 +343,22 @@ export class TokenInvalidError extends Error {
     this.name = 'TokenInvalidError';
   }
 }
+
+// ============================================================================
+// Retry Configuration
+// ============================================================================
+
+/**
+ * Default retry configuration for AI providers
+ */
+export const DEFAULT_RETRY_CONFIG = {
+  maxRetries: 3,
+  baseDelay: 1000,
+  maxDelay: 60000,
+  maxTotalTime: 1200000,  // 20分钟
+  jitter: true,
+  retryOnTimeout: true,
+  retryOn5xx: true,
+  retryOn429: true,
+  backoffMultiplier: 2,
+} as const;

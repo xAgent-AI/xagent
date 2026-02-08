@@ -11,6 +11,8 @@ import type {
   Model,
   RemoteModelsResponse,
 } from '../types';
+import { DEFAULT_RETRY_CONFIG } from '../types.js';
+import { withRetry, RetryConfig } from '../../retry.js';
 
 // ============================================================================
 // Remote Provider (xAgent Web Service)
@@ -115,7 +117,9 @@ export class RemoteProvider implements AIProvider {
       },
     };
 
-    try {
+    const retryConfig: RetryConfig = { ...DEFAULT_RETRY_CONFIG };
+
+    const result = await withRetry(async () => {
       const response = await this.client.post(
         `${this.agentApi}/chat`,
         requestBody,
@@ -130,7 +134,7 @@ export class RemoteProvider implements AIProvider {
         this.debugResponse(data);
       }
 
-      return {
+      const completionResponse: CompletionResponse = {
         id: data?.id || `remote-${Date.now()}`,
         object: 'chat.completion',
         created: Date.now(),
@@ -147,9 +151,13 @@ export class RemoteProvider implements AIProvider {
         }],
         usage: undefined,
       };
-    } catch (error: any) {
-      throw this.handleError(error);
+      return completionResponse;
+    }, retryConfig);
+
+    if (result.success) {
+      return result.data!;
     }
+    throw result.error || new Error('Remote API request failed after retries');
   }
 
   /**

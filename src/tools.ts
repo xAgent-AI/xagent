@@ -2203,9 +2203,10 @@ export class TaskTool implements Tool {
     });
 
     let iteration = 0;
-    const maxIterations = 10;
+    let lastContentStr = ''; // Track last content for final result
 
-    while (iteration < maxIterations) {
+    // Main agent style loop: continue until AI returns no more tool_calls
+    while (true) {
       iteration++;
 
       // Check for cancellation before each iteration
@@ -2477,36 +2478,12 @@ export class TaskTool implements Tool {
         continue; // Continue to next iteration to get final response
       }
 
-      // No more tool calls, return the result with execution history
-      cancellationManager.off('cancelled', cancelHandler);
-      cleanupStdinPolling();
-
-      const summaryPreview =
-        contentStr.length > 300 ? contentStr.substring(0, 300) + '...' : contentStr;
-      return {
-        success: true,
-        message: `Task "${description}" completed by ${subagent_type}`,
-        result: {
-          summary: summaryPreview,
-          executionHistory: {
-            totalIterations: iteration,
-            toolsExecuted: executionHistory.length,
-            successfulTools: executionHistory.filter((t) => t.status === 'success').length,
-            failedTools: executionHistory.filter((t) => t.status === 'error').length,
-            history: executionHistory,
-          },
-        },
-      };
+      // No more tool calls - break loop (same as main agent)
+      lastContentStr = contentStr || '';
+      break;
     }
 
-    // Max iterations reached - return accumulated results instead of throwing error
-    // Get the last assistant message content
-    const lastAssistantMsg = messages.filter((m) => m.role === 'assistant').pop();
-    const lastContentStr =
-      typeof lastAssistantMsg?.content === 'string'
-        ? lastAssistantMsg.content
-        : JSON.stringify(lastAssistantMsg?.content || '');
-
+    // Loop ended - return result (same as main agent pattern)
     cancellationManager.off('cancelled', cancelHandler);
     cleanupStdinPolling();
 
@@ -2514,7 +2491,7 @@ export class TaskTool implements Tool {
       lastContentStr.length > 300 ? lastContentStr.substring(0, 300) + '...' : lastContentStr;
     return {
       success: true,
-      message: `Task "${description}" completed (max iterations reached) by ${subagent_type}`,
+      message: `Task "${description}" completed by ${subagent_type}`,
       result: {
         summary: summaryPreview,
         executionHistory: {
@@ -2523,7 +2500,6 @@ export class TaskTool implements Tool {
           successfulTools: executionHistory.filter((t) => t.status === 'success').length,
           failedTools: executionHistory.filter((t) => t.status === 'error').length,
           history: executionHistory,
-          maxIterationsReached: true,
         },
       },
     };

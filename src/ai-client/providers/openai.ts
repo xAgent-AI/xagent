@@ -9,7 +9,9 @@ import type {
   StreamEvent,
   Model,
 } from '../types';
+import { DEFAULT_RETRY_CONFIG } from '../types.js';
 import { getLogger } from '../../logger.js';
+import { withRetry, RetryConfig } from '../../retry.js';
 
 const logger = getLogger();
 
@@ -92,14 +94,19 @@ export class OpenAIProvider implements AIProvider {
       this.debugRequest('OpenAI', model, messages);
     }
 
-    try {
+    const retryConfig: RetryConfig = { ...DEFAULT_RETRY_CONFIG };
+
+    const result = await withRetry(async () => {
       const response = await this.client.post('/chat/completions', requestBody, {
         signal: options?.signal,
       });
       return this.convertResponse(response.data, model);
-    } catch (error) {
-      throw this.handleError(error);
+    }, retryConfig);
+
+    if (result.success) {
+      return result.data!;
     }
+    throw result.error || new Error('OpenAI API request failed after retries');
   }
 
   /**

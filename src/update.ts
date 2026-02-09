@@ -37,7 +37,7 @@ export class UpdateManager {
         latestVersion,
         updateAvailable,
         releaseNotes: response.data.versions[latestVersion]?.description,
-        downloadUrl: `https://www.npmjs.com/package/@xagent-ai/xagent-cli/v/${latestVersion}`,
+        downloadUrl: `https://www.npmjs.com/package/@xagent-ai/cli/v/${latestVersion}`,
       };
 
       return versionInfo;
@@ -120,7 +120,7 @@ export class UpdateManager {
     try {
       console.log('Updating xAgent CLI...');
 
-      await execAsync('npm install -g @xagent-ai/xagent-cli@latest', {
+      await execAsync('npm install -g @xagent-ai/cli@latest', {
         timeout: 120000,
       });
 
@@ -135,8 +135,8 @@ export class UpdateManager {
 
       if (tryManual === true) {
         console.log('\nManual update instructions:');
-        console.log('1. Run: npm uninstall -g @xagent-ai/xagent-cli');
-        console.log('2. Run: npm install -g @xagent-ai/xagent-cli@latest');
+        console.log('1. Run: npm uninstall -g @xagent-ai/cli');
+        console.log('2. Run: npm install -g @xagent-ai/cli@latest');
         console.log('3. Restart: xagent\n');
       }
 
@@ -150,7 +150,7 @@ export class UpdateManager {
     if (versionInfo.updateAvailable) {
       console.log(`\n📦 A new version is available: ${versionInfo.latestVersion}`);
       console.log(`Current version: ${versionInfo.currentVersion}`);
-      console.log(`Update with: npm install -g @xagent-ai/xagent-cli@latest\n`);
+      console.log(`Update with: npm install -g @xagent-ai/cli@latest\n`);
     }
   }
 

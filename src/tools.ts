@@ -1510,7 +1510,9 @@ export class TaskTool implements Tool {
       const config = getConfigManager();
 
       const authConfig = config.getAuthConfig();
-      const aiClient = createAIClient(authConfig);
+      // aiClient is created for future use when executeParallelAgents supports it
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const _aiClient = createAIClient(authConfig);
 
       const toolRegistry = getToolRegistry();
 
@@ -2206,6 +2208,7 @@ export class TaskTool implements Tool {
     let lastContentStr = ''; // Track last content for final result
 
     // Main agent style loop: continue until AI returns no more tool_calls
+    // eslint-disable-next-line no-constant-condition
     while (true) {
       iteration++;
 

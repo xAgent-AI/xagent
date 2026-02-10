@@ -1588,6 +1588,9 @@ export class InteractiveSession {
       }, 120);
     }
 
+    let content = '';
+    let reasoningContent = '';
+
     try {
       const memory = await this.memoryManager.loadMemory();
       const toolRegistry = getToolRegistry();
@@ -1643,8 +1646,8 @@ export class InteractiveSession {
 
       const assistantMessage = response.choices[0].message;
 
-      const content = typeof assistantMessage.content === 'string' ? assistantMessage.content : '';
-      const reasoningContent = assistantMessage.reasoning_content || '';
+      content = typeof assistantMessage.content === 'string' ? assistantMessage.content : '';
+      reasoningContent = assistantMessage.reasoning_content || '';
       // Display reasoning content if available and thinking mode is enabled
       if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
         this.displayThinkingContent(reasoningContent);
@@ -1684,27 +1687,20 @@ export class InteractiveSession {
         );
       }
 
-      // Operation completed successfully, clear the flag
-      (this as any)._isOperationInProgress = false;
-
-      // Signal request completion to SDK
+      // Signal request completion to SDK (no tools to execute)
       if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
         this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, 'success');
         this._currentRequestId = null;
       }
+
+      // Operation completed successfully, clear the flag
+      (this as any)._isOperationInProgress = false;
     } catch (error: any) {
       if (spinnerInterval) clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
 
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
-
-      // Signal request completion to SDK with error status
-      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
-        const status = error.message === 'Operation cancelled by user' ? 'cancelled' : 'error';
-        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, status);
-        this._currentRequestId = null;
-      }
 
       if (error.message === 'Operation cancelled by user') {
         // Notify backend to cancel the task
@@ -1774,13 +1770,6 @@ export class InteractiveSession {
     } catch (error: any) {
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
-
-      // Signal request completion to SDK with error status
-      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
-        const status = error.message === 'Operation cancelled by user' ? 'cancelled' : 'error';
-        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, status);
-        this._currentRequestId = null;
-      }
 
       if (error.message === 'Operation cancelled by user') {
         // Notify backend to cancel the task
@@ -1891,13 +1880,19 @@ export class InteractiveSession {
 
     // Display all tool calls info
     for (const { name, params } of preparedToolCalls) {
-      if (showToolDetails) {
-        console.log('');
-        console.log(`${indent}${colors.warning(`${icons.tool} Tool Call: ${name}`)}`);
-        console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
+      // SDK mode: use adapter output
+      if (this.isSdkMode && this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputToolStart(name, params);
       } else {
-        const toolDescription = this.getToolDescription(name, params);
-        console.log(`${indent}${colors.textMuted(`${icons.loading} ${toolDescription}`)}`);
+        // Normal mode: console output
+        if (showToolDetails) {
+          console.log('');
+          console.log(`${indent}${colors.warning(`${icons.tool} Tool Call: ${name}`)}`);
+          console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
+        } else {
+          const toolDescription = this.getToolDescription(name, params);
+          console.log(`${indent}${colors.textMuted(`${icons.loading} ${toolDescription}`)}`);
+        }
       }
     }
 
@@ -1948,8 +1943,14 @@ export class InteractiveSession {
 
         _hasError = true;
 
-        console.log('');
-        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${tool} - ${error}`)}`);
+        // SDK mode: use adapter output
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputToolError(tool, error);
+        } else {
+          // Normal mode: console output
+          console.log('');
+          console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${tool} - ${error}`)}`);
+        }
 
         // Add detailed error info including tool name and params for AI understanding and correction
         this.conversation.push({
@@ -1963,200 +1964,208 @@ export class InteractiveSession {
           timestamp: Date.now(),
         });
       } else {
+        // SDK mode: output tool result via adapter
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputToolResult(tool, result);
+        }
+
         // Use correct indent for gui-subagent tasks
         const isGuiSubagent = tool === 'task' && params?.subagent_type === 'gui-subagent';
         const displayIndent = isGuiSubagent ? indent + '  ' : indent;
 
-        // Always show details for todo tools so users can see their task lists
-        const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
+        // Normal mode: console output (SDK mode already output via adapter above)
+        if (!this.isSdkMode || !this.sdkOutputAdapter) {
+          // Always show details for todo tools so users can see their task lists
+          const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
 
-        // Special handling for edit tool with diff
-        const isEditTool = tool === 'Edit';
-        const hasDiff = isEditTool && result?.diff;
+          // Special handling for edit tool with diff
+          const isEditTool = tool === 'Edit';
+          const hasDiff = isEditTool && result?.diff;
 
-        // Special handling for Write tool with file preview
-        const isWriteTool = tool === 'Write';
-        const hasFilePreview = isWriteTool && result?.preview;
+          // Special handling for Write tool with file preview
+          const isWriteTool = tool === 'Write';
+          const hasFilePreview = isWriteTool && result?.preview;
 
-        // Special handling for DeleteFile tool
-        const isDeleteTool = tool === 'DeleteFile';
-        const hasDeleteInfo = isDeleteTool && result?.filePath;
+          // Special handling for DeleteFile tool
+          const isDeleteTool = tool === 'DeleteFile';
+          const hasDeleteInfo = isDeleteTool && result?.filePath;
 
-        // Special handling for task tool (subagent)
-        const isTaskTool = tool === 'task' && params?.subagent_type;
+          // Special handling for task tool (subagent)
+          const isTaskTool = tool === 'task' && params?.subagent_type;
 
-        // Check if tool is an MCP wrapper tool by looking up in tool registry
-        const { getToolRegistry } = await import('./tools.js');
-        const toolRegistry = getToolRegistry();
-        const toolDef = toolRegistry.get(tool);
-        const isMcpTool = toolDef && (toolDef as any)._isMcpTool === true;
+          // Check if tool is an MCP wrapper tool by looking up in tool registry
+          const { getToolRegistry } = await import('./tools.js');
+          const toolRegistry = getToolRegistry();
+          const toolDef = toolRegistry.get(tool);
+          const isMcpTool = toolDef && (toolDef as any)._isMcpTool === true;
 
-        if (isTodoTool) {
-          console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
-          console.log(this.renderTodoList(result?.todos || [], displayIndent));
-          // Show summary if available
-          if (result?.message) {
-            console.log(`${displayIndent}${colors.textDim(result.message)}`);
-          }
-        } else if (hasDiff) {
-          // Show edit result with diff
-          console.log('');
-          const diffOutput = renderDiff(result.diff);
-          const indentedDiff = diffOutput
-            .split('\n')
-            .map((line) => `${displayIndent}  ${line}`)
-            .join('\n');
-          console.log(`${indentedDiff}`);
-        } else if (hasFilePreview) {
-          // Show new file content in diff-like style
-          console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.file} ${result.filePath}`)}`);
-          console.log(`${displayIndent}${colors.textDim(`  ${result.lineCount} lines`)}`);
-          console.log('');
-          console.log(renderLines(result.preview, { maxLines: 10, indent: displayIndent + '  ' }));
-        } else if (hasDeleteInfo) {
-          // Show DeleteFile result
-          console.log('');
-          console.log(
-            `${displayIndent}${colors.success(`${icons.check} Deleted: ${result.filePath}`)}`
-          );
-        } else if (isTaskTool) {
-          // Special handling for task tool (subagent) - show friendly summary
-          console.log('');
-          const subagentType = params.subagent_type;
-          const subagentName =
-            params.description ||
-            (params.prompt ? params.prompt.substring(0, 50).replace(/\n/g, ' ') : 'Unknown task');
-
-          if (result?.success) {
-            console.log(
-              `${displayIndent}${colors.success(`${icons.check} ${subagentType}: Completed`)}`
-            );
-            console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
-            if (result.message) {
-              console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
-            }
-          } else if (result?.cancelled) {
-            console.log(
-              `${displayIndent}${colors.warning(`${icons.cross} ${subagentType}: Cancelled`)}`
-            );
-            console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
-          } else {
-            console.log(
-              `${displayIndent}${colors.error(`${icons.cross} ${subagentType}: Failed`)}`
-            );
-            console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+          if (isTodoTool) {
+            console.log('');
+            console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
+            console.log(this.renderTodoList(result?.todos || [], displayIndent));
+            // Show summary if available
             if (result?.message) {
-              console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+              console.log(`${displayIndent}${colors.textDim(result.message)}`);
             }
-          }
-        } else if (isMcpTool) {
-          // Special handling for MCP tools - show friendly summary
-          console.log('');
-          // Extract server name and tool name from tool name (format: serverName__toolName)
-          let serverName = 'MCP';
-          let toolDisplayName = tool;
-          if (tool.includes('__')) {
-            const parts = tool.split('__');
-            serverName = parts[0];
-            toolDisplayName = parts.slice(1).join('__');
-          }
+          } else if (hasDiff) {
+            // Show edit result with diff
+            console.log('');
+            const diffOutput = renderDiff(result.diff);
+            const indentedDiff = diffOutput
+              .split('\n')
+              .map((line) => `${displayIndent}  ${line}`)
+              .join('\n');
+            console.log(`${indentedDiff}`);
+          } else if (hasFilePreview) {
+            // Show new file content in diff-like style
+            console.log('');
+            console.log(`${displayIndent}${colors.success(`${icons.file} ${result.filePath}`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  ${result.lineCount} lines`)}`);
+            console.log('');
+            console.log(renderLines(result.preview, { maxLines: 10, indent: displayIndent + '  ' }));
+          } else if (hasDeleteInfo) {
+            // Show DeleteFile result
+            console.log('');
+            console.log(
+              `${displayIndent}${colors.success(`${icons.check} Deleted: ${result.filePath}`)}`
+            );
+          } else if (isTaskTool) {
+            // Special handling for task tool (subagent) - show friendly summary
+            console.log('');
+            const subagentType = params.subagent_type;
+            const subagentName =
+              params.description ||
+              (params.prompt ? params.prompt.substring(0, 50).replace(/\n/g, ' ') : 'Unknown task');
 
-          // Try to extract meaningful content from MCP result
-          let summary = '';
-          if (result?.content && Array.isArray(result.content) && result.content.length > 0) {
-            const firstBlock = result.content[0];
-            if (firstBlock?.type === 'text' && firstBlock?.text) {
-              const text = firstBlock.text;
-              if (typeof text === 'string') {
-                // Detect HTML content
-                if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
-                  summary = '[HTML content fetched]';
-                } else {
-                  // Try to parse if it's JSON
-                  try {
-                    const parsed = JSON.parse(text);
-                    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.title) {
-                      // Search results format
-                      summary = `Found ${parsed.length} result(s)`;
-                    } else if (parsed?.message) {
-                      summary = parsed.message;
-                    } else if (typeof parsed === 'string') {
-                      summary = parsed.substring(0, 100);
+            if (result?.success) {
+              console.log(
+                `${displayIndent}${colors.success(`${icons.check} ${subagentType}: Completed`)}`
+              );
+              console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+              if (result.message) {
+                console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+              }
+            } else if (result?.cancelled) {
+              console.log(
+                `${displayIndent}${colors.warning(`${icons.cross} ${subagentType}: Cancelled`)}`
+              );
+              console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+            } else {
+              console.log(
+                `${displayIndent}${colors.error(`${icons.cross} ${subagentType}: Failed`)}`
+              );
+              console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+              if (result?.message) {
+                console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+              }
+            }
+          } else if (isMcpTool) {
+            // Special handling for MCP tools - show friendly summary
+            console.log('');
+            // Extract server name and tool name from tool name (format: serverName__toolName)
+            let serverName = 'MCP';
+            let toolDisplayName = tool;
+            if (tool.includes('__')) {
+              const parts = tool.split('__');
+              serverName = parts[0];
+              toolDisplayName = parts.slice(1).join('__');
+            }
+
+            // Try to extract meaningful content from MCP result
+            let summary = '';
+            if (result?.content && Array.isArray(result.content) && result.content.length > 0) {
+              const firstBlock = result.content[0];
+              if (firstBlock?.type === 'text' && firstBlock?.text) {
+                const text = firstBlock.text;
+                if (typeof text === 'string') {
+                  // Detect HTML content
+                  if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+                    summary = '[HTML content fetched]';
+                  } else {
+                    // Try to parse if it's JSON
+                    try {
+                      const parsed = JSON.parse(text);
+                      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.title) {
+                        // Search results format
+                        summary = `Found ${parsed.length} result(s)`;
+                      } else if (parsed?.message) {
+                        summary = parsed.message;
+                      } else if (typeof parsed === 'string') {
+                        summary = parsed.substring(0, 100);
+                      }
+                    } catch {
+                      // Not JSON, use as-is with truncation
+                      summary = text.substring(0, 100);
                     }
-                  } catch {
-                    // Not JSON, use as-is with truncation
-                    summary = text.substring(0, 100);
                   }
                 }
               }
+            } else if (result?.message) {
+              summary = result.message;
             }
-          } else if (result?.message) {
-            summary = result.message;
-          }
 
-          if (result?.success !== false) {
-            console.log(
-              `${displayIndent}${colors.success(`${icons.check} ${serverName}: Success`)}`
-            );
-            console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
-            if (summary) {
-              console.log(`${displayIndent}${colors.textDim(`  ${summary}`)}`);
-            }
-          } else {
-            console.log(`${displayIndent}${colors.error(`${icons.cross} ${serverName}: Failed`)}`);
-            console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
-            if (result?.message || result?.error) {
+            if (result?.success !== false) {
               console.log(
-                `${displayIndent}${colors.textDim(`  ${result?.message || result?.error}`)}`
+                `${displayIndent}${colors.success(`${icons.check} ${serverName}: Success`)}`
               );
+              console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
+              if (summary) {
+                console.log(`${displayIndent}${colors.textDim(`  ${summary}`)}`);
+              }
+            } else {
+              console.log(`${displayIndent}${colors.error(`${icons.cross} ${serverName}: Failed`)}`);
+              console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
+              if (result?.message || result?.error) {
+                console.log(
+                  `${displayIndent}${colors.textDim(`  ${result?.message || result?.error}`)}`
+                );
+              }
             }
-          }
-        } else if (tool === 'InvokeSkill') {
-          // Special handling for InvokeSkill - show friendly summary
-          console.log('');
-          const skillName = params?.skillId || 'Unknown skill';
-          const taskDesc = params?.taskDescription || '';
+          } else if (tool === 'InvokeSkill') {
+            // Special handling for InvokeSkill - show friendly summary
+            console.log('');
+            const skillName = params?.skillId || 'Unknown skill';
+            const taskDesc = params?.taskDescription || '';
 
-          if (result?.success) {
-            console.log(`${displayIndent}${colors.success(`${icons.check} Skill: Completed`)}`);
-            console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
-            if (taskDesc) {
-              const truncatedTask =
-                taskDesc.length > 60 ? taskDesc.substring(0, 60) + '...' : taskDesc;
-              console.log(`${displayIndent}${colors.textDim(`  Task: ${truncatedTask}`)}`);
+            if (result?.success) {
+              console.log(`${displayIndent}${colors.success(`${icons.check} Skill: Completed`)}`);
+              console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
+              if (taskDesc) {
+                const truncatedTask =
+                  taskDesc.length > 60 ? taskDesc.substring(0, 60) + '...' : taskDesc;
+                console.log(`${displayIndent}${colors.textDim(`  Task: ${truncatedTask}`)}`);
+              }
+            } else {
+              console.log(`${displayIndent}${colors.error(`${icons.cross} Skill: Failed`)}`);
+              console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
+              if (result?.message) {
+                console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+              }
             }
+          } else if (showToolDetails) {
+            console.log('');
+            console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
+            console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
+          } else if (result && result.success === false) {
+            // GUI task or other tool failed
+            console.log(
+              `${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`
+            );
+          } else if (result) {
+            // Show brief preview by default (consistent with subagent behavior)
+            const resultPreview =
+              typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+            const truncatedPreview =
+              resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
+            // Indent the preview
+            const indentedPreview = truncatedPreview
+              .split('\n')
+              .map((line) => `${displayIndent}  ${line}`)
+              .join('\n');
+            console.log(`${indentedPreview}`);
           } else {
-            console.log(`${displayIndent}${colors.error(`${icons.cross} Skill: Failed`)}`);
-            console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
-            if (result?.message) {
-              console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
-            }
+            console.log(`${displayIndent}${colors.textDim('(no result)')}`);
           }
-        } else if (showToolDetails) {
-          console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
-          console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
-        } else if (result && result.success === false) {
-          // GUI task or other tool failed
-          console.log(
-            `${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`
-          );
-        } else if (result) {
-          // Show brief preview by default (consistent with subagent behavior)
-          const resultPreview =
-            typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-          const truncatedPreview =
-            resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
-          // Indent the preview
-          const indentedPreview = truncatedPreview
-            .split('\n')
-            .map((line) => `${displayIndent}  ${line}`)
-            .join('\n');
-          console.log(`${indentedPreview}`);
-        } else {
-          console.log(`${displayIndent}${colors.textDim('(no result)')}`);
         }
 
         const toolCallRecord: ToolCall = {
@@ -2189,6 +2198,8 @@ export class InteractiveSession {
       }
     }
 
+    const errorOccurredInLoop = _hasError;
+
     // Logic: Only skip returning results to main agent when user explicitly cancelled (ESC)
     // For all other cases (success, failure, errors), always return results for further processing
     const guiSubagentCancelled = preparedToolCalls.some(
@@ -2202,20 +2213,7 @@ export class InteractiveSession {
     // This avoids wasting API calls and tokens on cancelled tasks
     if (guiSubagentCancelled) {
       (this as any)._isOperationInProgress = false;
-
-      // Signal request completion to SDK (cancelled)
-      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
-        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, 'cancelled');
-        this._currentRequestId = null;
-      }
       return;
-    }
-
-    // Signal request completion to SDK (success after all tools)
-    if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
-      const status = _hasError ? 'error' : 'success';
-      this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, status);
-      this._currentRequestId = null;
     }
 
     // Continue based on mode - unified handling for both success and error cases

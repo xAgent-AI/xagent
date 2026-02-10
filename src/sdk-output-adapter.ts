@@ -10,7 +10,7 @@
 import { ChatMessage, SessionInput, SessionOutput } from './types.js';
 
 // GUI Agent types (re-exported for SDK usage)
-export type GUIAgentStatus = 'init' | 'running' | 'paused' | 'end' | 'error' | 'user_stopped' | 'call_user';
+export type GUIAgentStatus = 'init' | 'running' | 'paused' | 'end' | 'error' | 'user_stopped' | 'call_llm';
 
 export interface GUIAgentOutput {
   type: 'status' | 'conversation' | 'action' | 'screenshot' | 'error' | 'complete';

@@ -1700,11 +1700,29 @@ export class TaskTool implements Tool {
   ): Promise<{ success: boolean; cancelled?: boolean; message: string; result?: any }> {
     const indent = '  '.repeat(indentLevel);
 
-    console.log(`${indent}${colors.primaryBright(`${icons.robot} GUI Agent`)}: ${description}`);
-    console.log(
-      `${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`
-    );
-    console.log('');
+    // Get SDK adapter from session for SDK mode output
+    let sdkOutputAdapter: any = null;
+    let isSdkMode = false;
+    try {
+      const { getSingletonSession } = await import('./session.js');
+      const session = getSingletonSession();
+      if (session) {
+        isSdkMode = (session as any).isSdkMode;
+        sdkOutputAdapter = (session as any).sdkOutputAdapter;
+      }
+    } catch {
+      // Session not available
+    }
+
+    // SDK mode: use adapter output (guiAgent.run() handles SDK output internally)
+    // Only output console messages in non-SDK mode
+    if (!isSdkMode) {
+      console.log(`${indent}${colors.primaryBright(`${icons.robot} GUI Agent`)}: ${description}`);
+      console.log(
+        `${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`
+      );
+      console.log('');
+    }
 
     // Get VLM configuration for local mode
     // NOTE: guiSubagentBaseUrl must be explicitly configured, NOT fallback to baseUrl
@@ -1717,18 +1735,30 @@ export class TaskTool implements Tool {
 
     // Log mode information
     if (isRemoteMode) {
-      console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
-    } else {
-      console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
-      // Local mode requires explicit VLM configuration
-      if (!baseUrl || !apiKey || !modelName) {
-        return {
-          success: false,
-          message: `GUI task "${description}" failed: VLM not configured. Please run /model to configure Vision-Language Model first.`,
-        };
+      if (isSdkMode && sdkOutputAdapter) {
+        // SDK mode: use adapter output
+        sdkOutputAdapter.outputInfo('Using remote VLM service');
+      } else {
+        // Normal mode: console output
+        console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
       }
-      console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
-      console.log(`${indent}${colors.textMuted(`  Base URL: ${baseUrl}`)}`);
+    } else {
+      if (isSdkMode && sdkOutputAdapter) {
+        // SDK mode: use adapter output
+        sdkOutputAdapter.outputInfo('Using local VLM configuration');
+      } else {
+        // Normal mode: console output
+        console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
+        // Local mode requires explicit VLM configuration
+        if (!baseUrl || !apiKey || !modelName) {
+          return {
+            success: false,
+            message: `GUI task "${description}" failed: VLM not configured. Please run /model to configure Vision-Language Model first.`,
+          };
+        }
+        console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
+        console.log(`${indent}${colors.textMuted(`  Base URL: ${baseUrl}`)}`);
+      }
     }
     console.log('');
 
@@ -1835,6 +1865,7 @@ export class TaskTool implements Tool {
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
         indentLevel: indentLevel,
+        sdkOutputAdapter: isSdkMode ? sdkOutputAdapter : null,
       });
 
       // Add constraints to prompt if any
@@ -1877,9 +1908,15 @@ export class TaskTool implements Tool {
         const iterations = conversationsWithoutScreenshots.filter(
           (c: any) => c.from === 'human' && c.screenshotContext
         ).length;
-        console.log(
-          `${indent}${colors.success(`${icons.check} GUI task completed in ${iterations} iterations`)}`
-        );
+        // SDK mode: use adapter output
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputGUIAgentComplete(description, iterations);
+        } else {
+          // Normal mode: console output
+          console.log(
+            `${indent}${colors.success(`${icons.check} GUI task completed in ${iterations} iterations`)}`
+          );
+        }
         return {
           success: true,
           message: `GUI task "${description}" completed`,
@@ -1894,10 +1931,17 @@ export class TaskTool implements Tool {
           },
         };
       } else if (result.status === 'call_llm') {
-        // Empty action or needs LLM decision - return to main agent with full context
-        console.log(
-          `${indent}${colors.warning(`${icons.warning} GUI agent returned to main agent for LLM decision`)}`
-        );
+        // SDK mode: use adapter output
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputGUIAgentStatus('call_llm', conversationsWithoutScreenshots.filter(
+            (c: any) => c.from === 'human' && c.screenshotContext
+          ).length);
+        } else {
+          // Normal mode: console output
+          console.log(
+            `${indent}${colors.warning(`${icons.warning} GUI agent returned to main agent for LLM decision`)}`
+          );
+        }
         return {
           success: true,
           message: `GUI task "${description}" returned for LLM decision`,
@@ -1914,6 +1958,10 @@ export class TaskTool implements Tool {
           },
         };
       } else if (result.status === 'user_stopped') {
+        // SDK mode: use adapter output
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputGUIAgentCancelled(description);
+        }
         return {
           success: true,
           message: `GUI task "${description}" stopped by user`,
@@ -1932,6 +1980,10 @@ export class TaskTool implements Tool {
       } else {
         // status is 'error' or other non-success status
         const errorMsg = result.error || 'Unknown error';
+        // SDK mode: use adapter output
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputGUIAgentError(description, errorMsg);
+        }
         return {
           success: false,
           message: `GUI task "${description}" failed: ${errorMsg}`,
@@ -1958,6 +2010,10 @@ export class TaskTool implements Tool {
       // If the user cancelled the task, ignore any API errors (like 429)
       // and return cancelled status instead
       if (cancelled || cancellationManager.isOperationCancelled()) {
+        // SDK mode: use adapter output
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputGUIAgentCancelled(description);
+        }
         return {
           success: true,
           cancelled: true, // Mark as cancelled so main agent won't continue
@@ -1967,6 +2023,10 @@ export class TaskTool implements Tool {
       }
 
       if (error.message === 'Operation cancelled by user') {
+        // SDK mode: use adapter output
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputGUIAgentCancelled(description);
+        }
         return {
           success: true,
           message: `GUI task "${description}" cancelled by user`,
@@ -1975,6 +2035,10 @@ export class TaskTool implements Tool {
       }
 
       // Return failure without throwing - let the main agent handle it
+      // SDK mode: use adapter output
+      if (isSdkMode && sdkOutputAdapter) {
+        sdkOutputAdapter.outputGUIAgentError(description, error.message);
+      }
       return {
         success: false,
         message: `GUI task "${description}" failed: ${error.message}`,

@@ -21,6 +21,7 @@ import { GUIAgent, type GUIAgentConfig, type GUIAgentData, type Conversation, GU
 import type { Operator } from './operator/base-operator.js';
 import type { RemoteVlmCaller } from './agent/gui-agent.js';
 import { getCancellationManager } from '../cancellation.js';
+import { SdkOutputAdapter } from '../sdk-output-adapter.js';
 
 /**
  * GUI Subagent configuration
@@ -56,6 +57,11 @@ export interface GUISubAgentConfig {
   maxLoopCount?: number;
   showAIDebugInfo?: boolean;
   indentLevel?: number;
+  /**
+   * SDK output adapter for SDK mode output
+   * When provided, GUI Agent will use it to output status and progress in SDK format
+   */
+  sdkOutputAdapter?: SdkOutputAdapter | null;
 }
 
 /**
@@ -73,6 +79,7 @@ export const DEFAULT_GUI_CONFIG = {
   maxLoopCount: 100,
   showAIDebugInfo: false,
   indentLevel: 1,
+  sdkOutputAdapter: null,
 };
 
 /**
@@ -116,6 +123,7 @@ export async function createGUISubAgent<T extends Operator>(
     showAIDebugInfo: mergedConfig.showAIDebugInfo,
     indentLevel: mergedConfig.indentLevel,
     signal: abortController.signal,
+    sdkOutputAdapter: mergedConfig.sdkOutputAdapter ?? null,
   };
 
   const agent = new GUIAgent<T>(agentConfig);

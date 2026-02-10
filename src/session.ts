@@ -1686,12 +1686,25 @@ export class InteractiveSession {
 
       // Operation completed successfully, clear the flag
       (this as any)._isOperationInProgress = false;
+
+      // Signal request completion to SDK
+      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
+        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, 'success');
+        this._currentRequestId = null;
+      }
     } catch (error: any) {
       if (spinnerInterval) clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
 
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
+
+      // Signal request completion to SDK with error status
+      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
+        const status = error.message === 'Operation cancelled by user' ? 'cancelled' : 'error';
+        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, status);
+        this._currentRequestId = null;
+      }
 
       if (error.message === 'Operation cancelled by user') {
         // Notify backend to cancel the task
@@ -1761,6 +1774,13 @@ export class InteractiveSession {
     } catch (error: any) {
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
+
+      // Signal request completion to SDK with error status
+      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
+        const status = error.message === 'Operation cancelled by user' ? 'cancelled' : 'error';
+        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, status);
+        this._currentRequestId = null;
+      }
 
       if (error.message === 'Operation cancelled by user') {
         // Notify backend to cancel the task
@@ -2182,7 +2202,20 @@ export class InteractiveSession {
     // This avoids wasting API calls and tokens on cancelled tasks
     if (guiSubagentCancelled) {
       (this as any)._isOperationInProgress = false;
+
+      // Signal request completion to SDK (cancelled)
+      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
+        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, 'cancelled');
+        this._currentRequestId = null;
+      }
       return;
+    }
+
+    // Signal request completion to SDK (success after all tools)
+    if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
+      const status = _hasError ? 'error' : 'success';
+      this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, status);
+      this._currentRequestId = null;
     }
 
     // Continue based on mode - unified handling for both success and error cases

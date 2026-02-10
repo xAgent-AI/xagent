@@ -720,22 +720,6 @@ export class InteractiveSession {
   }
 
   /**
-   * Handle SDK ping messages (heartbeat)
-   */
-  async handlePing(): Promise<void> {
-    // Reset activity timestamp on ping (heartbeat activity)
-    this.resetHeartbeatTimeout();
-
-    // Output ping received message for debugging
-    this.sdkOutputAdapter?.output({
-      type: 'system',
-      subtype: 'ping',
-      timestamp: Date.now(),
-      data: { message: 'Ping received' }
-    });
-  }
-
-  /**
    * Start heartbeat timeout monitoring in SDK mode
    */
   private startHeartbeatMonitoring(): void {
@@ -855,6 +839,12 @@ export class InteractiveSession {
       return;
     }
 
+    // In SDK mode, use a different input loop
+    if (this.isSdkMode) {
+      await this.sdkPromptLoop();
+      return;
+    }
+
     // Recreate readline interface for input
     if (this.rl) {
       this.rl.close();
@@ -886,10 +876,44 @@ export class InteractiveSession {
   }
 
   private async handleInput(input: string): Promise<void> {
+    // Reset heartbeat timeout on any input activity
+    this.resetHeartbeatTimeout();
+
     const trimmedInput = input.trim();
 
     if (!trimmedInput) {
       return;
+    }
+
+    // Check for SDK JSON message format
+    if (this.isSdkMode) {
+      const { isSdkMessage, parseSdkMessage } = await import('./types.js');
+
+      if (isSdkMessage(trimmedInput)) {
+        const sdkMessage = parseSdkMessage(trimmedInput);
+
+        if (sdkMessage) {
+          if (sdkMessage.type === 'ping') {
+            // Handle ping - respond with pong
+            await this.handlePing(sdkMessage);
+            return;
+          } else if (sdkMessage.type === 'control_request') {
+            // Handle control request
+            await this.handleControlRequest(sdkMessage);
+            return;
+          } else if (sdkMessage.type === 'user') {
+            // Store request_id for tracking
+            this._currentRequestId = sdkMessage.request_id || null;
+            // Handle user message from SDK
+            await this.processUserMessage(sdkMessage.content);
+            return;
+          }
+        }
+      } else {
+        // Not a JSON SDK message, treat as regular text
+        await this.processUserMessage(trimmedInput);
+        return;
+      }
     }
 
     if (trimmedInput.startsWith('/')) {
@@ -909,6 +933,160 @@ export class InteractiveSession {
     }
 
     await this.processUserMessage(trimmedInput);
+  }
+
+  /**
+   * SDK prompt loop - reads input from stdin without showing prompt
+   */
+  private async sdkPromptLoop(): Promise<void> {
+    // Read input from stdin directly without outputting prompt
+    const input = await this.readSdkInput();
+
+    if ((this as any)._isShuttingDown || input === null) {
+      return;
+    }
+
+    try {
+      await this.handleInput(input);
+    } catch (err: any) {
+      this.sdkOutputAdapter?.output({
+        type: 'error',
+        subtype: 'general',
+        timestamp: Date.now(),
+        data: { message: err.message }
+      });
+    }
+
+    // Continue the loop
+    this.sdkPromptLoop();
+  }
+
+  private sdkRl: readline.Interface | null = null;
+
+  /**
+   * Read a line of input from stdin (SDK mode)
+   * Uses readline 'line' event for reliable stdin reading
+   */
+  private readSdkInput(): Promise<string | null> {
+    return new Promise((resolve) => {
+      // Create readline interface if not exists
+      if (!this.sdkRl) {
+        this.sdkRl = readline.createInterface({
+          input: process.stdin,
+          crlfDelay: Infinity,
+        });
+
+        // Handle line events
+        this.sdkRl.on('line', (line) => {
+          const cleanLine = line
+            .replace(/^\uFEFF/, '')
+            .replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+
+          if (this.resolveInput) {
+            // Immediate handler available, resolve immediately
+            this.resolveInput(cleanLine);
+            this.resolveInput = null;
+          } else {
+            // No handler available, queue the message
+            this.sdkInputBuffer.push(cleanLine);
+          }
+        });
+
+        // Handle close events
+        this.sdkRl.on('close', () => {
+          if (this.resolveInput) {
+            this.resolveInput(null);
+            this.resolveInput = null;
+          }
+        });
+
+        // Handle errors
+        this.sdkRl.on('error', () => {
+          if (this.resolveInput) {
+            this.resolveInput(null);
+            this.resolveInput = null;
+          }
+        });
+      }
+
+      // Check if there's already input in buffer
+      if (this.sdkInputBuffer.length > 0) {
+        const line = this.sdkInputBuffer.shift()!;
+        resolve(line);
+        return;
+      }
+
+      // Set up the resolve callback
+      this.resolveInput = (value: string | null) => {
+        resolve(value);
+      };
+    });
+  }
+
+  /**
+   * Handle SDK ping messages (heartbeat)
+   */
+  private async handlePing(pingMessage: any): Promise<void> {
+    const requestId = pingMessage.request_id || `ping_${Date.now()}`;
+
+    // Reset activity timestamp on ping (heartbeat activity)
+    this.lastActivityTime = Date.now();
+
+    // Send pong response through SDK adapter for consistency
+    this.sdkOutputAdapter?.output({
+      type: 'system',
+      subtype: 'pong',
+      timestamp: Date.now(),
+      data: {
+        type: 'pong',
+        request_id: requestId,
+        timestamp: Date.now()
+      }
+    });
+  }
+
+  /**
+   * Handle SDK control requests
+   */
+  private async handleControlRequest(request: any): Promise<void> {
+    // Update activity to prevent heartbeat timeout during control requests
+    this.lastActivityTime = Date.now();
+
+    const { request_id, request: req } = request;
+
+    switch (req.subtype) {
+      case 'interrupt':
+        this.sdkOutputAdapter?.outputSystem('interrupt', { request_id });
+        (this as any)._isShuttingDown = true;
+        process.exit(0);
+        break;
+
+      case 'set_permission_mode':
+        const { ExecutionMode } = await import('./types.js');
+        const modeMap: Record<string, ExecutionMode> = {
+          'default': ExecutionMode.DEFAULT,
+          'acceptEdits': ExecutionMode.ACCEPT_EDITS,
+          'plan': ExecutionMode.PLAN,
+          'bypassPermissions': ExecutionMode.YOLO,
+        };
+        const mode = modeMap[req.mode] || ExecutionMode.SMART;
+        this.executionMode = mode;
+        this.sdkOutputAdapter?.outputSystem('permission_mode_changed', {
+          request_id,
+          mode: req.mode
+        });
+        break;
+
+      case 'set_model':
+        this.sdkOutputAdapter?.outputSystem('model_changed', {
+          request_id,
+          model: req.model
+        });
+        break;
+
+      default:
+        this.sdkOutputAdapter?.outputWarning(`Unknown control request: ${req.subtype}`);
+    }
   }
 
   private async handleSubAgentCommand(input: string): Promise<void> {

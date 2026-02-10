@@ -9,20 +9,18 @@
 import type {
   ScreenContext,
   ScreenshotOutput,
-  ExecuteParams,
-  ExecuteOutput,
   PredictionParsed,
 } from '../types/operator.js';
 import type { Operator } from '../operator/base-operator.js';
 import { sleep, asyncRetry } from '../utils.js';
 import { actionParser } from '../action-parser/index.js';
-import { colors, icons, renderMarkdown } from '../../theme.js';
+import { colors, icons} from '../../theme.js';
 import { getLogger } from '../../logger.js';
 
 /**
  * Helper function to truncate long text
  */
-function truncateText(text: string, maxLength: number = 200): string {
+function _truncateText(text: string, maxLength: number = 200): string {
   if (!text) return '';
   return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
 }
@@ -30,7 +28,7 @@ function truncateText(text: string, maxLength: number = 200): string {
 /**
  * Helper function to indent multiline text
  */
-function indentMultiline(text: string, indent: string): string {
+function _indentMultiline(text: string, indent: string): string {
   return text.split('\n').map(line => indent + line).join('\n');
 }
 
@@ -44,21 +42,34 @@ export enum GUIAgentStatus {
   END = 'end',
   ERROR = 'error',
   USER_STOPPED = 'user_stopped',
-  CALL_USER = 'call_user',
+  CALL_LLM = 'call_llm',
 }
 
 /**
  * Remote VLM Caller callback function type
  * Inject this function externally to handle VLM calls, GUI Agent doesn't need to know VLM implementation details
  * Receives full messages array (same as local mode) for consistent behavior
+ * @param messages - Full messages array
+ * @param systemPrompt - System prompt (for reference)
+ * @param taskId - Task identifier for backend tracking
+ * @param isFirstVlmCallRef - Reference object to track and update first VLM call state
  */
-export type RemoteVlmCaller = (messages: any[], systemPrompt: string) => Promise<string>;
+export type RemoteVlmCaller = (messages: any[], systemPrompt: string, taskId: string, isFirstVlmCallRef: { current: boolean }) => Promise<string>;
 
 export interface GUIAgentConfig<T extends Operator> {
   operator: T;
   model?: string;
   modelBaseUrl?: string;
   modelApiKey?: string;
+  /**
+   * Task identifier for VLM state tracking (begin vs continue)
+   */
+  taskId?: string;
+  /**
+   * Shared ref object to track first VLM call across createGUISubAgent calls
+   * Must be passed from outside to properly track VLM status across loop iterations
+   */
+  isFirstVlmCallRef?: { current: boolean };
   /**
    * Externally injected VLM caller function
    * If this function is provided, GUI Agent will use it to call VLM
@@ -80,6 +91,7 @@ export interface GUIAgentConfig<T extends Operator> {
   onData?: (data: GUIAgentData) => void;
   onError?: (error: Error) => void;
   showAIDebugInfo?: boolean;
+  indentLevel?: number;
   retry?: {
     screenshot?: {
       maxRetries?: number;
@@ -133,6 +145,8 @@ export class GUIAgent<T extends Operator> {
   private readonly model: string;
   private readonly modelBaseUrl: string;
   private readonly modelApiKey: string;
+  private readonly taskId: string;
+  private readonly isFirstVlmCallRef?: { current: boolean };
   private readonly remoteVlmCaller?: RemoteVlmCaller;
   private readonly isLocalMode: boolean;
   private readonly systemPrompt: string;
@@ -143,18 +157,22 @@ export class GUIAgent<T extends Operator> {
   private readonly onData?: (data: GUIAgentData) => void;
   private readonly onError?: (error: Error) => void;
   private readonly showAIDebugInfo: boolean;
+  private readonly indentLevel: number;
   private readonly retry?: GUIAgentConfig<T>['retry'];
 
   private isPaused = false;
   private resumePromise: Promise<void> | null = null;
   private resolveResume: (() => void) | null = null;
   private isStopped = false;
+  private isFirstVlmCall = true;
 
   constructor(config: GUIAgentConfig<T>) {
     this.operator = config.operator;
     this.model = config.model || '';
     this.modelBaseUrl = config.modelBaseUrl || '';
     this.modelApiKey = config.modelApiKey || '';
+    this.taskId = config.taskId || crypto.randomUUID();
+    this.isFirstVlmCallRef = config.isFirstVlmCallRef;
     this.remoteVlmCaller = config.remoteVlmCaller;
     this.isLocalMode = config.isLocalMode;
     this.loopIntervalInMs = config.loopIntervalInMs || 0;
@@ -164,9 +182,18 @@ export class GUIAgent<T extends Operator> {
     this.onData = config.onData;
     this.onError = config.onError;
     this.showAIDebugInfo = config.showAIDebugInfo ?? false;
+    this.indentLevel = config.indentLevel ?? 1;
     this.retry = config.retry;
 
     this.systemPrompt = config.systemPrompt || this.buildSystemPrompt();
+  }
+
+  /**
+   * Set isFirstVlmCall to false after first VLM call
+   * Called by external code after remoteVlmCaller completes first call
+   */
+  public setIsFirstVlmCall(value: boolean): void {
+    this.isFirstVlmCall = value;
   }
 
   /**
@@ -175,7 +202,7 @@ export class GUIAgent<T extends Operator> {
   private displayConversationResult(conversation: Conversation, iteration: number, indentLevel: number = 1): void {
     const indent = '  '.repeat(indentLevel);
     const innerIndent = '  '.repeat(indentLevel + 1);
-    const maxWidth = process.stdout.columns || 80;
+    const _maxWidth = process.stdout.columns || 80;
 
     if (conversation.from === 'assistant') {
       // Display assistant response (action)
@@ -221,9 +248,6 @@ export class GUIAgent<T extends Operator> {
           console.log(`${indent}${colors.error(`${icons.cross} ${data.error}`)}`);
         }
         break;
-      case GUIAgentStatus.CALL_USER:
-        console.log(`${indent}${colors.warning(`${icons.warning} Needs user input`)}`);
-        break;
       case GUIAgentStatus.USER_STOPPED:
         console.log(`${indent}${colors.warning(`${icons.warning} Stopped`)}`);
         break;
@@ -233,6 +257,7 @@ export class GUIAgent<T extends Operator> {
   }
 
   private buildSystemPrompt(): string {
+    /* eslint-disable no-useless-escape */
     return `You are a GUI agent. You are given a task and your action history, with screenshots. You need to perform the next action to complete the task.
 
 ## Output Format
@@ -247,7 +272,7 @@ left_double(point='<point>x1 y1</point>')
 right_single(point='<point>x1 y1</point>')
 drag(start_point='<point>x1 y1</point>', end_point='<point>x2 y2</point>')
 hotkey(key='ctrl c') # Split keys with a space and use lowercase. Also, do not use more than 3 keys in one hotkey action.
-type(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content. 
+type(content='xxx') # Use escape characters \', \", and \n in content part to ensure we can parse the content in normal python string format. If you want to submit your input, use \n at the end of content.
 scroll(point='<point>x1 y1</point>', direction='down or up or right or left') # Show more information on the \`direction\` side.
 open_url(url='https://xxx') # Open URL in browser
 wait() #Sleep for 5s and take a screenshot to check for any changes.
@@ -261,6 +286,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 - Write a small plan and finally summarize your next action (with its target element) in one sentence in \`Thought\` part.
 
 `;
+    /* eslint-enable no-useless-escape */
   }
 
 
@@ -310,7 +336,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       return data;
     }
 
-    const currentTime = Date.now();
+    const _currentTime = Date.now();
 
     if (this.showAIDebugInfo) {
       this.logger.debug('[GUIAgent] run:', {
@@ -326,7 +352,8 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     // Start running agent
     data.status = GUIAgentStatus.RUNNING;
     data.systemPrompt = this.systemPrompt;
-    console.log(`${colors.primaryBright(`${icons.rocket} GUI Agent started`)}`);
+    const indent = '  '.repeat(this.indentLevel);
+    console.log(`${indent}${colors.primaryBright(`${icons.rocket} GUI Agent started`)}`);
     console.log('');
     await this.onData?.({ ...data, conversations: [] });
 
@@ -454,7 +481,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         // Display screenshot notification
         const latestScreenshot = data.conversations[data.conversations.length - 1];
         if (latestScreenshot && latestScreenshot.from === 'human' && latestScreenshot.screenshotBase64) {
-          this.displayConversationResult(latestScreenshot, loopCnt);
+          this.displayConversationResult(latestScreenshot, loopCnt, this.indentLevel);
         }
 
         // Build messages for model
@@ -476,10 +503,17 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
                 const result = await this.callModelAPI(messages, screenContext, this.remoteVlmCaller!);
                 return result;
               } catch (error: unknown) {
+                const errorMsg = error instanceof Error ? error.message : String(error);
+                // 捕获各种 abort 相关的错误
                 if (
                   error instanceof Error &&
                   (error.name === 'AbortError' ||
-                    error.message?.includes('aborted'))
+                    errorMsg.includes('aborted') ||
+                    errorMsg.includes('canceled') ||
+                    errorMsg.includes('cancelled') ||
+                    errorMsg === 'Operation was canceled' ||
+                    errorMsg === 'The operation was canceled' ||
+                    errorMsg === 'This operation was aborted')
                 ) {
                   bail(error as Error);
                   return { prediction: '', parsedPredictions: [] };
@@ -496,11 +530,27 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           prediction = modelResult.prediction;
           parsedPredictions = modelResult.parsedPredictions;
         } catch (modelError) {
+          // 首先检查是否是取消/abort 错误
+          const errorMsg = modelError instanceof Error ? modelError.message : String(modelError);
+          const isAbortError = 
+            modelError instanceof Error && (
+              modelError.name === 'AbortError' ||
+              errorMsg.includes('aborted') ||
+              errorMsg.includes('canceled') ||
+              errorMsg.includes('cancelled') ||
+              errorMsg === 'Operation was canceled' ||
+              errorMsg === 'The operation was canceled' ||
+              errorMsg === 'This operation was aborted'
+            );
+          
+          if (isAbortError || this.signal?.aborted) {
+            data.status = GUIAgentStatus.USER_STOPPED;
+            data.conversations = data.conversations || [];
+            return data;
+          }
+
           // Handle multimodal model API errors with specific error messages
           data.status = GUIAgentStatus.ERROR;
-          const errorMsg = modelError instanceof Error ? modelError.message : String(modelError);
-
-          // Provide specific error message based on error type
           if (errorMsg.includes('401') || errorMsg.includes('authentication') || errorMsg.includes('API key') || errorMsg.includes('api_key') || errorMsg.includes('Unauthorized') || errorMsg.includes('invalid_api_key')) {
             data.error = '[Multimodal Model Authentication Failed] The guiSubagentApiKey configuration is invalid.\n' +
               'Error details: HTTP 401 - API key is invalid or expired\n' +
@@ -580,7 +630,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         // Display assistant response
         const latestAssistant = data.conversations[data.conversations.length - 1];
         if (latestAssistant && latestAssistant.from === 'assistant') {
-          this.displayConversationResult(latestAssistant, loopCnt);
+          this.displayConversationResult(latestAssistant, loopCnt, this.indentLevel);
         }
 
         // Check if we need to switch operator based on first action
@@ -626,6 +676,13 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
                   // 'finished' action or explicit end
                   stepSuccess = true;
                   break;
+                } else if (executeResult.status === 'needs_input') {
+                  // Empty action - return to main agent for re-calling LLM
+                  this.logger.debug(`[GUIAgent] Empty action received, returning to main agent for LLM decision`);
+                  data.status = GUIAgentStatus.CALL_LLM;
+                  data.error = 'Empty action - main agent should re-call LLM to decide next step';
+                  stepSuccess = true;
+                  return data; // Return immediately with all results to main agent
                 }
 
                 // Any other status (success, failed, etc.) is considered success
@@ -674,10 +731,7 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
           }
 
           // Handle special action types
-          if (actionType === 'call_user') {
-            data.status = GUIAgentStatus.CALL_USER;
-            break;
-          } else if (actionType === 'finished') {
+          if (actionType === 'finished') {
             data.status = GUIAgentStatus.END;
             break;
           }
@@ -709,10 +763,11 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       // Save final status
       const finalStatus = data.status;
       const finalError = data.error;
+      const indent = '  '.repeat(this.indentLevel);
 
       // Output error immediately if task failed
       if (finalStatus === GUIAgentStatus.ERROR && finalError) {
-        console.log(`\n${colors.error('✖')} ${finalError}\n`);
+        console.log(`\n${indent}${colors.error('✖')} ${finalError}\n`);
       }
 
       // Call onData callback if set
@@ -948,20 +1003,15 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       this.debugRequest(messages);
     }
 
-    let response;
-    try {
-      response = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(requestBody),
-        signal: this.signal,
-      });
-    } catch (fetchError) {
-      throw fetchError;
-    }
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(requestBody),
+      signal: this.signal,
+    });
 
     // Handle non-200 responses
     if (!response.ok) {
@@ -1014,8 +1064,15 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         this.debugRequest(messages, remoteVlmCaller);
       }
 
-      // Use externally injected VLM caller function with full messages (same as local mode)
-      const prediction = await remoteVlmCaller(messages, this.systemPrompt);
+      // Use shared ref from config for tracking first VLM call across createGUISubAgent calls
+      // If no shared ref provided, fall back to local tracking
+      const isFirstVlmCallRef = this.isFirstVlmCallRef || { current: this.isFirstVlmCall };
+
+      // Pass taskId and isFirstVlmCallRef for proper status tracking
+      const prediction = await remoteVlmCaller(messages, this.systemPrompt, this.taskId, isFirstVlmCallRef);
+      // Mark subsequent calls as continue (update both local state and shared ref)
+      this.isFirstVlmCall = false;
+      isFirstVlmCallRef.current = false;
 
       // Debug output for model response
       if (this.showAIDebugInfo) {

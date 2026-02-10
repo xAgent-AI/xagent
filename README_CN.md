@@ -14,7 +14,7 @@
 
 ![xAgent CLI 截图](./assets/xagent-cli.png)
 
-**[English](README.md)** | **[中文](README_CN.md)**
+**[官网](http://www.xagent-colife.net)** | **[English](README.md)** | **[中文](README_CN.md)**
 
 </div>
 
@@ -230,6 +230,52 @@ npm run typecheck # TypeScript
   "type": "openai_compatible"
 }
 ```
+
+---
+
+## ⌨️ 斜杠命令
+
+在交互模式下（`xagent start`）使用斜杠命令管理 xAgent 功能：
+
+| 命令 | 说明 |
+|---------|-------------|
+| `/help` | 显示帮助信息 |
+| `/init` | 初始化项目上下文 |
+| `/clear` | 清除对话历史 |
+| `/exit` | 退出程序 |
+| `/auth` | 配置认证信息 |
+| `/mode [模式]` | 切换审批模式 |
+| `/agents [list\|online\|install\|remove]` | 管理 SubAgent |
+| `/mcp [list\|add\|remove\|refresh]` | 管理 MCP 服务器 |
+| `/skill [list\|add\|remove]` | 管理技能 |
+| `/model` | 配置 LLM/VLM 模型 |
+| `/memory [show\|clear]` | 管理项目记忆 |
+| `/restore` | 从检查点恢复 |
+| `/tools [verbose\|simple]` | 管理工具显示 |
+| `/stats` | 显示会话统计 |
+| `/theme` | 切换 UI 主题 |
+| `/about` | 显示版本信息 |
+| `/update` | 检查更新 |
+
+### MCP 服务器管理
+
+```bash
+/mcp list              # 列出所有 MCP 服务器
+/mcp add               # 添加 MCP 服务器（交互式）
+/mcp remove <name>     # 移除 MCP 服务器
+/mcp refresh           # 刷新 MCP 连接
+```
+
+### 技能管理
+
+```bash
+/skill list            # 列出已安装的技能
+/skill add ./my-skill  # 从本地路径安装
+/skill add owner/repo  # 从 GitHub 安装
+/skill remove <name>   # 移除技能
+```
+
+> 💡 **提示：** 所有功能也可通过 CLI 命令使用。运行 `xagent --help` 查看详情。
 
 ---
 

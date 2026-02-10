@@ -16,7 +16,6 @@ export enum LogLevel {
 
 export enum AuthType {
   OAUTH_XAGENT = 'oauth-xagent',
-  API_KEY = 'api_key',
   OPENAI_COMPATIBLE = 'openai_compatible'
 }
 
@@ -28,6 +27,9 @@ export interface AuthConfig {
   modelName?: string;
   searchApiKey?: string;
   showAIDebugInfo?: boolean;
+  xagentApiBaseUrl?: string;     // xAgent API base URL
+  remote_llmModelName?: string;  // Remote mode LLM Model Name
+  remote_vlmModelName?: string;  // Remote mode VLM Model Name
 }
 
 export interface Tool {
@@ -92,7 +94,9 @@ export interface Settings {
   guiSubagentBaseUrl?: string;
   guiSubagentApiKey?: string;
   searchApiKey?: string;
-  skillsPath?: string;  // Path to skills directory
+  skillsPath?: string;  // Path to built-in skills directory
+  userSkillsPath?: string;  // Path to user-installed skills directory (~/.xagent/skills)
+  userNodeModulesPath?: string;  // Path to user-installed node_modules (~/.xagent/node_modules)
   workspacePath?: string;  // Path to workspace directory
   executionMode: ExecutionMode;
   approvalMode?: ExecutionMode;
@@ -108,6 +112,8 @@ export interface Settings {
   showToolDetails: boolean;
   showAIDebugInfo: boolean;
   loggerLevel: LogLevel;
+  remote_llmModelName?: string;  // Remote 模式使用的 LLM Model Name
+  remote_vlmModelName?: string;  // Remote 模式使用的 VLM Model Name
 }
 
 export interface ChatMessage {
@@ -115,8 +121,9 @@ export interface ChatMessage {
   content: string;
   images?: string[];
   timestamp: number;
-  reasoningContent?: string;
-  toolCalls?: any[];
+  reasoning_content?: string;
+  tool_calls?: any[];
+  tool_call_id?: string;
 }
 
 export interface Conversation {
@@ -140,7 +147,7 @@ export interface Checkpoint {
   description: string;
   gitSnapshot?: string;
   conversationSnapshot: ChatMessage[];
-  toolCalls: ToolCall[];
+  tool_calls: ToolCall[];
 }
 
 export interface InputType {
@@ -165,8 +172,8 @@ export interface SessionOutput {
   toolResult?: any;
   timestamp: number;
   duration?: number;
-  reasoningContent?: string;
-  toolCalls?: any[];
+  reasoning_content?: string;
+  tool_calls?: any[];
 }
 
 export interface Session {
@@ -184,10 +191,6 @@ export interface Session {
 
 export interface CompressionConfig {
   enabled: boolean;
-  maxMessages: number;
-  maxContextSize: number;
-  preserveRecentMessages: number;
-  enableSummary: boolean;
 }
 
 export interface CompressionStats {
@@ -195,4 +198,22 @@ export interface CompressionStats {
   totalCompressions: number;
   originalMessagesTotal: number;
   compressedMessagesTotal: number;
+}
+
+export interface Agent {
+  name: string;
+  description: string;
+  systemPrompt: string;
+  capabilities: string[];
+}
+
+export interface ToolCallFunction {
+  name: string;
+  arguments: string;
+}
+
+export interface ToolCallItem {
+  id?: string;
+  type?: string;
+  function: ToolCallFunction;
 }

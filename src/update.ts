@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { confirm } from '@clack/prompts';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
@@ -18,14 +19,14 @@ export class UpdateManager {
 
   constructor() {
     this.packageVersion = packageJson.version;
-    this.registryUrl = 'https://registry.npmjs.org/@xagent-ai/xagent-cli';
+    this.registryUrl = 'https://registry.npmjs.org/@xagent-ai/cli';
     this.checkInterval = 24 * 60 * 60 * 1000;
   }
 
   async checkForUpdates(): Promise<VersionInfo> {
     try {
       const response = await axios.get(this.registryUrl, {
-        timeout: 10000
+        timeout: 10000,
       });
 
       const latestVersion = response.data['dist-tags'].latest;
@@ -36,17 +37,17 @@ export class UpdateManager {
         latestVersion,
         updateAvailable,
         releaseNotes: response.data.versions[latestVersion]?.description,
-        downloadUrl: `https://www.npmjs.com/package/@xagent-ai/xagent-cli/v/${latestVersion}`
+        downloadUrl: `https://www.npmjs.com/package/@xagent-ai/cli/v/${latestVersion}`,
       };
 
       return versionInfo;
     } catch (error) {
       console.error('Failed to check for updates:', error);
-      
+
       return {
         currentVersion: this.packageVersion,
         latestVersion: this.packageVersion,
-        updateAvailable: false
+        updateAvailable: false,
       };
     }
   }
@@ -54,7 +55,7 @@ export class UpdateManager {
   private compareVersions(v1: string, v2: string): number {
     const normalize = (v: string) => {
       const parts = v.replace(/^v/, '').split('-')[0].split('.');
-      return parts.map(p => parseInt(p, 10) || 0);
+      return parts.map((p) => parseInt(p, 10) || 0);
     };
 
     const v1Parts = normalize(v1);
@@ -82,7 +83,9 @@ export class UpdateManager {
       return false;
     }
 
-    console.log(`📦 Update available: ${versionInfo.currentVersion} → ${versionInfo.latestVersion}`);
+    console.log(
+      `📦 Update available: ${versionInfo.currentVersion} → ${versionInfo.latestVersion}`
+    );
 
     if (versionInfo.releaseNotes) {
       console.log('\nRelease Notes:');
@@ -100,23 +103,15 @@ export class UpdateManager {
     return false;
   }
 
-  private async promptUpdate(versionInfo: VersionInfo): Promise<{ shouldUpdate: boolean }> {
-    const inquirer = (await import('inquirer')).default;
+  private async promptUpdate(_versionInfo: VersionInfo): Promise<{ shouldUpdate: boolean }> {
+    const shouldUpdate = await confirm({
+      message: 'Do you want to update now?',
+    });
 
-    const { shouldUpdate } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'shouldUpdate',
-        message: 'Do you want to update now?',
-        default: true
-      }
-    ]);
-
-    return { shouldUpdate };
+    return { shouldUpdate: shouldUpdate === true };
   }
 
   private async performUpdate(): Promise<boolean> {
-    const inquirer = (await import('inquirer')).default;
     const { exec } = await import('child_process');
     const { promisify } = await import('util');
 
@@ -125,8 +120,8 @@ export class UpdateManager {
     try {
       console.log('Updating xAgent CLI...');
 
-      await execAsync('npm install -g @xagent-ai/xagent-cli@latest', {
-        timeout: 120000
+      await execAsync('npm install -g @xagent-ai/cli@latest', {
+        timeout: 120000,
       });
 
       console.log('✅ Update successful! Please restart xAgent CLI.');
@@ -134,19 +129,14 @@ export class UpdateManager {
     } catch (error: any) {
       console.error('❌ Update failed:', error.message);
 
-      const { tryManual } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'tryManual',
-          message: 'Would you like to try manual update?',
-          default: false
-        }
-      ]);
+      const tryManual = await confirm({
+        message: 'Would you like to try manual update?',
+      });
 
-      if (tryManual) {
+      if (tryManual === true) {
         console.log('\nManual update instructions:');
-        console.log('1. Run: npm uninstall -g @xagent-ai/xagent-cli');
-        console.log('2. Run: npm install -g @xagent-ai/xagent-cli@latest');
+        console.log('1. Run: npm uninstall -g @xagent-ai/cli');
+        console.log('2. Run: npm install -g @xagent-ai/cli@latest');
         console.log('3. Restart: xagent\n');
       }
 
@@ -160,7 +150,7 @@ export class UpdateManager {
     if (versionInfo.updateAvailable) {
       console.log(`\n📦 A new version is available: ${versionInfo.latestVersion}`);
       console.log(`Current version: ${versionInfo.currentVersion}`);
-      console.log(`Update with: npm install -g @xagent-ai/xagent-cli@latest\n`);
+      console.log(`Update with: npm install -g @xagent-ai/cli@latest\n`);
     }
   }
 
@@ -173,7 +163,7 @@ export class UpdateManager {
 
     try {
       const response = await axios.get(this.registryUrl, {
-        timeout: 10000
+        timeout: 10000,
       });
 
       const versionData = response.data.versions[targetVersion];
@@ -233,14 +223,17 @@ export class UpdateManager {
   }
 
   async enableAutoUpdate(enabled: boolean): Promise<void> {
-    const fs = await import('fs/promises');
-    const path = await import('path');
-    const os = await import('os');
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _fs = await import('fs/promises');
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _path = await import('path');
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _os = await import('os');
     const { getConfigManager } = await import('./config.js');
 
     const configManager = getConfigManager();
     configManager.set('autoUpdate', enabled);
-    await configManager.save('global');
+    configManager.save('global');
 
     console.log(`✅ Auto-update ${enabled ? 'enabled' : 'disabled'}`);
   }
@@ -263,7 +256,7 @@ export function getUpdateManager(): UpdateManager {
 
 export async function checkUpdatesOnStartup(): Promise<void> {
   const updateManager = getUpdateManager();
-  
+
   if (await updateManager.isAutoUpdateEnabled()) {
     await updateManager.checkUpdateOnStartup();
   }

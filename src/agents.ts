@@ -416,7 +416,7 @@ Provide exploration results with:
 
 Remember: Your goal is to explore AND REPORT your findings, not to explore endlessly. Once you have gathered the necessary information, stop making tool calls and provide your comprehensive analysis in your response content.`,
     whenToUse: 'Use for exploring codebase structure, understanding architecture, and finding relevant code',
-    allowedTools: ['Read', 'Grep', 'Bash', 'ListDirectory', 'SearchCodebase', 'ReadBashOutput'],
+    allowedTools: ['Read', 'Grep', 'Bash', 'ListDirectory', 'SearchFiles', 'ReadBashOutput'],
     isInheritMcps: true,
     proactive: false,
     color: '#3498DB',
@@ -461,7 +461,7 @@ Testing priorities:
     agentType: 'code-reviewer',
     systemPrompt: 'You are an expert code reviewer. Analyze code for quality, security, performance, and best practices.',
     whenToUse: 'Use when reviewing code, checking for bugs, or ensuring code quality',
-    allowedTools: ['Read', 'Grep', 'SearchCodebase'],
+    allowedTools: ['Read', 'Grep', 'SearchFiles'],
     isInheritMcps: true,
     proactive: true,
     color: '#FF6B6B',

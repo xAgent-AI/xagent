@@ -30,12 +30,21 @@ export interface GUISubAgentConfig {
   modelBaseUrl?: string;
   modelApiKey?: string;
   /**
+   * Task identifier for VLM state tracking (begin vs continue)
+   */
+  taskId?: string;
+  /**
+   * Shared ref object to track first VLM call across createGUISubAgent calls
+   * Must be passed from outside to properly track VLM status across loop iterations
+   */
+  isFirstVlmCallRef?: { current: boolean };
+  /**
    * Externally injected VLM caller function
    * If this function is provided, GUI Agent will use it to call VLM
    * This allows GUI Agent to work with remote services
    * Receives full messages array for consistent behavior with local mode
    */
-  remoteVlmCaller?: (messages: any[], systemPrompt: string) => Promise<string>;
+  remoteVlmCaller?: (messages: any[], systemPrompt: string, taskId: string, isFirstVlmCallRef: { current: boolean }) => Promise<string>;
   /**
    * Whether to use local mode
    * If true, use model/modelBaseUrl/modelApiKey for VLM calls
@@ -46,6 +55,7 @@ export interface GUISubAgentConfig {
   loopIntervalInMs?: number;
   maxLoopCount?: number;
   showAIDebugInfo?: boolean;
+  indentLevel?: number;
 }
 
 /**
@@ -62,6 +72,7 @@ export const DEFAULT_GUI_CONFIG = {
   loopIntervalInMs: 0,
   maxLoopCount: 100,
   showAIDebugInfo: false,
+  indentLevel: 1,
 };
 
 /**
@@ -96,11 +107,14 @@ export async function createGUISubAgent<T extends Operator>(
     model: mergedConfig.model,
     modelBaseUrl: mergedConfig.modelBaseUrl,
     modelApiKey: mergedConfig.modelApiKey,
+    taskId: mergedConfig.taskId,
+    isFirstVlmCallRef: mergedConfig.isFirstVlmCallRef,
     remoteVlmCaller: mergedConfig.isLocalMode ? undefined : mergedConfig.remoteVlmCaller,
     isLocalMode: mergedConfig.isLocalMode ?? false,
     loopIntervalInMs: mergedConfig.loopIntervalInMs,
     maxLoopCount: mergedConfig.maxLoopCount,
     showAIDebugInfo: mergedConfig.showAIDebugInfo,
+    indentLevel: mergedConfig.indentLevel,
     signal: abortController.signal,
   };
 

@@ -3564,6 +3564,24 @@ export class ToolRegistry {
   }
 
   /**
+   * Set SDK mode for the tool registry.
+   * In SDK mode, tool execution output is sent to the SDK output adapter.
+   */
+  async setSdkMode(enabled: boolean, adapter: any): Promise<void> {
+    // Mark all tools as SDK mode enabled
+    for (const [name, tool] of this.tools) {
+      (tool as any)._sdkMode = enabled;
+      (tool as any)._sdkOutputAdapter = adapter;
+    }
+
+    // Initialize SDK mode for TaskTool specifically
+    const taskTool = this.tools.get('task') as any;
+    if (taskTool) {
+      await taskTool.setSdkMode?.(enabled, adapter);
+    }
+  }
+
+  /**
    * Remove all MCP tool wrappers (useful when MCP servers are removed)
    */
   unregisterMCPTools(serverName?: string): void {

@@ -52,6 +52,7 @@ import {
 } from './context-compressor.js';
 import { getLogger } from './logger.js';
 import { ensureTtySane, setupEscKeyHandler } from './terminal.js';
+import { SdkOutputAdapter } from './sdk-output-adapter.js';
 
 // Type aliases for backward compatibility
 type AIClient = AIClientInterface;
@@ -83,6 +84,14 @@ export class InteractiveSession {
   private currentTaskId: string | null = null;
   private taskCompleted: boolean = false;
   private isFirstApiCall: boolean = true;
+  private sdkOutputAdapter: SdkOutputAdapter | null = null;
+  private isSdkMode: boolean = false;
+  private sdkInputBuffer: string[] = [];
+  private resolveInput: ((value: string | null) => void) | null = null;
+  private _currentRequestId: string | null = null;
+  private heartbeatTimeout: NodeJS.Timeout | null = null;
+  private heartbeatTimeoutMs: number = 300000; // 5 minutes timeout for long AI responses
+  private lastActivityTime: number = Date.now();
 
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
@@ -168,6 +177,30 @@ export class InteractiveSession {
 
   setExecutionMode(mode: ExecutionMode): void {
     this.executionMode = mode;
+  }
+
+  /**
+   * Set SDK mode for programmatic access.
+   * In SDK mode, output is formatted as JSON to stdout.
+   */
+  setSdkMode(adapter: SdkOutputAdapter): void {
+    this.isSdkMode = true;
+    this.sdkOutputAdapter = adapter;
+  }
+
+  /**
+   * Initialize tool registry in SDK mode.
+   */
+  private async initToolRegistrySdkMode(adapter: SdkOutputAdapter): Promise<void> {
+    const toolRegistry = getToolRegistry();
+    await toolRegistry.setSdkMode(true, adapter);
+  }
+
+  /**
+   * Get SDK mode status.
+   */
+  getIsSdkMode(): boolean {
+    return this.isSdkMode;
   }
 
   /**
@@ -296,6 +329,13 @@ export class InteractiveSession {
 
     // Start watching for skill updates from CLI
     this.startSkillUpdateWatcher();
+
+    // SDK 模式初始化：设置输出适配器
+    if (this.isSdkMode) {
+      // Start heartbeat timeout monitoring in SDK mode
+      this.startHeartbeatMonitoring();
+    }
+
     // Set up ESC key handler using the terminal module
     // This avoids conflicts with readline and provides clean ESC detection
     let _escCleanup: (() => void) | undefined;
@@ -677,6 +717,76 @@ export class InteractiveSession {
     console.log('');
 
     this.showExecutionMode();
+  }
+
+  /**
+   * Handle SDK ping messages (heartbeat)
+   */
+  async handlePing(): Promise<void> {
+    // Reset activity timestamp on ping (heartbeat activity)
+    this.resetHeartbeatTimeout();
+
+    // Output ping received message for debugging
+    this.sdkOutputAdapter?.output({
+      type: 'system',
+      subtype: 'ping',
+      timestamp: Date.now(),
+      data: { message: 'Ping received' }
+    });
+  }
+
+  /**
+   * Start heartbeat timeout monitoring in SDK mode
+   */
+  private startHeartbeatMonitoring(): void {
+    this.stopHeartbeatMonitoring();
+
+    // Check heartbeat timeout periodically
+    this.heartbeatTimeout = setInterval(() => {
+      const elapsed = Date.now() - this.lastActivityTime;
+
+      if (elapsed > this.heartbeatTimeoutMs) {
+        // Heartbeat timeout - no activity for too long
+        this.sdkOutputAdapter?.output({
+          type: 'error',
+          subtype: 'heartbeat_timeout',
+          timestamp: Date.now(),
+          data: {
+            message: 'Heartbeat timeout - no activity detected',
+            elapsed_ms: elapsed,
+            timeout_ms: this.heartbeatTimeoutMs
+          }
+        });
+
+        // Stop monitoring
+        this.stopHeartbeatMonitoring();
+      }
+    }, 30000); // Check every 30 seconds
+  }
+
+  /**
+   * Stop heartbeat timeout monitoring
+   */
+  private stopHeartbeatMonitoring(): void {
+    if (this.heartbeatTimeout) {
+      clearInterval(this.heartbeatTimeout);
+      this.heartbeatTimeout = null;
+    }
+  }
+
+  /**
+   * Reset heartbeat timeout (called on activity)
+   */
+  private resetHeartbeatTimeout(): void {
+    this.lastActivityTime = Date.now();
+  }
+
+  /**
+   * Stop heartbeat monitoring (public method for cleanup)
+   * Used by SDK session to clean up when session ends
+   */
+  public stopHeartbeatMonitor(): void {
+    this.stopHeartbeatMonitoring();
   }
 
   private showExecutionMode(): void {

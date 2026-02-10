@@ -163,7 +163,15 @@ program
   .command('start')
   .description('Start the xAgent CLI interactive session')
   .option('--approval-mode <mode>', 'Set approval mode (yolo, accept_edits, plan, default, smart)')
+  .option('--sdk', 'Run in SDK mode for programmatic access (stdin/stdout JSON communication)')
   .action(async (options) => {
+    // Check if running in SDK mode
+    if (options.sdk || process.env.XAGENT_SDK === 'true') {
+      const { startSdkSession } = await import('./sdk-session.js');
+      await startSdkSession();
+      return;
+    }
+
     if (options.approvalMode) {
       const { getConfigManager } = await import('./config.js');
       const { ExecutionMode } = await import('./types.js');

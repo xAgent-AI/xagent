@@ -89,32 +89,12 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
-      - name: Generate changelog
-        id: changelog
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          PREV_TAG=$(git describe --abbrev=0 --tags "v$(echo $TAG | sed 's/v//')^" 2>/dev/null || echo '')
-          if [ -n "$PREV_TAG" ]; then
-            echo "changelog=$(git log --pretty=format:'## %s' "$PREV_TAG..$TAG" 2>/dev/null | sed 's/^/- /' | sed 's/\n/\\n/g')" >> $GITHUB_OUTPUT
-          else
-            echo "changelog=$(git log --pretty=format:'## %s' -10 | sed 's/^/- /' | sed 's/\n/\\n/g')" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create Release
+      - name: Create Release with Auto-Generated Notes
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          body: |
-            ## Changes
-            ${{ steps.changelog.outputs.changelog }}
-
-            ## Installation
-            ```bash
-            npm install -g @xagent-ai/cli
-            # or
-            npx @xagent-ai/cli
-            ```
+          generate_release_notes: true
           files: |
             dist/*.js
             dist/*.d.ts

@@ -2000,6 +2000,20 @@ export class TaskTool implements Tool {
       throw new Error(`Agent ${subagent_type} not found`);
     }
 
+    // Get SDK adapter from session for subagent output
+    let sdkOutputAdapter: any = null;
+    let isSdkMode = false;
+    try {
+      const { getSingletonSession } = await import('./session.js');
+      const session = getSingletonSession();
+      if (session) {
+        isSdkMode = (session as any).isSdkMode;
+        sdkOutputAdapter = (session as any).sdkOutputAdapter;
+      }
+    } catch {
+      // Session not available
+    }
+
     // Special handling for gui-subagent: directly call GUIAgent.run() instead of subagent message loop
     if (subagent_type === 'gui-subagent') {
       // Get RemoteAIClient instance from session (if available)
@@ -2288,22 +2302,30 @@ export class TaskTool implements Tool {
 
       // Display reasoning content if present
       if (reasoningContent) {
-        console.log(`\n${indent}${colors.textDim(`${icons.brain} Thinking Process:`)}`);
-        const truncatedReasoning =
-          reasoningContent.length > 500
-            ? reasoningContent.substring(0, 500) + '...'
-            : reasoningContent;
-        const indentedReasoning = indentMultiline(truncatedReasoning, indent);
-        console.log(`${indentedReasoning}\n`);
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputThinking(reasoningContent, 'compact');
+        } else {
+          console.log(`\n${indent}${colors.textDim(`${icons.brain} Thinking Process:`)}`);
+          const truncatedReasoning =
+            reasoningContent.length > 500
+              ? reasoningContent.substring(0, 500) + '...'
+              : reasoningContent;
+          const indentedReasoning = indentMultiline(truncatedReasoning, indent);
+          console.log(`${indentedReasoning}\n`);
+        }
       }
 
       // Display assistant response (if there's any text content) with proper indentation
       if (contentStr) {
-        console.log(`\n${indent}${colors.primaryBright(agentName)}: ${description}`);
-        const truncatedContent =
-          contentStr.length > 500 ? contentStr.substring(0, 500) + '...' : contentStr;
-        const indentedContent = indentMultiline(truncatedContent, indent);
-        console.log(`${indentedContent}\n`);
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputAssistant(contentStr);
+        } else {
+          console.log(`\n${indent}${colors.primaryBright(agentName)}: ${description}`);
+          const truncatedContent =
+            contentStr.length > 500 ? contentStr.substring(0, 500) + '...' : contentStr;
+          const indentedContent = indentMultiline(truncatedContent, indent);
+          console.log(`${indentedContent}\n`);
+        }
       }
 
       // Process tool calls with proper indentation

@@ -208,6 +208,29 @@ export class InteractiveSession {
   }
 
   /**
+   * Output assistant response - handles SDK mode and normal mode differently.
+   */
+  private outputAssistant(content: string, reasoningContent?: string): void {
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputAssistant(content, reasoningContent);
+    } else {
+      const indent = this.getIndent();
+      console.log('');
+      console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
+      console.log(
+        `${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`
+      );
+      console.log('');
+      const renderedContent = renderMarkdown(
+        content,
+        (process.stdout.columns || 80) - indent.length * 2
+      );
+      console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
+      console.log('');
+    }
+  }
+
+  /**
    * Update system prompt to reflect MCP changes (called after add/remove MCP)
    */
   async updateSystemPrompt(): Promise<void> {
@@ -1253,6 +1276,12 @@ export class InteractiveSession {
     const thinkingConfig = this.configManager.getThinkingConfig();
     const displayMode = thinkingConfig.displayMode || 'compact';
 
+    // SDK 模式：使用 adapter 输出
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputThinking(reasoningContent, displayMode);
+      return;
+    }
+
     const separator = icons.separator.repeat(
       Math.min(60, process.stdout.columns || 80) - indent.length
     );
@@ -1547,11 +1576,17 @@ export class InteractiveSession {
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let frameIndex = 0;
 
+    // SDK 模式下不显示 spinner
+    const showThinkingSpinner = !this.isSdkMode;
+    let spinnerInterval: NodeJS.Timeout | null = null;
+
     // Custom spinner: only icon rotates, text stays static
-    const spinnerInterval = setInterval(() => {
-      process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
-      frameIndex = (frameIndex + 1) % frames.length;
-    }, 120);
+    if (showThinkingSpinner) {
+      spinnerInterval = setInterval(() => {
+        process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
+        frameIndex = (frameIndex + 1) % frames.length;
+      }, 120);
+    }
 
     try {
       const memory = await this.memoryManager.loadMemory();
@@ -1603,7 +1638,7 @@ export class InteractiveSession {
       // Mark that first API call is complete
       this.isFirstApiCall = false;
 
-      clearInterval(spinnerInterval);
+      if (spinnerInterval) clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r'); // Clear spinner line
 
       const assistantMessage = response.choices[0].message;
@@ -1615,18 +1650,8 @@ export class InteractiveSession {
         this.displayThinkingContent(reasoningContent);
       }
 
-      console.log('');
-      console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
-      console.log(
-        `${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`
-      );
-      console.log('');
-      const renderedContent = renderMarkdown(
-        content,
-        (process.stdout.columns || 80) - indent.length * 2
-      );
-      console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
-      console.log('');
+      // Output assistant response
+      this.outputAssistant(content, reasoningContent);
 
       this.conversation.push({
         role: 'assistant',
@@ -1662,7 +1687,7 @@ export class InteractiveSession {
       // Operation completed successfully, clear the flag
       (this as any)._isOperationInProgress = false;
     } catch (error: any) {
-      clearInterval(spinnerInterval);
+      if (spinnerInterval) clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
 
       // Clear the operation flag

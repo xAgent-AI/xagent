@@ -3449,6 +3449,7 @@ export class ToolRegistry {
   private todoWriteTool: TodoWriteTool;
   private backgroundTasks: Map<string, { process: any; startTime: number; output: string[] }> =
     new Map();
+  private _isSdkMode: boolean = false;
 
   constructor() {
     this.todoWriteTool = new TodoWriteTool();
@@ -3553,13 +3554,19 @@ export class ToolRegistry {
         registeredCount++;
 
         if (toolName !== originalName) {
-          console.log(`[MCP] Tool '${originalName}' renamed to '${toolName}' to avoid conflict`);
+          // 在 SDK 模式下不输出重命名信息
+          if (!this._isSdkMode) {
+            console.log(`[MCP] Tool '${originalName}' renamed to '${toolName}' to avoid conflict`);
+          }
         }
       }
     }
 
     if (registeredCount > 0) {
-      console.log(`[MCP] Registered ${registeredCount} tool(s)`);
+      // 在 SDK 模式下不输出注册信息（MCP 相关输出已在 session 中处理）
+      if (!this._isSdkMode) {
+        console.log(`[MCP] Registered ${registeredCount} tool(s)`);
+      }
     }
   }
 
@@ -3568,6 +3575,7 @@ export class ToolRegistry {
    * In SDK mode, tool execution output is sent to the SDK output adapter.
    */
   async setSdkMode(enabled: boolean, adapter: any): Promise<void> {
+    this._isSdkMode = enabled;
     // Mark all tools as SDK mode enabled
     for (const [name, tool] of this.tools) {
       (tool as any)._sdkMode = enabled;

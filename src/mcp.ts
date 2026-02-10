@@ -1,5 +1,6 @@
 import { spawn, ChildProcess } from 'child_process';
 import { MCPServerConfig } from './types.js';
+import { getSingletonSession } from './session.js';
 
 export interface MCPTool {
   name: string;
@@ -44,7 +45,12 @@ export class MCPServer {
       await this.waitForTools(10000);
 
       this.isConnected = true;
-      console.log(`✅ MCP Server connected`);
+      const session = getSingletonSession();
+      if (session?.getIsSdkMode()) {
+        // SDK 模式下不输出
+      } else {
+        console.log(`✅ MCP Server connected`);
+      }
     } catch (error) {
       console.error(`❌ [mcp] Failed to connect MCP Server: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
@@ -140,7 +146,10 @@ export class MCPServer {
     }
 
     const transportType = this.getTransportType();
-    console.log(`Connecting to MCP Server at ${this.config.url} (${transportType})`);
+    const session = getSingletonSession();
+    if (!session?.getIsSdkMode()) {
+      console.log(`Connecting to MCP Server at ${this.config.url} (${transportType})`);
+    }
 
     // Build headers with auth token
     const headers: Record<string, string> = {
@@ -324,7 +333,12 @@ export class MCPServer {
         if (!tool.name || typeof tool.name !== 'string' || tool.name.trim() === '') continue;
         this.tools.set(tool.name, tool);
       }
-      console.log(`Loaded ${result.tools.length} tools from MCP Server`);
+      const session = getSingletonSession();
+      if (session?.getIsSdkMode()) {
+        // SDK 模式下不输出
+      } else {
+        console.log(`Loaded ${result.tools.length} tools from MCP Server`);
+      }
     }
   }
 

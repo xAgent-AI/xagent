@@ -186,6 +186,10 @@ export class InteractiveSession {
   setSdkMode(adapter: SdkOutputAdapter): void {
     this.isSdkMode = true;
     this.sdkOutputAdapter = adapter;
+    // Initialize tool registry in SDK mode (fire and forget, doesn't need to await)
+    this.initToolRegistrySdkMode(adapter).catch(() => {
+      // Silently ignore errors - tool registry init is not critical
+    });
   }
 
   /**
@@ -268,11 +272,13 @@ export class InteractiveSession {
           
           if (state.lastSkillUpdate && state.lastSkillUpdate > lastUpdateTime) {
             lastUpdateTime = state.lastSkillUpdate;
-            
+
             // Update system prompt with new skills
             await this.updateSystemPrompt();
-            
-            console.log(colors.textMuted('  🔄 Skills updated from CLI'));
+
+            if (!this.isSdkMode) {
+              console.log(colors.textMuted('  🔄 Skills updated from CLI'));
+            }
           }
         }
       } catch {
@@ -296,33 +302,37 @@ export class InteractiveSession {
     this.currentTaskId = crypto.randomUUID();
 
     const _separator = icons.separator.repeat(60);
-    console.log('');
-    console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
-    console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
-    console.log(
-      colors.gradient('║') +
-        ' '.repeat(13) +
-        '🤖 ' +
-        colors.gradient('XAGENT CLI') +
-        ' '.repeat(32) +
-        colors.gradient('  ║')
-    );
-    console.log(
-      colors.gradient('║') +
-        ' '.repeat(16) +
-        colors.textMuted(`v${packageJson.version}`) +
-        ' '.repeat(36) +
-        colors.gradient('  ║')
-    );
-    console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
-    console.log(colors.gradient('╚════════════════════════════════════════════════════════════╝'));
-    console.log(colors.textMuted('  AI-powered command-line assistant'));
 
-    // Show initialization message if skills were initialized
-    if (initializedCount > 0) {
-      console.log(colors.textMuted(`  ✨ Initialized ${initializedCount} built-in skills`));
+    if (!this.isSdkMode) {
+      // Normal mode: show ASCII art welcome
+      console.log('');
+      console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
+      console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
+      console.log(
+        colors.gradient('║') +
+          ' '.repeat(13) +
+          '🤖 ' +
+          colors.gradient('XAGENT CLI') +
+          ' '.repeat(32) +
+          colors.gradient('  ║')
+      );
+      console.log(
+        colors.gradient('║') +
+          ' '.repeat(16) +
+          colors.textMuted(`v${packageJson.version}`) +
+          ' '.repeat(36) +
+          colors.gradient('  ║')
+      );
+      console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
+      console.log(colors.gradient('╚════════════════════════════════════════════════════════════╝'));
+      console.log(colors.textMuted('  AI-powered command-line assistant'));
+
+      // Show initialization message if skills were initialized
+      if (initializedCount > 0) {
+        console.log(colors.textMuted(`  ✨ Initialized ${initializedCount} built-in skills`));
+      }
+      console.log('');
     }
-    console.log('');
 
     await this.initialize();
     this.showWelcomeMessage();
@@ -527,31 +537,49 @@ export class InteractiveSession {
 
       const mcpServers = this.configManager.getMcpServers();
       Object.entries(mcpServers).forEach(([name, config]) => {
-        console.log(`📝 Registering MCP server: ${name} (${config.transport})`);
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputMCPRegistering(name, config.transport || 'stdio');
+        } else {
+          console.log(`📝 Registering MCP server: ${name} (${config.transport})`);
+        }
         this.mcpManager.registerServer(name, config);
       });
 
       // Eagerly connect to MCP servers to get tool definitions
       if (mcpServers && Object.keys(mcpServers).length > 0) {
         try {
-          console.log(
-            `${colors.info(`${icons.brain} Connecting to ${Object.keys(mcpServers).length} MCP server(s)...`)}`
-          );
+          const serverCount = Object.keys(mcpServers).length;
+          if (this.isSdkMode && this.sdkOutputAdapter) {
+            this.sdkOutputAdapter.outputMCPLoading(serverCount);
+          } else {
+            console.log(
+              `${colors.info(`${icons.brain} Connecting to ${serverCount} MCP server(s)...`)}`
+            );
+          }
           await this.mcpManager.connectAllServers();
           const connectedCount = Array.from(this.mcpManager.getAllServers()).filter((s: any) =>
             s.isServerConnected()
           ).length;
           const mcpTools = this.mcpManager.getToolDefinitions();
-          console.log(
-            `${colors.success(`✓ ${connectedCount}/${Object.keys(mcpServers).length} MCP server(s) connected (${mcpTools.length} tools available)`)}`
-          );
+
+          if (this.isSdkMode && this.sdkOutputAdapter) {
+            this.sdkOutputAdapter.outputMCPConnected(serverCount, connectedCount, mcpTools.length);
+          } else {
+            console.log(
+              `${colors.success(`✓ ${connectedCount}/${serverCount} MCP server(s) connected (${mcpTools.length} tools available)`)}`
+            );
+          }
 
           // Register MCP tools with the tool registry (hide MCP origin from LLM)
           const toolRegistry = getToolRegistry();
           const allMcpTools = this.mcpManager.getAllTools();
           toolRegistry.registerMCPTools(allMcpTools);
         } catch (error: any) {
-          console.log(`${colors.warning(`⚠ MCP connection failed: ${error.message}`)}`);
+          if (this.isSdkMode && this.sdkOutputAdapter) {
+            this.sdkOutputAdapter.outputMCPConnectionFailed(error.message);
+          } else {
+            console.log(`${colors.warning(`⚠ MCP connection failed: ${error.message}`)}`);
+          }
         }
       }
 
@@ -567,7 +595,11 @@ export class InteractiveSession {
 
       this.currentAgent = this.agentManager.getAgent('general-purpose') ?? null;
 
-      console.log(colors.success('✔ Initialization complete'));
+      if (this.isSdkMode && this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputSuccess('Initialization complete');
+      } else {
+        console.log(colors.success('✔ Initialization complete'));
+      }
     } catch (error: any) {
       const spinner = ora({ text: '', spinner: 'dots', color: 'red' }).start();
       spinner.fail(colors.error(`Initialization failed: ${error.message}`));
@@ -678,10 +710,14 @@ export class InteractiveSession {
     // VLM configuration is optional - only show for non-OAuth (local) mode
     // Remote mode uses backend VLM configuration
     if (authType !== AuthType.OAUTH_XAGENT) {
-      console.log('');
-      console.log(colors.info(`${icons.info} VLM configuration is optional.`));
-      console.log(colors.info(`You can configure it later using the /model command if needed.`));
-      console.log('');
+      if (this.isSdkMode && this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputInfo('VLM configuration is optional. You can configure it later using the /model command if needed.');
+      } else {
+        console.log('');
+        console.log(colors.info(`${icons.info} VLM configuration is optional.`));
+        console.log(colors.info(`You can configure it later using the /model command if needed.`));
+        console.log('');
+      }
     }
 
     this.configManager.setAuthConfig(authConfig);
@@ -702,19 +738,21 @@ export class InteractiveSession {
     const language = this.configManager.getLanguage();
     const separator = icons.separator.repeat(40);
 
-    console.log('');
-    console.log(colors.border(separator));
+    if (!this.isSdkMode) {
+      console.log('');
+      console.log(colors.border(separator));
 
-    if (language === 'zh') {
-      console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
-      console.log(colors.textMuted('Type /help to see available commands'));
-    } else {
-      console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
-      console.log(colors.textMuted('Type /help to see available commands'));
+      if (language === 'zh') {
+        console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
+        console.log(colors.textMuted('Type /help to see available commands'));
+      } else {
+        console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
+        console.log(colors.textMuted('Type /help to see available commands'));
+      }
+
+      console.log(colors.border(separator));
+      console.log('');
     }
-
-    console.log(colors.border(separator));
-    console.log('');
 
     this.showExecutionMode();
 
@@ -810,10 +848,12 @@ export class InteractiveSession {
     const config = modeConfig[this.executionMode];
     const modeName = this.executionMode;
 
-    console.log(colors.textMuted(`${icons.info} Current Mode:`));
-    console.log(`  ${config.color(config.icon)} ${styleHelpers.text.bold(config.color(modeName))}`);
-    console.log(`  ${colors.textDim(`  ${config.description}`)}`);
-    console.log('');
+    if (!this.isSdkMode) {
+      console.log(colors.textMuted(`${icons.info} Current Mode:`));
+      console.log(`  ${config.color(config.icon)} ${styleHelpers.text.bold(config.color(modeName))}`);
+      console.log(`  ${colors.textDim(`  ${config.description}`)}`);
+      console.log('');
+    }
 
     this.showRemoteModelInfo();
   }
@@ -822,6 +862,21 @@ export class InteractiveSession {
     const authConfig = this.configManager.getAuthConfig();
     const isRemote = authConfig.type === AuthType.OAUTH_XAGENT;
 
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      // SDK 模式：通过 adapter 输出
+      if (isRemote) {
+        const llmModel = authConfig.remote_llmModelName || 'Not set';
+        const vlmModel = authConfig.remote_vlmModelName || 'Not set';
+        this.sdkOutputAdapter.outputInfo(`Remote Models - LLM: ${llmModel}, VLM: ${vlmModel}`);
+      } else {
+        const modelName = authConfig.modelName || 'Not set';
+        const guiSubagentModel = this.configManager.get('guiSubagentModel') || 'Not set';
+        this.sdkOutputAdapter.outputInfo(`Local Models - LLM: ${modelName}, VLM: ${guiSubagentModel}`);
+      }
+      return;
+    }
+
+    // 正常模式：控制台输出
     if (isRemote) {
       const llmModel = authConfig.remote_llmModelName || colors.textMuted('Not set');
       const vlmModel = authConfig.remote_vlmModelName || colors.textMuted('Not set');

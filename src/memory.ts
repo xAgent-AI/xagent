@@ -2,26 +2,41 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
-import { glob } from 'glob';
+import crypto from 'crypto';
 
 export interface MemoryFile {
   path: string;
   content: string;
   level: 'global' | 'project' | 'subdirectory';
+  projectRoot?: string;
 }
 
 export class MemoryManager {
+  private memoriesDir: string;
   private globalMemoryPath: string;
   private projectMemoryPath: string;
+  private projectRoot: string | null = null;
   private memoryFiles: MemoryFile[] = [];
   private contextFileNames: string | string[];
 
   constructor(projectRoot?: string, contextFileName: string | string[] = 'XAGENT.md') {
-    this.globalMemoryPath = path.join(os.homedir(), '.xagent', 'XAGENT.md');
-    this.projectMemoryPath = projectRoot 
-      ? path.join(projectRoot, 'XAGENT.md')
-      : '';
+    this.memoriesDir = path.join(os.homedir(), '.xagent', 'memories');
+    this.globalMemoryPath = path.join(this.memoriesDir, 'global.md');
+
+    if (projectRoot) {
+      this.projectRoot = path.resolve(projectRoot);
+      this.projectMemoryPath = this.getProjectMemoryPath(this.projectRoot);
+    } else {
+      this.projectMemoryPath = '';
+    }
     this.contextFileNames = contextFileName;
+  }
+
+  private getProjectMemoryPath(projectRoot: string): string {
+    const hash = crypto.createHash('md5').update(projectRoot).digest('hex').substring(0, 16);
+    const sanitizedName = projectRoot.replace(/[:/\\]/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
+    const name = sanitizedName.length > 50 ? sanitizedName.substring(0, 50) : sanitizedName;
+    return path.join(this.memoriesDir, `project_${name}_${hash}.md`);
   }
 
   async loadMemory(): Promise<string> {
@@ -32,6 +47,15 @@ export class MemoryManager {
     if (globalMemory) {
       this.memoryFiles.push(globalMemory);
       combinedMemory += globalMemory.content + '\n\n';
+    } else {
+      // Global memory not found, create default content
+      const defaultContent = '# Global Context\n\nGlobal preferences and settings will be added here.';
+      await this.saveMemory(defaultContent, 'global');
+      const newMemory = await this.loadMemoryFile(this.globalMemoryPath, 'global');
+      if (newMemory) {
+        this.memoryFiles.push(newMemory);
+        combinedMemory += newMemory.content + '\n\n';
+      }
     }
 
     if (this.projectMemoryPath) {
@@ -40,12 +64,16 @@ export class MemoryManager {
         this.memoryFiles.push(projectMemory);
         combinedMemory += projectMemory.content + '\n\n';
       }
-
-      const subdirectoryMemories = await this.loadSubdirectoryMemories();
-      for (const memory of subdirectoryMemories) {
-        this.memoryFiles.push(memory);
-        combinedMemory += memory.content + '\n\n';
-      }
+      // else {
+      //   // Project memory not found, create default content
+      //   const defaultContent = '# Project Context\n\nProject-specific context will be added here.';
+      //   await this.saveMemory(defaultContent, 'project');
+      //   const newMemory = await this.loadMemoryFile(this.projectMemoryPath, 'project');
+      //   if (newMemory) {
+      //     this.memoryFiles.push(newMemory);
+      //     combinedMemory += newMemory.content + '\n\n';
+      //   }
+      // }
     }
 
     return this.processImports(combinedMemory);
@@ -63,36 +91,36 @@ export class MemoryManager {
     }
   }
 
-  private async loadSubdirectoryMemories(): Promise<MemoryFile[]> {
-    const memories: MemoryFile[] = [];
+  // private async loadSubdirectoryMemories(): Promise<MemoryFile[]> {
+  //   const memories: MemoryFile[] = [];
     
-    if (!this.projectMemoryPath) {
-      return memories;
-    }
+  //   if (!this.projectMemoryPath) {
+  //     return memories;
+  //   }
 
-    const projectRoot = path.dirname(this.projectMemoryPath);
+  //   const projectRoot = path.dirname(this.projectMemoryPath);
     
-    try {
-      const files = await glob('**/XAGENT.md', {
-        cwd: projectRoot,
-        ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
-      });
+  //   try {
+  //     const files = await glob('**/XAGENT.md', {
+  //       cwd: projectRoot,
+  //       ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
+  //     });
 
-      for (const file of files) {
-        if (file !== 'XAGENT.md') {
-          const filePath = path.join(projectRoot, file);
-          const memory = await this.loadMemoryFile(filePath, 'subdirectory');
-          if (memory) {
-            memories.push(memory);
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Failed to load subdirectory memories:', error);
-    }
+  //     for (const file of files) {
+  //       if (file !== 'XAGENT.md') {
+  //         const filePath = path.join(projectRoot, file);
+  //         const memory = await this.loadMemoryFile(filePath, 'subdirectory');
+  //         if (memory) {
+  //           memories.push(memory);
+  //         }
+  //       }
+  //     }
+  //   } catch (error) {
+  //     console.error('Failed to load subdirectory memories:', error);
+  //   }
 
-    return memories;
-  }
+  //   return memories;
+  // }
 
   private processImports(content: string): string {
     // Only match actual import statements: import ... from '@xxx' or import '@xxx'
@@ -120,7 +148,7 @@ export class MemoryManager {
       }
     };
 
-    let maxIterations = 10;
+    const maxIterations = 10;
     let iterations = 0;
 
     while (importRegex.test(processedContent) && iterations < maxIterations) {
@@ -133,7 +161,7 @@ export class MemoryManager {
 
   async saveMemory(content: string, scope: 'global' | 'project' = 'global'): Promise<void> {
     const filePath = scope === 'global' ? this.globalMemoryPath : this.projectMemoryPath;
-    
+
     if (!filePath) {
       throw new Error('Project memory path not set');
     }
@@ -142,7 +170,7 @@ export class MemoryManager {
     await fs.mkdir(dir, { recursive: true });
 
     await fs.writeFile(filePath, content, 'utf-8');
-    
+
     if (scope === 'global') {
       const existingMemory = this.memoryFiles.find(m => m.level === 'global');
       if (existingMemory) {
@@ -150,12 +178,19 @@ export class MemoryManager {
       } else {
         this.memoryFiles.push({ path: filePath, content, level: 'global' });
       }
+    } else {
+      const existingMemory = this.memoryFiles.find(m => m.level === 'project');
+      if (existingMemory) {
+        existingMemory.content = content;
+      } else {
+        this.memoryFiles.push({ path: filePath, content, level: 'project', projectRoot: this.projectRoot || undefined });
+      }
     }
   }
 
   async addMemoryEntry(entry: string, scope: 'global' | 'project' = 'global'): Promise<void> {
     const filePath = scope === 'global' ? this.globalMemoryPath : this.projectMemoryPath;
-    
+
     if (!filePath) {
       throw new Error('Project memory path not set');
     }
@@ -177,9 +212,14 @@ export class MemoryManager {
     return [...this.memoryFiles];
   }
 
+  getMemoriesDir(): string {
+    return this.memoriesDir;
+  }
+
   async initializeProject(projectRoot: string): Promise<void> {
-    this.projectMemoryPath = path.join(projectRoot, 'XAGENT.md');
-    
+    this.projectRoot = path.resolve(projectRoot);
+    this.projectMemoryPath = this.getProjectMemoryPath(this.projectRoot);
+
     const existingMemory = await this.loadMemoryFile(this.projectMemoryPath, 'project');
     if (existingMemory) {
       console.log('XAGENT.md already exists. Skipping initialization.');
@@ -257,7 +297,7 @@ export class MemoryManager {
     try {
       const content = await fs.readFile(filePath, 'utf-8');
       return JSON.parse(content);
-    } catch (error) {
+    } catch {
       return null;
     }
   }

@@ -3,6 +3,8 @@ import { ExecutionMode, AgentConfig } from './types.js';
 import { getAgentManager } from './agents.js';
 import { getSkillInvoker, SkillInfo } from './skill-invoker.js';
 import { MCPManager } from './mcp.js';
+import { getPowerShellVersion } from './shell.js';
+import os from 'os';
 
 export interface ToolParameter {
   type: string;
@@ -26,12 +28,68 @@ export class SystemPromptGenerator {
   private executionMode: ExecutionMode;
   private agentConfig?: AgentConfig;
   private mcpManager?: MCPManager;
+  private cachedEnvironmentInfo: string;
 
   constructor(toolRegistry: ToolRegistry, executionMode: ExecutionMode, agentConfig?: AgentConfig, mcpManager?: MCPManager) {
     this.toolRegistry = toolRegistry;
     this.executionMode = executionMode;
     this.agentConfig = agentConfig;
     this.mcpManager = mcpManager;
+    this.cachedEnvironmentInfo = this.generateEnvironmentInfo();
+  }
+
+  /**
+   * Generate and cache system environment information
+   * Called once in constructor, reused for all subsequent prompts
+   */
+  private generateEnvironmentInfo(): string {
+    const platform = os.platform();
+    const _arch = os.arch();
+    const nodeVersion = process.version;
+    const cwd = process.cwd();
+    const homeDir = os.homedir();
+    const username = os.userInfo().username;
+    const currentDate = new Date().toISOString().split('T')[0];
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // Map platform to human-readable OS name
+    const osName: Record<string, string> = {
+      'win32': 'Windows',
+      'darwin': 'macOS',
+      'linux': 'Linux'
+    };
+
+    // Get PowerShell version for Windows
+    const psVersion = platform === 'win32' ? getPowerShellVersion() : 'N/A';
+    const psMajorVersion = parseInt(psVersion.split('.')[0], 10);
+    const psSupportsChaining = !isNaN(psMajorVersion) && psMajorVersion >= 7;
+
+    // Generate PowerShell syntax rules
+    let psSyntaxRules = '';
+    if (platform === 'win32') {
+      if (psSupportsChaining) {
+        psSyntaxRules = `
+**PowerShell Syntax** (v${psVersion}):
+- Supports \`&&\` and \`||\` for command chaining
+- Also supports \`;\` for sequential execution`;
+      } else {
+        psSyntaxRules = `
+**PowerShell Syntax** (v${psVersion}):
+- Does NOT support \`&&\` or \`||\` (use \`;\` instead)
+- Use \`if ($?) { cmd2 }\` for conditional execution
+- Common: \`ls\`→\`dir\`, \`cat\`→\`type\`, \`rm\`→\`Remove-Item\`, \`sleep\`→\`Start-Sleep\``;
+      }
+    }
+
+    return `
+## System Environment Information
+
+- **Operating System**: ${osName[platform] || platform} (${platform}) ${os.arch()}
+- **Node.js Version**: ${nodeVersion}
+- **Current Working Directory**: ${cwd}
+- **User Home Directory**: ${homeDir}
+- **Current User**: ${username}
+- **Current Date**: ${currentDate} (Timezone: ${timeZone})${psSyntaxRules}`;
   }
 
   async generateEnhancedSystemPrompt(baseSystemPrompt: string): Promise<string> {
@@ -46,9 +104,12 @@ export class SystemPromptGenerator {
     }
 
     // Get available local tools (includes MCP wrapper tools registered via registerMCPTools)
-    let allAvailableTools = localTools;
+    const allAvailableTools = localTools;
 
     let enhancedPrompt = baseSystemPrompt;
+
+    // Add system environment information (cached in constructor)
+    enhancedPrompt += this.cachedEnvironmentInfo;
 
     // Only add tool-related content if tools are available
     if (allAvailableTools.length > 0) {
@@ -190,7 +251,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       },
       Grep: {
         name: 'Grep',
-        description: 'Search for text patterns across multiple files',
+        description: 'Search for text patterns across multiple files using ripgrep',
         parameters: {
           pattern: {
             type: 'string',
@@ -203,23 +264,18 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
             required: false,
             default: '.'
           },
-          include: {
+          glob: {
             type: 'string',
             description: 'File pattern to include (glob)',
             required: false
           },
-          exclude: {
-            type: 'string',
-            description: 'File pattern to exclude (glob)',
-            required: false
-          },
-          case_sensitive: {
+          ignoreCase: {
             type: 'boolean',
-            description: 'Whether search is case-sensitive',
+            description: 'Case-insensitive search',
             required: false,
             default: false
           },
-          fixed_strings: {
+          literal: {
             type: 'boolean',
             description: 'Treat pattern as literal string, not regex',
             required: false,
@@ -230,34 +286,24 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
             description: 'Number of context lines before and after match',
             required: false
           },
-          before: {
+          limit: {
             type: 'number',
-            description: 'Number of context lines before match',
+            description: 'Maximum number of matches to return',
             required: false
-          },
-          after: {
-            type: 'number',
-            description: 'Number of context lines after match',
-            required: false
-          },
-          no_ignore: {
-            type: 'boolean',
-            description: 'Ignore .gitignore patterns',
-            required: false,
-            default: false
           }
         },
         usage: 'Search for code patterns, function definitions, or text across the codebase',
         examples: [
           'Search for function: Grep(pattern="function.*\\(.*\\)")',
-          'Find specific text: Grep(pattern="TODO", case_sensitive=true)',
-          'Search in specific files: Grep(pattern="import", include="*.ts")'
+          'Find specific text: Grep(pattern="TODO", ignoreCase=true)',
+          'Search in specific files: Grep(pattern="import", glob="*.ts")',
+          'Literal search: Grep(pattern="*.ts", literal=true)'
         ],
         bestPractices: [
-          'Use fixed_strings for simple text searches',
+          'Use literal=true for simple text searches',
           'Use context to see surrounding code',
-          'Narrow search with include/exclude patterns',
-          'Use case_sensitive for exact matches'
+          'Narrow search with glob pattern',
+          'Use ignoreCase=true for case-insensitive matching'
         ]
       },
       Bash: {
@@ -333,30 +379,35 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
           'Check directory existence first'
         ]
       },
-      SearchCodebase: {
-        name: 'SearchCodebase',
-        description: 'Semantic search through the codebase using embeddings',
+      SearchFiles: {
+        name: 'SearchFiles',
+        description: 'Search for files matching a glob pattern using fd (fast find)',
         parameters: {
-          query: {
+          pattern: {
             type: 'string',
-            description: 'Natural language query describing what to search for',
+            description: 'Glob pattern to match files (e.g., "**/*.ts")',
             required: true
           },
-          target_directories: {
-            type: 'array',
-            description: 'Specific directories to search in',
+          path: {
+            type: 'string',
+            description: 'Directory to search in',
+            required: false
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of results to return',
             required: false
           }
         },
-        usage: 'Find code by meaning rather than exact text matches',
+        usage: 'Find files by name or extension pattern using fast fd tool',
         examples: [
-          'Find authentication logic: SearchCodebase(query="how do we check authentication headers?")',
-          'Find error handling: SearchCodebase(query="where do we do error handling in the file watcher?")'
+          'Find all TypeScript files: SearchFiles(pattern="**/*.ts")',
+          'Find config files: SearchFiles(pattern="**/config.*")'
         ],
         bestPractices: [
-          'Use natural language queries',
-          'Be specific about what you are looking for',
-          'Combine with Read to examine found code'
+          'Use **/*.ts for recursive search',
+          'Combine with Read to examine found files',
+          'fd automatically respects .gitignore'
         ]
       },
       DeleteFile: {
@@ -399,21 +450,26 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
           'Create necessary parent directories automatically'
         ]
       },
-      Replace: {
-        name: 'Replace',
-        description: 'Replace text in a file using search and replace',
+      edit: {
+        name: 'Edit',
+        description: 'Edit a file by replacing exact text',
         parameters: {
-          filePath: {
+          file_path: {
             type: 'string',
             description: 'Path to the file to modify',
             required: true
           },
-          old_str: {
+          instruction: {
             type: 'string',
-            description: 'Text to search for',
+            description: 'Description of what to change',
             required: true
           },
-          new_str: {
+          old_string: {
+            type: 'string',
+            description: 'The exact text to find and replace',
+            required: true
+          },
+          new_string: {
             type: 'string',
             description: 'Text to replace with',
             required: true
@@ -421,10 +477,10 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
         },
         usage: 'Make targeted edits to files without rewriting entire content',
         examples: [
-          'Replace text: Replace(filePath="config.json", old_str="old value", new_str="new value")'
+          'Edit text: Edit(file_path="config.json", instruction="Update API endpoint", old_string="old value", new_string="new value")'
         ],
         bestPractices: [
-          'Use unique old_str to avoid multiple replacements',
+          'Use unique old_string to avoid multiple replacements',
           'Read file first to verify content',
           'Use Write for large changes'
         ]
@@ -536,14 +592,20 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
         ]
       },
       InvokeSkill: (() => {
-        // Build skills list string from the provided skills, including description
+        // Build skills list string from the available skills (no path/source info)
         const skillsList = skills && skills.length > 0
           ? skills.map(skill => `- ${skill.name}: ${skill.description}`).join('\n')
           : 'No skills available';
 
         return {
           name: 'InvokeSkill',
-          description: 'Invoke a specialized skill to get execution guidance for complex tasks. The skill will analyze your request and provide a step-by-step execution plan - you must follow these steps to complete the task.\n\n**Workflow**: Invoke skill → Receive guidance with nextSteps → Execute each step using appropriate tools → Complete the task.\n\n**Available Skills**:\n' + skillsList,
+          description: 'Invoke a specialized skill to get execution guidance for complex tasks. The skill will analyze your request and provide a step-by-step execution plan - you must follow these steps to complete the task.\n\n' +
+            '**Workflow**: Invoke skill → Receive result with nextSteps → Execute each step → Complete the task.\n\n' +
+            '**Dependency Management**: If a skill requires dependencies:\n' +
+            '  1. Use the skillPath from the result in BashTool\'s skillPath parameter\n' +
+            '  2. Install: `npm install <package>` with skillPath set\n' +
+            '  3. Dependencies are installed to the skill\'s local node_modules\n\n' +
+            '**Available Skills**:\n' + skillsList,
           parameters: {
             skillId: {
               type: 'string',
@@ -565,7 +627,9 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
           bestPractices: [
             'Invoke skill to get step-by-step execution guidance',
             'Follow the nextSteps provided by the skill in order',
-            'Use appropriate tools (Read/Write/Run) to execute each step'
+            'Use appropriate tools (Read/Write/Bash) to execute each step',
+            'When installing dependencies for a skill, use BashTool with skillPath parameter',
+            'Dependencies are installed to the skill\'s local node_modules directory'
           ]
         };
       })()
@@ -675,16 +739,16 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
     return output;
   }
 
-  private generateDecisionMakingGuide(availableTools: any[], skills: SkillInfo[] = []): string {
+  private generateDecisionMakingGuide(availableTools: any[], _skills: SkillInfo[] = []): string {
     // Tool name to short description mapping
     const toolDescriptions: Record<string, string> = {
       'Read': 'When you need to understand existing code, configuration, or documentation',
       'Write': 'When creating new files or completely replacing existing content',
       'Grep': 'When searching for specific patterns, function names, or text across files',
       'Bash': 'When running tests, installing dependencies, building projects, or executing terminal commands',
-      'SearchCodebase': 'When finding code by meaning rather than exact text matches',
+      'SearchFiles': 'When finding files by name or extension pattern',
       'ListDirectory': 'When exploring project structure or finding files',
-      'Replace': 'When making targeted edits without rewriting entire files',
+      'Edit': 'When making targeted edits without rewriting entire files',
       'web_search': 'When you need current information from the internet',
       'web_fetch': 'When retrieving content from specific URLs',
       'todo_write': 'When planning and tracking complex multi-step tasks',
@@ -721,7 +785,8 @@ ${toolsSection}
 When a user asks you to:
 - Read files → IMMEDIATELY call Read tool with the file path
 - List directory → IMMEDIATELY call ListDirectory tool
-- Search code → IMMEDIATELY call Grep or SearchCodebase tool
+- Search files → IMMEDIATELY call SearchFiles tool
+- Search code → IMMEDIATELY call Grep tool
 - Run commands → IMMEDIATELY call Bash tool
 - Introduce the codebase → IMMEDIATELY call ListDirectory and Read tools
 - Analyze the project → IMMEDIATELY call ListDirectory and Read tools
@@ -753,9 +818,9 @@ When a user asks you to:
 6. **EXECUTE IMMEDIATELY** - Make the tool call right away without delay
 
 ### Common Patterns
-- **Code exploration**: ListDirectory → Read → Grep/SearchCodebase
+- **Code exploration**: ListDirectory → Read → Grep/SearchFiles
 - **Feature implementation**: Read (existing code) → Write (new files) → Bash (test)
-- **Bug fixing**: Grep/SearchCodebase (find issue) → Read (understand) → Replace/Write (fix) → Bash (verify)
+- **Bug fixing**: Grep (find issue) → Read (understand) → Edit/Write (fix) → Bash (verify)
 - **Project setup**: WebSearch (research) → Write (create files) → Bash (install/build)
 - **Documentation**: Read (code) → Write (docs)
 

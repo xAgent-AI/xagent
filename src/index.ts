@@ -1,8 +1,7 @@
 export * from './types.js';
 export * from './config.js';
 export * from './auth.js';
-export * from './ai-client.js';
-export * from './tools.js';
+export { createAIClient, type AIClientInterface, createAIProvider, getAllModels, getProviderTypes } from './ai-client-factory.js';
 export * from './agents.js';
 export * from './memory.js';
 export * from './mcp.js';
@@ -16,3 +15,4 @@ export * from './conversation.js';
 export * from './update.js';
 export * from './cancellation.js';
 export * from './context-compressor.js';
+export * from './sdk-output-adapter.js';

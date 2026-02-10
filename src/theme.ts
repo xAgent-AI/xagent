@@ -1,5 +1,72 @@
 import chalk from 'chalk';
 
+/**
+ * Detect if terminal has dark or light background
+ * Returns 'dark' for dark backgrounds (default), 'light' for light backgrounds
+ */
+function getTerminalBackground(): 'dark' | 'light' {
+  // Check common environment variables
+  const colorfgbg = process.env.COLORFGBG; // e.g., "15;0" (light fg, dark bg)
+  const termProgram = process.env.TERM_PROGRAM;
+  const _termProgramVersion = process.env.TERM_PROGRAM_VERSION;
+
+  // Try to parse COLORFGBG (format: "fg;bg" or "fg;color;bg")
+  if (colorfgbg) {
+    const parts = colorfgbg.split(';');
+    const bg = parts[parts.length - 1];
+    // 0-6 are typically dark colors, 7-15 are light
+    const bgNum = parseInt(bg, 10);
+    if (!isNaN(bgNum)) {
+      // Most terminal colors: 0=black, 1=red, 2=green, ... 7=white, 8-15=bright variants
+      // For background: 0-6 = dark, 7 = light
+      if (bgNum >= 0 && bgNum <= 6) return 'dark';
+      if (bgNum >= 7) return 'light';
+    }
+  }
+
+  // iTerm2 on macOS can indicate background brightness
+  if (termProgram === 'Apple_Terminal' || termProgram === 'iTerm.app') {
+    // Apple Terminal and iTerm2 default to dark
+    return 'dark';
+  }
+
+  // Windows Terminal and VS Code Terminal typically dark
+  if (termProgram?.includes('WindowsTerminal') || termProgram?.includes('Code')) {
+    return 'dark';
+  }
+
+  // Default to dark background (most common for developers)
+  return 'dark';
+}
+
+/**
+ * Mix a color with background to create a transparent effect
+ * @param hexColor - The base color in hex format
+ * @param opacity - Opacity from 0 (background) to 1 (full color)
+ * @param background - Terminal background color ('dark' or 'light')
+ */
+function mixWithBackground(hexColor: string, opacity: number, background: 'dark' | 'light' = 'dark'): string {
+  const hex = hexColor.replace('#', '');
+  const r = parseInt(hex.substring(0, 2), 16);
+  const g = parseInt(hex.substring(2, 4), 16);
+  const b = parseInt(hex.substring(4, 6), 16);
+
+  // Background colors
+  const bg = background === 'dark'
+    ? { r: 0, g: 0, b: 0 }       // Black for dark terminals
+    : { r: 255, g: 255, b: 255 }; // White for light terminals
+
+  const mr = Math.round(bg.r + (r - bg.r) * opacity);
+  const mg = Math.round(bg.g + (g - bg.g) * opacity);
+  const mb = Math.round(bg.b + (b - bg.b) * opacity);
+
+  return `#${mr.toString(16).padStart(2, '0')}${mg.toString(16).padStart(2, '0')}${mb.toString(16).padStart(2, '0')}`;
+}
+
+// Get terminal background once at module load
+const TERMINAL_BG = getTerminalBackground();
+export { TERMINAL_BG, getTerminalBackground, mixWithBackground };
+
 type ColorFunction = (text: string) => string;
 
 interface BoxOptions {
@@ -15,7 +82,7 @@ interface SubAgentBoxOptions {
   accentColor?: ColorFunction;
 }
 
-interface BoxFunctions {
+interface _BoxFunctions {
   single: (content: string, options?: BoxOptions) => string;
   double: (content: string, options?: BoxOptions) => string;
   minimal: (content: string, options?: Omit<BoxOptions, 'title' | 'titleAlign'>) => string;
@@ -65,6 +132,13 @@ export const colors = {
   // Code block colors
   codeBackground: chalk.hex('#1f2937'), // Gray-800
   codeText: chalk.hex('#e5e7eb'), // Gray-200
+
+  // Diff colors - git-style diff highlighting with transparent backgrounds
+  diffAdded: chalk.hex('#10b981'),    // Green - added lines
+  diffRemoved: chalk.hex('#ef4444'),  // Red - removed lines
+  diffContext: chalk.hex('#6b7280'),  // Gray - context lines
+  diffAddedInverse: (text: string) => chalk.bgHex(mixWithBackground('#10b981', 0.25, TERMINAL_BG)).hex(TERMINAL_BG === 'dark' ? '#e5e7eb' : '#1f2937')(text), // Adaptive green bg
+  diffRemovedInverse: (text: string) => chalk.bgHex(mixWithBackground('#ef4444', 0.25, TERMINAL_BG)).hex(TERMINAL_BG === 'dark' ? '#e5e7eb' : '#1f2937')(text), // Adaptive red bg
 
   // Gradient colors
   gradient: (text: string) => {
@@ -210,13 +284,13 @@ export const styleHelpers = {
       const chars = styleHelpers.border.single;
       const availableWidth = width - 4;
 
-      let lines: string[] = [];
+      const lines: string[] = [];
 
       if (title) {
         const titleContent = ` ${title} `;
         const paddingNeeded = availableWidth - titleContent.length;
-        let leftPad = titleAlign === 'center' ? Math.floor(paddingNeeded / 2) : (titleAlign === 'right' ? paddingNeeded : 0);
-        let rightPad = titleAlign === 'center' ? Math.ceil(paddingNeeded / 2) : (titleAlign === 'right' ? 0 : paddingNeeded);
+        const leftPad = titleAlign === 'center' ? Math.floor(paddingNeeded / 2) : (titleAlign === 'right' ? paddingNeeded : 0);
+        const rightPad = titleAlign === 'center' ? Math.ceil(paddingNeeded / 2) : (titleAlign === 'right' ? 0 : paddingNeeded);
 
         lines.push(`${indent}${chars.topLeft}${' '.repeat(leftPad)}${titleContent}${' '.repeat(rightPad)}${chars.topRight}`);
       } else {
@@ -240,13 +314,13 @@ export const styleHelpers = {
       const chars = styleHelpers.border.double;
       const availableWidth = width - 4;
 
-      let lines: string[] = [];
+      const lines: string[] = [];
 
       if (title) {
         const titleContent = ` ${title} `;
         const paddingNeeded = availableWidth - titleContent.length;
-        let leftPad = titleAlign === 'center' ? Math.floor(paddingNeeded / 2) : (titleAlign === 'right' ? paddingNeeded : 0);
-        let rightPad = titleAlign === 'center' ? Math.ceil(paddingNeeded / 2) : (titleAlign === 'right' ? 0 : paddingNeeded);
+        const leftPad = titleAlign === 'center' ? Math.floor(paddingNeeded / 2) : (titleAlign === 'right' ? paddingNeeded : 0);
+        const rightPad = titleAlign === 'center' ? Math.ceil(paddingNeeded / 2) : (titleAlign === 'right' ? 0 : paddingNeeded);
 
         lines.push(`${indent}${chars.topLeft}${' '.repeat(leftPad)}${titleContent}${' '.repeat(rightPad)}${chars.topRight}`);
       } else {
@@ -290,6 +364,7 @@ export const styleHelpers = {
       const availableWidth = width - 2;
 
       const headerContent = `${colors.primaryBright(agentName)}: ${description}`;
+      // eslint-disable-next-line no-control-regex
       const headerContentLength = headerContent.replace(/\x1b\[[0-9;]*m/g, '').length;
       const headerFillLength = Math.max(0, availableWidth - 3 - headerContentLength);
       const headerLine = `${indent}${accentColor(chars.topLeft)}${accentColor('─── ')}${headerContent} ${accentColor('─'.repeat(headerFillLength))}${accentColor(chars.topRight)}`;
@@ -450,6 +525,216 @@ export function renderMarkdown(text: string, maxWidth: number = 80): string {
   }
 
   return result.join('\n');
+}
+
+/**
+ * Parse a single diff line.
+ * Format: "+<num> content" or "-<num> content" or " <num> content"
+ * Also handles: "+<num>..." for skipped lines
+ */
+function parseDiffLine(line: string): { prefix: string; lineNum: string; content: string } | null {
+  // Skip empty lines
+  if (!line || line.trim() === '') return null;
+
+  const firstChar = line[0];
+  if (!['+', '-', ' '].includes(firstChar)) {
+    // Try to detect if this is a diff-like line with different format
+    // e.g., "+  1 content" (with padding)
+    const match = line.match(/^[+\-\s]\s*/);
+    if (match) {
+      // This looks like a diff line but with unexpected format
+      // Extract the content after the prefix
+      const afterPrefix = line.slice(match[0].length).trim();
+      return { prefix: firstChar, lineNum: '', content: afterPrefix };
+    }
+    return null;
+  }
+
+  // Extract content after the prefix char
+  const afterPrefix = line.slice(1).trim();
+
+  // Check for skipped lines marker
+  if (afterPrefix === '...') {
+    return { prefix: firstChar, lineNum: '', content: '...' };
+  }
+
+  // Return the rest as content
+  return { prefix: firstChar, lineNum: '', content: afterPrefix };
+}
+
+/**
+ * Replace tabs with spaces for consistent rendering.
+ */
+function replaceTabs(text: string): string {
+  return text.replace(/\t/g, '   ');
+}
+
+/**
+ * Compute word-level diff and render with inverse on changed parts.
+ * Uses diffWords which groups whitespace with adjacent words for cleaner highlighting.
+ */
+function renderIntraLineDiff(oldContent: string, newContent: string): { removedLine: string; addedLine: string } {
+  // Simple word diff without external dependency
+  const oldWords = oldContent.split(/(\s+)/);
+  const newWords = newContent.split(/(\s+)/);
+
+  let removedLine = '';
+  let addedLine = '';
+  let i = 0, j = 0;
+
+  while (i < oldWords.length || j < newWords.length) {
+    const oldWord = oldWords[i] || '';
+    const newWord = newWords[j] || '';
+
+    if (oldWord === newWord) {
+      removedLine += oldWord;
+      addedLine += newWord;
+      i++;
+      j++;
+    } else if (oldWord === '' || oldWord.match(/^\s+$/)) {
+      addedLine += newWord;
+      j++;
+    } else if (newWord === '' || newWord.match(/^\s+$/)) {
+      removedLine += oldWord;
+      i++;
+    } else {
+      // Simple heuristic: show removed with inverse, added with inverse
+      removedLine += colors.diffRemovedInverse(oldWord);
+      addedLine += colors.diffAddedInverse(newWord);
+      i++;
+      j++;
+    }
+  }
+
+  return { removedLine, addedLine };
+}
+
+/**
+ * Render a diff string with colored lines and intra-line change highlighting.
+ * - Context lines: gray
+ * - Removed lines: red
+ * - Added lines: green
+ */
+export function renderDiff(diffText: string): string {
+  if (!diffText) return '';
+
+  const lines = diffText.split('\n');
+  const result: string[] = [];
+
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const parsed = parseDiffLine(line);
+
+    if (!parsed) {
+      result.push(colors.diffContext(line));
+      i++;
+      continue;
+    }
+
+    if (parsed.prefix === '-') {
+      // Collect consecutive removed lines
+      const removedLines: { lineNum: string; content: string }[] = [];
+      while (i < lines.length) {
+        const p = parseDiffLine(lines[i]);
+        if (!p || p.prefix !== '-') break;
+        removedLines.push({ lineNum: p.lineNum, content: p.content });
+        i++;
+      }
+
+      // Collect consecutive added lines
+      const addedLines: { lineNum: string; content: string }[] = [];
+      while (i < lines.length) {
+        const p = parseDiffLine(lines[i]);
+        if (!p || p.prefix !== '+') break;
+        addedLines.push({ lineNum: p.lineNum, content: p.content });
+        i++;
+      }
+
+      // Intra-line diff for single line modification
+      if (removedLines.length === 1 && addedLines.length === 1) {
+        const removed = removedLines[0];
+        const added = addedLines[0];
+        const { removedLine, addedLine } = renderIntraLineDiff(replaceTabs(removed.content), replaceTabs(added.content));
+        const textColor = TERMINAL_BG === 'dark' ? '#e5e7eb' : '#1f2937';
+        result.push(chalk.bgHex(mixWithBackground('#ef4444', 0.25, TERMINAL_BG)).hex(textColor)(`-${removedLine}`));
+        result.push(chalk.bgHex(mixWithBackground('#10b981', 0.25, TERMINAL_BG)).hex(textColor)(`+${addedLine}`));
+      } else {
+        const textColor = TERMINAL_BG === 'dark' ? '#e5e7eb' : '#1f2937';
+        for (const removed of removedLines) {
+          result.push(chalk.bgHex(mixWithBackground('#ef4444', 0.25, TERMINAL_BG)).hex(textColor)(`-${replaceTabs(removed.content)}`));
+        }
+        for (const added of addedLines) {
+          result.push(chalk.bgHex(mixWithBackground('#10b981', 0.25, TERMINAL_BG)).hex(textColor)(`+${replaceTabs(added.content)}`));
+        }
+      }
+    } else if (parsed.prefix === '+') {
+      const textColor = TERMINAL_BG === 'dark' ? '#e5e7eb' : '#1f2937';
+      result.push(chalk.bgHex(mixWithBackground('#10b981', 0.25, TERMINAL_BG)).hex(textColor)(`+${replaceTabs(parsed.content)}`));
+      i++;
+    } else {
+      result.push(chalk.hex('#374151')(` ${replaceTabs(parsed.content)}`));
+      i++;
+    }
+  }
+
+  return result.join('\n');
+}
+
+/**
+ * Render a code preview with line numbers and syntax highlighting.
+ * Automatically adapts to dark/light terminal backgrounds.
+ */
+export function renderCodePreview(content: string, options: { filePath?: string; maxLines?: number; indent?: string } = {}): string {
+  const { filePath = '', maxLines = 10, indent = '' } = options;
+  const lines = content.split('\n');
+  const displayLines = lines.slice(0, maxLines);
+  const hasMore = lines.length > maxLines;
+
+  const textColor = TERMINAL_BG === 'dark' ? '#e5e7eb' : '#1f2931';
+  const bgColor = TERMINAL_BG === 'dark' ? '#1f2937' : '#f3f4f6';
+  const codeStyle = chalk.bgHex(bgColor).hex(textColor);
+
+  const lineNumWidth = String(displayLines.length).length;
+  const parts: string[] = [];
+
+  if (filePath) {
+    parts.push(`${indent}${chalk.hex(TERMINAL_BG === 'dark' ? '#22d3ee' : '#0891b2').bold(filePath)}`);
+  }
+
+  displayLines.forEach((line, idx) => {
+    const lineNum = String(idx + 1).padStart(lineNumWidth, ' ');
+    parts.push(`${indent} ${codeStyle(`${lineNum} │ ${line}`)}`);
+  });
+
+  if (hasMore) {
+    const dotsLine = `${indent}   ${chalk.hex(TERMINAL_BG === 'dark' ? '#6b7280' : '#9ca3af').dim('...')}`;
+    parts.push(dotsLine);
+  }
+
+  return parts.join('\n');
+}
+
+/**
+ * Render new file content in diff-like style (without line numbers).
+ * Uses + prefix for added lines.
+ */
+export function renderLines(content: string, options: { maxLines?: number; indent?: string } = {}): string {
+  const { maxLines = 20, indent = '' } = options;
+  const lines = content.split('\n').slice(0, maxLines);
+  const hasMore = content.split('\n').length > maxLines;
+
+  const textColor = TERMINAL_BG === 'dark' ? '#e5e7eb' : '#1f2937';
+  const bgColor = mixWithBackground('#10b981', 0.15, TERMINAL_BG);
+  const lineStyle = chalk.bgHex(bgColor).hex(textColor);
+
+  const parts: string[] = lines.map(line => `${indent}${lineStyle(`+ ${line}`)}`);
+
+  if (hasMore) {
+    parts.push(`${indent}${chalk.hex(TERMINAL_BG === 'dark' ? '#6b7280' : '#9ca3af').dim('...')}`);
+  }
+
+  return parts.join('\n');
 }
 
 export default theme;

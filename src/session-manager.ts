@@ -19,8 +19,8 @@ export class SessionManager {
     if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
       relativePath = resolvedProjectRoot;
     }
-    // Replace path separator with underscore，移除非法字符
-    const pathSegment = relativePath.replace(/[:\\\/]/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '');
+    // Replace path separator with underscore，remove illegal characters
+    const pathSegment = relativePath.replace(/[:\\/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
     // Build project-specific directory structure：路径信息_项目名
     this.sessionsDir = path.join(homeDir, '.xagent', 'sessions', `${pathSegment}_${projectName}`);
   }
@@ -41,13 +41,27 @@ export class SessionManager {
       for (const file of files) {
         if (file.endsWith('.json')) {
           const filePath = path.join(this.sessionsDir, file);
-          const content = await fs.readFile(filePath, 'utf-8');
-          const session: Session = JSON.parse(content);
-          this.sessions.set(session.id, session);
+          try {
+            const content = await fs.readFile(filePath, 'utf-8');
+            // Skip empty or invalid JSON files
+            if (!content || content.trim() === '') {
+              continue;
+            }
+            const session: Session = JSON.parse(content);
+            if (session && session.id) {
+              this.sessions.set(session.id, session);
+            }
+          } catch (parseError) {
+            // Skip files that can't be parsed (corrupted or empty)
+            console.warn(`Skipping invalid session file: ${file}`);
+          }
         }
       }
     } catch (error) {
-      console.error('Failed to load sessions:', error);
+      // Directory might not exist yet, which is fine
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.error('Failed to load sessions:', error);
+      }
     }
   }
 
@@ -191,7 +205,7 @@ export class SessionManager {
 
     try {
       await fs.unlink(filePath);
-    } catch (error) {
+    } catch {
       // File might not exist, that's okay
     }
 

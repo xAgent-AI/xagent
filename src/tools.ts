@@ -1,21 +1,22 @@
 import fs from 'fs/promises';
+import { select, text } from '@clack/prompts';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import readline from 'readline';
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
+import { spawn } from 'child_process';
 import { glob } from 'glob';
 import axios from 'axios';
-import inquirer from 'inquirer';
 import { Tool, ExecutionMode, AuthType } from './types.js';
-import type { Message, ToolDefinition } from './ai-client.js';
-import { colors, icons, styleHelpers } from './theme.js';
+import type { Message, ToolDefinition } from './ai-client/types.js';
+import { colors, icons } from './theme.js';
 import { getLogger } from './logger.js';
 import { getCancellationManager } from './cancellation.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
-import { InteractiveSession } from './session.js';
-
-const execAsync = promisify(exec);
+import { getSingletonSession } from './session.js';
+import { ripgrep, fdFind } from './ripgrep.js';
+import { getShellConfig, killProcessTree, quoteShellCommand } from './shell.js';
+import { truncateTail, buildTruncationNotice } from './truncate.js';
+import { createAIClient } from './ai-client-factory.js';
 
 //
 // Tool Description Pattern
@@ -70,9 +71,17 @@ export class ReadTool implements Tool {
 - Combine with ListDirectory to explore project structure first
 - Don't re-read files unnecessarily`;
 
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
   async execute(params: { filePath: string; offset?: number; limit?: number }): Promise<string> {
+    if (!params || typeof params.filePath !== 'string') {
+      throw new Error('filePath is required and must be a string');
+    }
     const { filePath, offset = 0, limit } = params;
 
     try {
@@ -89,13 +98,24 @@ export class ReadTool implements Tool {
       }
       const absolutePath = path.resolve(resolvedPath);
       const content = await fs.readFile(absolutePath, 'utf-8');
-      
+
       const lines = content.split('\n');
+      const totalLines = lines.length;
       const startLine = Math.max(0, offset);
-      const endLine = limit !== undefined ? Math.min(lines.length, startLine + limit) : lines.length;
+      const endLine = limit !== undefined ? Math.min(totalLines, startLine + limit) : totalLines;
       const selectedLines = lines.slice(startLine, endLine);
-      
-      return selectedLines.join('\n');
+      const result = selectedLines.join('\n');
+
+      // Add truncation notice if content is limited
+      if (limit !== undefined && endLine < totalLines) {
+        const remaining = totalLines - endLine;
+        const nextOffset = endLine;
+        return (
+          result + `\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue]`
+        );
+      }
+
+      return result;
     } catch (error: any) {
       // Show user-friendly path in error message
       let displayPath = filePath;
@@ -123,7 +143,7 @@ export class WriteTool implements Tool {
 - When user explicitly asks to "create", "write", or "generate" a file
 
 # When NOT to Use
-- For making small edits to existing files (use Replace instead)
+- For making small edits to existing files (use edit instead)
 - When you only need to append content (read file first, then write)
 - For creating directories (use CreateDirectory instead)
 
@@ -139,22 +159,38 @@ export class WriteTool implements Tool {
 - Parent directories are created automatically
 - Use appropriate file extensions
 - Ensure content is complete and syntactically correct
-- For partial edits, use Replace tool instead`;
+- For partial edits, use Edit tool instead`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
-  async execute(params: { filePath: string; content: string }): Promise<{ success: boolean; message: string }> {
+  async execute(params: {
+    filePath: string;
+    content: string;
+  }): Promise<{
+    success: boolean;
+    message: string;
+    filePath: string;
+    lineCount: number;
+    preview?: string;
+  }> {
     const { filePath, content } = params;
-    
+
     try {
       const absolutePath = path.resolve(filePath);
       const dir = path.dirname(absolutePath);
-      
+
       await fs.mkdir(dir, { recursive: true });
       await fs.writeFile(absolutePath, content, 'utf-8');
-      
+
+      const lineCount = content.split('\n').length;
+      const preview = content.split('\n').slice(0, 10).join('\n');
+      const isTruncated = lineCount > 10;
+
       return {
         success: true,
-        message: `Successfully wrote to ${filePath}`
+        message: `Successfully wrote to ${filePath}`,
+        filePath,
+        lineCount,
+        preview: isTruncated ? preview + '\n...' : preview,
       };
     } catch (error: any) {
       throw new Error(`Failed to write file ${filePath}: ${error.message}`);
@@ -164,7 +200,7 @@ export class WriteTool implements Tool {
 
 export class GrepTool implements Tool {
   name = 'Grep';
-  description = `Search for text patterns within files using regex or literal string matching. This is your PRIMARY tool for finding specific code, functions, or content.
+  description = `Search for text patterns within files using ripgrep. This is your PRIMARY tool for finding specific code, functions, or content.
 
 # When to Use
 - Finding specific function definitions or calls
@@ -174,129 +210,67 @@ export class GrepTool implements Tool {
 - When you need line-by-line results with context
 
 # When NOT to Use
-- When you only need to find files containing text (use SearchCodebase instead)
-- When searching by file pattern rather than content (use SearchCodebase)
-- For very large codebases where you only need file names (SearchCodebase is faster)
+- When you only need to find files containing text (use SearchFiles instead)
+- When searching by file pattern rather than content (use SearchFiles)
+- For very large codebases where you only need file names (SearchFiles is faster)
 
 # Parameters
 - \`pattern\`: Regex or literal string to search for
 - \`path\`: (Optional) Directory to search in, default: "."
-- \`include\`: (Optional) File glob pattern to include
-- \`exclude\`: (Optional) File glob pattern to exclude
-- \`case_sensitive\`: (Optional) Case-sensitive search, default: false
-- \`fixed_strings\`: (Optional) Treat pattern as literal string, default: false
+- \`glob\`: (Optional) File glob pattern to include (e.g., "*.ts", "**/*.js")
+- \`ignoreCase\`: (Optional) Case-insensitive search, default: false
+- \`literal\`: (Optional) Treat pattern as literal string, default: false
 - \`context\`: (Optional) Lines of context before/after matches
-- \`no_ignore\`: (Optional) Don't ignore node_modules/.git, default: false
 
 # Examples
 - Find function: Grep(pattern="function myFunction")
 - Find with context: Grep(pattern="TODO", context=3)
-- TypeScript only: Grep(pattern="interface", include="*.ts")
+- TypeScript only: Grep(pattern="interface", glob="*.ts")
+- Case-insensitive: Grep(pattern="error", ignoreCase=true)
 
 # Best Practices
-- Use case_sensitive=true for short patterns to reduce false positives
-- Use fixed_strings=true if your pattern has special regex characters
+- Use ignoreCase=true for short patterns to reduce false positives
+- Use literal=true if your pattern has special regex characters
 - Use context to see the surrounding code for each match
-- Combine with include/exclude to narrow down file types`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+- Combine with glob to narrow down file types`;
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
   async execute(params: {
     pattern: string;
     path?: string;
-    include?: string;
-    exclude?: string;
-    case_sensitive?: boolean;
-    fixed_strings?: boolean;
+    glob?: string;
+    ignoreCase?: boolean;
+    literal?: boolean;
     context?: number;
-    after?: number;
-    before?: number;
-    no_ignore?: boolean;
+    limit?: number;
   }): Promise<string[]> {
     const {
       pattern,
       path: searchPath = '.',
-      include,
-      exclude,
-      case_sensitive = false,
-      fixed_strings = false,
+      glob: includeGlob,
+      ignoreCase = false,
+      literal = false,
       context,
-      after,
-      before,
-      no_ignore = false
+      limit,
     } = params;
-    
+
     try {
-      const ignorePatterns = no_ignore ? [] : ['node_modules/**', '.git/**', 'dist/**', 'build/**'];
-      if (exclude) {
-        ignorePatterns.push(exclude);
-      }
-      
-      const absolutePath = path.resolve(searchPath);
-      const files = await glob('**/*', {
-        cwd: absolutePath,
-        nodir: true,
-        ignore: ignorePatterns
+      const result = await ripgrep({
+        pattern,
+        path: searchPath,
+        glob: includeGlob,
+        ignoreCase,
+        literal,
+        context,
+        limit,
       });
 
-      const results: string[] = [];
-      
-      for (const file of files) {
-        const fullPath = path.join(absolutePath, file);
-        if (include && !file.match(include)) {
-          continue;
-        }
-        
-        try {
-          const content = await fs.readFile(fullPath, 'utf-8');
-          const lines = content.split('\n');
-          
-          lines.forEach((line, index) => {
-            let matches = false;
-            
-            if (fixed_strings) {
-              matches = case_sensitive 
-                ? line.includes(pattern)
-                : line.toLowerCase().includes(pattern.toLowerCase());
-            } else {
-              try {
-                const flags = case_sensitive ? 'g' : 'gi';
-                const regex = new RegExp(pattern, flags);
-                matches = regex.test(line);
-              } catch (e) {
-                matches = case_sensitive 
-                  ? line.includes(pattern)
-                  : line.toLowerCase().includes(pattern.toLowerCase());
-              }
-            }
-            
-            if (matches) {
-              const contextLines: string[] = [];
-              
-              if (before || context) {
-                const beforeCount = before || context || 0;
-                for (let i = Math.max(0, index - beforeCount); i < index; i++) {
-                  contextLines.push(`${fullPath}:${i + 1}:${lines[i].trim()}`);
-                }
-              }
-              
-              contextLines.push(`${fullPath}:${index + 1}:${line.trim()}`);
-              
-              if (after || context) {
-                const afterCount = after || context || 0;
-                for (let i = index + 1; i < Math.min(lines.length, index + 1 + afterCount); i++) {
-                  contextLines.push(`${fullPath}:${i + 1}:${lines[i].trim()}`);
-                }
-              }
-              
-              results.push(...contextLines);
-            }
-          });
-        } catch (error) {
-          continue;
-        }
-      }
-      
-      return results;
+      return result.split('\n').filter((line) => line.trim());
     } catch (error: any) {
       throw new Error(`Grep failed: ${error.message}`);
     }
@@ -316,9 +290,9 @@ export class BashTool implements Tool {
 - Any command-line operations
 
 # When NOT to Use
-- For file operations (use Read/Write/Replace/CreateDirectory instead)
+- For file operations (use Read/Write/Edit/CreateDirectory instead)
 - For searching file content (use Grep instead)
-- For finding files (use SearchCodebase or ListDirectory instead)
+- For finding files (use SearchFiles or ListDirectory instead)
 - For commands that require user interaction (non-interactive only)
 - For dangerous commands without understanding the impact
 
@@ -328,13 +302,23 @@ export class BashTool implements Tool {
 - \`description\`: (Optional) Description of what the command does
 - \`timeout\`: (Optional) Timeout in seconds, default: 120
 - \`run_in_bg\`: (Optional) Run in background, default: false
+- \`skillPath\`: (Optional) Skill directory path - when provided, NODE_PATH will include the skill's node_modules for dependency resolution
 
 # Examples
 - Install dependencies: Bash(command="npm install", description="Install npm dependencies")
+- Run in skill directory with local deps: Bash(command="npm install docx", skillPath="~/.xagent/skills/docx")
+
+# NODE_PATH Resolution
+When \`skillPath\` is provided, the command will have access to:
+- \`<skillPath>/node_modules\` (skill's local dependencies)
+- xAgent's global node_modules
+
+This is useful when working with skills that have local dependencies.
 - Run tests: Bash(command="npm test", description="Run unit tests")
 - Build project: Bash(command="npm run build", description="Build the project")
 
 # Best Practices
+- To install npm packages that persist across sessions, use: \`XAGENT_USER_NPM=1 npm install <package>\`
 - Always provide a description for context
 - Set appropriate timeout for long-running commands
 - Use run_in_bg=true for commands that take a long time
@@ -348,14 +332,25 @@ export class BashTool implements Tool {
     description?: string;
     timeout?: number;
     run_in_bg?: boolean;
-  }): Promise<{ stdout: string; stderr: string; exitCode: number; taskId?: string }> {
-    const { command, cwd, description, timeout = 120, run_in_bg = false } = params;
-    
+    skillPath?: string;  // Skill directory path for NODE_PATH resolution
+  }): Promise<{
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+    taskId?: string;
+    truncated?: boolean;
+    truncationNotice?: string;
+    skillPath?: string;
+  }> {
+    const { command, cwd, description, timeout = 120, run_in_bg = false, skillPath } = params;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    void description;
+
     // Determine effective working directory
     // Only use cwd if the command doesn't contain 'cd' (let LLM control directory)
     let effectiveCwd: string | undefined;
     const hasCdCommand = /cd\s+["']?[^"&|;]+["']?/.test(command);
-    
+
     if (cwd && !hasCdCommand) {
       // Command doesn't control its own directory, use provided cwd
       effectiveCwd = cwd;
@@ -366,81 +361,269 @@ export class BashTool implements Tool {
       // No cwd provided, use default
       effectiveCwd = undefined;
     }
-    
-    // Set up environment with NODE_PATH only for node commands
-    const nodeModulesPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules');
-    const env = {
+
+    // Resolve actual working directory
+    const actualCwd = effectiveCwd || process.cwd();
+
+    // Set up environment with NODE_PATH for node commands
+    const builtinNodeModulesPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'node_modules');
+
+    // Get user skills path from config (unified path: ~/.xagent/skills)
+    const { getConfigManager } = await import('./config.js');
+    const configManager = getConfigManager();
+    const userSkillsPath = configManager.getUserSkillsPath();
+
+    // Skill deps path: ~/.xagent/skills/{skillName}/node_modules
+    const builtinDepsPath = userSkillsPath ? path.join(userSkillsPath, 'builtin-deps') : null;
+
+    // Determine which node_modules to use
+    let skillNodeModulesPath: string | null = null;
+
+    // Priority 1: skillPath parameter (workspace scenario - LLM works in workspace, not skill dir)
+    if (skillPath) {
+      if (skillPath.includes('/builtin-deps/')) {
+        // Skill with deps in builtin-deps directory
+        const match = skillPath.match(/\/builtin-deps\/([^/]+)/);
+        if (match) {
+          skillNodeModulesPath = path.join(builtinDepsPath!, match[1], 'node_modules');
+        }
+      } else {
+        // Regular skill
+        skillNodeModulesPath = path.join(skillPath, 'node_modules');
+      }
+    }
+    // Priority 2: Check if we're inside a skill directory
+    else if (userSkillsPath && userSkillsPath.trim() && actualCwd.startsWith(userSkillsPath)) {
+      const relativePath = actualCwd.substring(userSkillsPath.length);
+      const pathParts = relativePath.split(path.sep).filter(Boolean);
+
+      if (pathParts.length > 0) {
+        if (pathParts[0] === 'builtin-deps' && pathParts.length > 1) {
+          // Skill with local deps in builtin-deps
+          const skillName = pathParts[1];
+          skillNodeModulesPath = path.join(builtinDepsPath!, skillName, 'node_modules');
+        } else {
+          // Regular skill
+          const skillName = pathParts[0];
+          const skillRoot = path.join(userSkillsPath, skillName);
+          try {
+            const skillMdPath = path.join(skillRoot, 'SKILL.md');
+            await fs.access(skillMdPath);
+            skillNodeModulesPath = path.join(skillRoot, 'node_modules');
+          } catch {
+            // Not a skill directory, skip
+          }
+        }
+      }
+    }
+
+    // Build NODE_PATH - skill's node_modules takes precedence (last-wins)
+    let nodePath: string;
+    if (skillNodeModulesPath) {
+      nodePath = `${skillNodeModulesPath}${path.delimiter}${builtinNodeModulesPath}`;
+    } else {
+      nodePath = builtinNodeModulesPath;
+    }
+
+    const env: Record<string, string> = {
       ...process.env,
-      NODE_PATH: nodeModulesPath
+      NODE_PATH: nodePath
     };
-    
-    // Only add NODE_PATH prefix for node commands
-    const isNodeCommand = /\bnode\b/.test(command);
-    const finalCommand = isNodeCommand 
-      ? `set NODE_PATH=${nodeModulesPath} && ${command}`
-      : command;
-    
+
+    // Handle npm install commands
+    const isNpmInstall = /\bnpm\s+install\b/i.test(command);
+    let finalCommand = command;
+
+    if (isNpmInstall && skillNodeModulesPath) {
+      // Install to skill's own node_modules
+      await fs.mkdir(skillNodeModulesPath, { recursive: true }).catch(() => {});
+      finalCommand = command.replace(/\bnpm\s+install\b/i, `npm install --prefix "${skillNodeModulesPath}"`);
+    }
+
+    // Get shell configuration (Windows Git Bash detection, etc.)
+    const { shell, args } = getShellConfig();
+
+    // Set up cross-platform encoding environment for command execution
+    if (process.platform === 'win32') {
+      // Windows: set code page to UTF-8 and ensure console output encoding
+      // chcp 65001 sets the console code page to UTF-8
+      // Use *>$null to suppress output (PowerShell-style, not CMD-style)
+      finalCommand = `chcp 65001 *>$null; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [System.Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${finalCommand}`;
+    } else {
+      // Unix/macOS: set locale to UTF-8 for proper encoding handling
+      finalCommand = `export LC_ALL=C.UTF-8; export LANG=C.UTF-8; export PYTHONIOENCODING=utf-8; ${finalCommand}`;
+    }
+
+    const shellArgs = [...args, quoteShellCommand(finalCommand)];
+
     try {
       if (run_in_bg) {
         const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        const childProcess = spawn(finalCommand, {
+
+        const spawnOptions: any = {
           cwd: effectiveCwd || process.cwd(),
-          shell: true,
-          detached: true,
-          env
-        });
-        
+          env,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        };
+
+        // On Windows, don't use detached mode for PowerShell as it breaks output piping
+        if (process.platform !== 'win32') {
+          spawnOptions.detached = true;
+        }
+
+        const childProcess = spawn(shell, shellArgs, spawnOptions);
+
         const output: string[] = [];
-        
+
         childProcess.stdout?.on('data', (data: Buffer) => {
           const text = data.toString();
           output.push(text);
         });
-        
+
         childProcess.stderr?.on('data', (data: Buffer) => {
           const text = data.toString();
           output.push(text);
         });
-        
-        childProcess.on('close', (code: number) => {
-          console.log(`Background task ${taskId} exited with code ${code}`);
+
+        childProcess.on('close', (_code: number) => {
+          // Silent cleanup - don't log to avoid noise during normal operation
+          // Note: On Windows with PowerShell, the shell process exits after
+          // the command completes
         });
-        
+
         const toolRegistry = getToolRegistry();
         (toolRegistry as any).addBackgroundTask(taskId, {
           process: childProcess,
           startTime: Date.now(),
-          output
+          output,
         });
-        
+
         return {
           stdout: '',
           stderr: '',
           exitCode: 0,
-          taskId
+          taskId,
         };
       } else {
-        const { stdout, stderr } = await execAsync(finalCommand, {
+        // Execute command with spawn for better control
+        const result = await this.spawnWithTimeout(shell, shellArgs, {
           cwd: effectiveCwd || process.cwd(),
-          maxBuffer: 1024 * 1024 * 10,
-          timeout: timeout * 1000,
-          env
+          env,
+          timeout,
         });
+
+        // Apply truncation to stdout and stderr separately
+        const stdoutResult = truncateTail(result.stdout);
+        const stderrResult = truncateTail(result.stderr);
+
+        const stdout = stdoutResult.content;
+        const stderr = stderrResult.content;
+        let truncationNotice = '';
+
+        if (stdoutResult.truncated) {
+          truncationNotice += buildTruncationNotice(stdoutResult) + '\n';
+        }
+        if (stderrResult.truncated) {
+          truncationNotice += buildTruncationNotice(stderrResult) + '\n';
+        }
 
         return {
           stdout,
           stderr,
-          exitCode: 0
+          exitCode: result.exitCode,
+          truncated: stdoutResult.truncated || stderrResult.truncated,
+          truncationNotice: truncationNotice || undefined,
         };
       }
     } catch (error: any) {
+      // Check if this was a timeout
+      if (error.message === 'timeout') {
+        return {
+          stdout: '',
+          stderr: 'Command timed out',
+          exitCode: -1,
+          truncated: false,
+        };
+      }
       return {
         stdout: error.stdout || '',
         stderr: error.stderr || error.message,
-        exitCode: error.code || 1
+        exitCode: error.code || 1,
       };
     }
+  }
+
+  /**
+   * Execute a command with timeout support and proper process termination.
+   */
+  private spawnWithTimeout(
+    shell: string,
+    args: string[],
+    options: { cwd: string; env: NodeJS.ProcessEnv; timeout: number }
+  ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    return new Promise((resolve, reject) => {
+      const { cwd, env, timeout } = options;
+      let timedOut = false;
+      let timeoutHandle: NodeJS.Timeout | undefined;
+
+      const spawnOptions: any = {
+        cwd,
+        env,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      };
+
+      // On Windows, don't use detached mode for PowerShell as it breaks output piping
+      if (process.platform !== 'win32') {
+        spawnOptions.detached = true;
+      }
+
+      const child = spawn(shell, args, spawnOptions);
+
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+
+      // Set timeout if provided
+      if (timeout > 0) {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          if (child.pid) {
+            killProcessTree(child.pid);
+          }
+        }, timeout * 1000);
+      }
+
+      // Stream stdout
+      child.stdout?.on('data', (data: Buffer) => {
+        stdoutChunks.push(data);
+      });
+
+      // Stream stderr
+      child.stderr?.on('data', (data: Buffer) => {
+        stderrChunks.push(data);
+      });
+
+      // Handle process exit
+      child.on('close', (code: number) => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+
+        if (timedOut) {
+          reject(new Error('timeout'));
+          return;
+        }
+
+        resolve({
+          stdout: Buffer.concat(stdoutChunks).toString('utf-8'),
+          stderr: Buffer.concat(stderrChunks).toString('utf-8'),
+          exitCode: code ?? -1,
+        });
+      });
+
+      // Handle spawn errors
+      child.on('error', (err) => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        reject(err);
+      });
+    });
   }
 }
 
@@ -458,7 +641,7 @@ export class ListDirectoryTool implements Tool {
 # When NOT to Use
 - When you need to read file contents (use Read instead)
 - For recursive exploration of entire codebase (use recursive=true)
-- When you need to search for specific files (use SearchCodebase instead)
+- When you need to search for specific files (use SearchFiles instead)
 
 # Parameters
 - \`path\`: (Optional) Directory path, default: "."
@@ -474,36 +657,50 @@ export class ListDirectoryTool implements Tool {
 - Results are absolute paths
 - Ignores node_modules and .git by default
 - Combine with Read to examine file contents`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
   async execute(params: { path?: string; recursive?: boolean }): Promise<string[]> {
     const { path: dirPath = '.', recursive = false } = params;
-    
+
     try {
       const absolutePath = path.resolve(dirPath);
-      
+
       const stats = await fs.stat(absolutePath).catch(() => null);
       if (!stats || !stats.isDirectory()) {
         throw new Error(`Directory does not exist: ${dirPath}`);
       }
-      
+
       const pattern = recursive ? '**/*' : '*';
       const files = await glob(pattern, {
         cwd: absolutePath,
         nodir: false,
-        ignore: ['node_modules/**', '.git/**']
+        ignore: ['node_modules/**', '.git/**'],
       });
 
-      return files.map(file => path.join(absolutePath, file));
+      return files.map((file) => path.join(absolutePath, file));
     } catch (error: any) {
       throw new Error(`Failed to list directory: ${error.message}`);
     }
   }
 }
 
-export class SearchCodebaseTool implements Tool {
-  name = 'SearchCodebase';
-  description = `Search for files matching a glob pattern. This is your PRIMARY tool for finding files by name or extension.
+export interface SearchFilesResult {
+  /** Matching file paths relative to search directory */
+  files: string[];
+  /** Total number of matches found (before limiting) */
+  total: number;
+  /** Whether results were truncated due to limit */
+  truncated: boolean;
+}
+
+export class SearchFilesTool implements Tool {
+  name = 'SearchFiles';
+  description = `Search for files matching a glob pattern using fd. This is your PRIMARY tool for finding files by name or extension.
 
 # When to Use
 - Finding all files of a certain type (*.ts, *.json, *.md)
@@ -519,11 +716,13 @@ export class SearchCodebaseTool implements Tool {
 # Parameters
 - \`pattern\`: Glob pattern (e.g., "**/*.ts", "src/**/*.test.ts")
 - \`path\`: (Optional) Directory to search in, default: "."
+- \`limit\`: (Optional) Maximum number of results to return, default: 1000
 
 # Examples
-- Find all TypeScript files: SearchCodebase(pattern="**/*.ts")
-- Find test files: SearchCodebase(pattern="**/*.test.ts")
-- Find config files: SearchCodebase(pattern="**/config.*")
+- Find all TypeScript files: SearchFiles(pattern="**/*.ts")
+- Find test files: SearchFiles(pattern="**/*.test.ts")
+- Find config files: SearchFiles(pattern="**/config.*")
+- Limit results: SearchFiles(pattern="**/*.ts", limit=100)
 
 # Glob Patterns
 - \`*\` matches any characters except /
@@ -534,19 +733,48 @@ export class SearchCodebaseTool implements Tool {
 # Best Practices
 - Use **/*.ts for recursive search in all directories
 - Combine with path parameter to search specific directories
+- Use limit parameter to avoid huge result sets
 - Results are file paths, not content (use Grep on results if needed)`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
-  async execute(params: { pattern: string; path?: string }): Promise<string[]> {
-    const { pattern, path: searchPath = '.' } = params;
-    
+  async execute(params: {
+    pattern: string;
+    path?: string;
+    limit?: number;
+  }): Promise<SearchFilesResult> {
+    const { pattern, path: searchPath = '.', limit = 1000 } = params;
+
     try {
-      const files = await glob(pattern, {
-        cwd: searchPath,
-        ignore: ['node_modules/**', '.git/**', 'dist/**', 'build/**']
+      const output = await fdFind({
+        pattern,
+        path: searchPath,
+        limit,
       });
 
-      return files;
+      if (output === 'No files found') {
+        return {
+          files: [],
+          total: 0,
+          truncated: false,
+        };
+      }
+
+      const files = output.split('\n').filter((line) => line.trim());
+
+      const total = files.length;
+      const truncated = total > limit;
+      const result = truncated ? files.slice(0, limit) : files;
+
+      return {
+        files: result,
+        total,
+        truncated,
+      };
     } catch (error: any) {
       throw new Error(`Search failed: ${error.message}`);
     }
@@ -581,16 +809,19 @@ export class DeleteFileTool implements Tool {
 - This action is irreversible - be certain before executing`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
-  async execute(params: { filePath: string }): Promise<{ success: boolean; message: string }> {
+  async execute(params: {
+    filePath: string;
+  }): Promise<{ success: boolean; message: string; filePath: string }> {
     const { filePath } = params;
-    
+
     try {
       const absolutePath = path.resolve(filePath);
       await fs.unlink(absolutePath);
-      
+
       return {
         success: true,
-        message: `Successfully deleted ${filePath}`
+        message: `Successfully deleted ${filePath}`,
+        filePath,
       };
     } catch (error: any) {
       throw new Error(`Failed to delete file ${filePath}: ${error.message}`);
@@ -626,16 +857,19 @@ export class CreateDirectoryTool implements Tool {
 - Consider the overall project structure before creating`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
-  async execute(params: { dirPath: string; recursive?: boolean }): Promise<{ success: boolean; message: string }> {
+  async execute(params: {
+    dirPath: string;
+    recursive?: boolean;
+  }): Promise<{ success: boolean; message: string }> {
     const { dirPath, recursive = true } = params;
-    
+
     try {
       const absolutePath = path.resolve(dirPath);
       await fs.mkdir(absolutePath, { recursive });
-      
+
       return {
         success: true,
-        message: `Successfully created directory ${dirPath}`
+        message: `Successfully created directory ${dirPath}`,
       };
     } catch (error: any) {
       throw new Error(`Failed to create directory ${dirPath}: ${error.message}`);
@@ -643,9 +877,175 @@ export class CreateDirectoryTool implements Tool {
   }
 }
 
-export class ReplaceTool implements Tool {
-  name = 'replace';
-  description = `Replace specific text within an existing file. This is your PRIMARY tool for making targeted edits to code.
+// 编辑工具辅助函数
+function detectLineEnding(content: string): '\r\n' | '\n' {
+  const crlfIdx = content.indexOf('\r\n');
+  const lfIdx = content.indexOf('\n');
+  if (lfIdx === -1) return '\n';
+  if (crlfIdx === -1) return '\n';
+  return crlfIdx < lfIdx ? '\r\n' : '\n';
+}
+
+function normalizeToLF(text: string): string {
+  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+function restoreLineEndings(text: string, ending: '\r\n' | '\n'): string {
+  return ending === '\r\n' ? text.replace(/\n/g, '\r\n') : text;
+}
+
+function normalizeForFuzzyMatch(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .replace(/['‘’""]/g, "'")
+    .replace(/["""]/g, '"')
+    .replace(/[—–‑−]/g, '-')
+    .replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, ' ');
+}
+
+interface FuzzyMatchResult {
+  found: boolean;
+  index: number;
+  matchLength: number;
+  usedFuzzyMatch: boolean;
+  contentForReplacement: string;
+}
+
+function fuzzyFindText(content: string, oldText: string): FuzzyMatchResult {
+  const exactIndex = content.indexOf(oldText);
+  if (exactIndex !== -1) {
+    return {
+      found: true,
+      index: exactIndex,
+      matchLength: oldText.length,
+      usedFuzzyMatch: false,
+      contentForReplacement: content,
+    };
+  }
+
+  const fuzzyContent = normalizeForFuzzyMatch(content);
+  const fuzzyOldText = normalizeForFuzzyMatch(oldText);
+  const fuzzyIndex = fuzzyContent.indexOf(fuzzyOldText);
+
+  if (fuzzyIndex === -1) {
+    return {
+      found: false,
+      index: -1,
+      matchLength: 0,
+      usedFuzzyMatch: false,
+      contentForReplacement: content,
+    };
+  }
+
+  return {
+    found: true,
+    index: fuzzyIndex,
+    matchLength: fuzzyOldText.length,
+    usedFuzzyMatch: true,
+    contentForReplacement: fuzzyContent,
+  };
+}
+
+function stripBom(content: string): { bom: string; text: string } {
+  return content.startsWith('\uFEFF')
+    ? { bom: '\uFEFF', text: content.slice(1) }
+    : { bom: '', text: content };
+}
+
+async function generateDiffString(
+  oldContent: string,
+  newContent: string,
+  contextLines = 4
+): Promise<{ diff: string; firstChangedLine: number | undefined }> {
+  const diffModule = await import('diff');
+  const parts = diffModule.diffLines(oldContent, newContent);
+  const output: string[] = [];
+
+  const oldLines = oldContent.split('\n');
+  const newLines = newContent.split('\n');
+  const maxLineNum = Math.max(oldLines.length, newLines.length);
+  const lineNumWidth = String(maxLineNum).length;
+
+  let oldLineNum = 1;
+  let newLineNum = 1;
+  let lastWasChange = false;
+  let firstChangedLine: number | undefined;
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    const raw = part.value.split('\n');
+    if (raw[raw.length - 1] === '') {
+      raw.pop();
+    }
+
+    if (part.added || part.removed) {
+      if (firstChangedLine === undefined) {
+        firstChangedLine = newLineNum;
+      }
+
+      for (const line of raw) {
+        if (part.added) {
+          const lineNum = String(newLineNum).padStart(lineNumWidth, ' ');
+          output.push(`+${lineNum} ${line}`);
+          newLineNum++;
+        } else {
+          const lineNum = String(oldLineNum).padStart(lineNumWidth, ' ');
+          output.push(`-${lineNum} ${line}`);
+          oldLineNum++;
+        }
+      }
+      lastWasChange = true;
+    } else {
+      const nextPartIsChange = i < parts.length - 1 && (parts[i + 1].added || parts[i + 1].removed);
+
+      if (lastWasChange || nextPartIsChange) {
+        let linesToShow = raw;
+        let skipStart = 0;
+        let skipEnd = 0;
+
+        if (!lastWasChange) {
+          skipStart = Math.max(0, raw.length - contextLines);
+          linesToShow = raw.slice(skipStart);
+        }
+
+        if (!nextPartIsChange && linesToShow.length > contextLines) {
+          skipEnd = linesToShow.length - contextLines;
+          linesToShow = linesToShow.slice(0, contextLines);
+        }
+
+        if (skipStart > 0) {
+          output.push(` ${''.padStart(lineNumWidth, ' ')} ...`);
+          oldLineNum += skipStart;
+          newLineNum += skipStart;
+        }
+
+        for (const line of linesToShow) {
+          const lineNum = String(oldLineNum).padStart(lineNumWidth, ' ');
+          output.push(` ${lineNum} ${line}`);
+          oldLineNum++;
+          newLineNum++;
+        }
+
+        if (skipEnd > 0) {
+          output.push(` ${''.padStart(lineNumWidth, ' ')} ...`);
+        }
+      } else {
+        oldLineNum += raw.length;
+        newLineNum += raw.length;
+      }
+
+      lastWasChange = false;
+    }
+  }
+
+  return { diff: output.join('\n'), firstChangedLine };
+}
+
+export class EditTool implements Tool {
+  name = 'Edit';
+  description = `Edit a file by replacing exact text. This is your PRIMARY tool for making targeted edits to code.
 
 # When to Use
 - Modifying specific code sections without rewriting entire files
@@ -656,32 +1056,39 @@ export class ReplaceTool implements Tool {
 # When NOT to Use
 - When you need to create a completely new file (use Write instead)
 - When you want to append content to a file (read first, then Write)
-- When making changes across multiple files (use Grep to find, then Replace individually)
+- When making changes across multiple files (use Grep to find, then edit individually)
 
 # Parameters
-- \`file_path\`: Path to the file to edit
+- \`file_path\`: Path to the file to edit (relative or absolute)
 - \`instruction\`: Description of what to change (for your own tracking)
 - \`old_string\`: The exact text to find and replace (must match exactly)
 - \`new_string\`: The new text to replace with
 
 # Critical Requirements
 - \`old_string\` MUST be an EXACT match, including whitespace and indentation
-- Include at least 3 lines of context before and after the target text
-- Ensure unique matching to avoid unintended replacements
+- Include sufficient context (at least 3 lines) before and after the target text to ensure unique matching
+- The file must exist before editing
+
+# Fuzzy Matching
+This tool supports fuzzy matching to handle minor formatting differences:
+- Trailing whitespace is ignored
+- Smart quotes (', ", , ) are normalized to ASCII
+- Unicode dashes/hyphens are normalized to ASCII hyphen
+- Special Unicode spaces are normalized to regular space
 
 # Examples
-replace(
+edit(
   file_path="src/app.ts",
   instruction="Update API endpoint",
-  old_string="const API_URL = 'https://api.old.com';",
-  new_string="const API_URL = 'https://api.new.com';"
+  old_string="const API_URL = 'https://api.old.com'\\nconst PORT = 8080;",
+  new_string="const API_URL = 'https://api.new.com'\\nconst PORT = 3000;"
 )
 
 # Best Practices
 - Read the file first to understand the exact content
 - Include sufficient context in old_string to ensure unique match
-- Be careful with special regex characters in old_string (they're escaped automatically)
-- If multiple occurrences exist, all will be replaced`;
+- If fuzzy matching is needed, the tool will automatically apply it
+- Check the diff output to verify the change is correct`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
   async execute(params: {
@@ -689,38 +1096,90 @@ replace(
     instruction: string;
     old_string: string;
     new_string: string;
-  }): Promise<{ success: boolean; message: string; changes: number }> {
+  }): Promise<{ success: boolean; message: string; diff?: string; firstChangedLine?: number }> {
     const { file_path, instruction, old_string, new_string } = params;
-    
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    void instruction;
+
     try {
       const absolutePath = path.resolve(file_path);
-      const content = await fs.readFile(absolutePath, 'utf-8');
-      
-      const occurrences = (content.match(new RegExp(this.escapeRegExp(old_string), 'g')) || []).length;
-      
-      if (occurrences === 0) {
+
+      // Check if file exists
+      try {
+        await fs.access(absolutePath);
+      } catch {
         return {
           success: false,
-          message: `No occurrences found to replace in ${file_path}`,
-          changes: 0
+          message: `File not found: ${file_path}`,
         };
       }
-      
-      const newContent = content.replace(new RegExp(this.escapeRegExp(old_string), 'g'), new_string);
-      await fs.writeFile(absolutePath, newContent, 'utf-8');
-      
+
+      // Read the file
+      const buffer = await fs.readFile(absolutePath);
+      const rawContent = buffer.toString('utf-8');
+
+      // Strip BOM before matching
+      const { bom, text: content } = stripBom(rawContent);
+
+      const originalEnding = detectLineEnding(content);
+      const normalizedContent = normalizeToLF(content);
+      const normalizedOldText = normalizeToLF(old_string);
+      const normalizedNewText = normalizeToLF(new_string);
+
+      // Find the old text using fuzzy matching
+      const matchResult = fuzzyFindText(normalizedContent, normalizedOldText);
+
+      if (!matchResult.found) {
+        return {
+          success: false,
+          message: `Could not find the exact text in ${file_path}. The old text must match exactly including all whitespace and newlines.`,
+        };
+      }
+
+      // Count occurrences using fuzzy-normalized content
+      const fuzzyContent = normalizeForFuzzyMatch(normalizedContent);
+      const fuzzyOldText = normalizeForFuzzyMatch(normalizedOldText);
+      const occurrences = fuzzyContent.split(fuzzyOldText).length - 1;
+
+      if (occurrences > 1) {
+        return {
+          success: false,
+          message: `Found ${occurrences} occurrences of the text in ${file_path}. The text must be unique. Please provide more context to make it unique.`,
+        };
+      }
+
+      // Perform replacement
+      const baseContent = matchResult.contentForReplacement;
+      const newContent =
+        baseContent.substring(0, matchResult.index) +
+        normalizedNewText +
+        baseContent.substring(matchResult.index + matchResult.matchLength);
+
+      // Verify the replacement actually changed something
+      if (baseContent === newContent) {
+        return {
+          success: false,
+          message: `No changes made to ${file_path}. The replacement produced identical content.`,
+        };
+      }
+
+      const finalContent = bom + restoreLineEndings(newContent, originalEnding);
+      await fs.writeFile(absolutePath, finalContent, 'utf-8');
+
+      const diffResult = await generateDiffString(baseContent, newContent);
+
       return {
         success: true,
-        message: `Successfully replaced ${occurrences} occurrence(s) in ${file_path}`,
-        changes: occurrences
+        message: `Successfully replaced text in ${file_path}.`,
+        diff: diffResult.diff,
+        firstChangedLine: diffResult.firstChangedLine,
       };
     } catch (error: any) {
-      throw new Error(`Failed to replace in file ${file_path}: ${error.message}`);
+      return {
+        success: false,
+        message: `Failed to edit file ${file_path}: ${error.message}`,
+      };
     }
-  }
-
-  private escapeRegExp(string: string): string {
-    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 }
 
@@ -753,38 +1212,43 @@ export class WebSearchTool implements Tool {
 - Combine with web_fetch to get full content from relevant URLs
 - Use quotes for exact phrase matching
 - Consider adding context like year or version in query`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
   async execute(params: { query: string }): Promise<{ results: any[]; message: string }> {
     const { query } = params;
-    
+
     try {
       const configManager = await import('./config.js');
       const { getConfigManager } = configManager;
       const config = getConfigManager();
-      
+
       const searchApiKey = config.get('searchApiKey');
       const baseUrl = config.get('baseUrl') || 'https://apis.xagent.cn/v1';
-      
+
       if (!searchApiKey) {
         throw new Error('Search API key not configured. Please set searchApiKey in settings.');
       }
-      
+
       const response = await axios.post(
         `${baseUrl}/search`,
         { query },
         {
           headers: {
-            'Authorization': `Bearer ${searchApiKey}`,
-            'Content-Type': 'application/json'
+            Authorization: `Bearer ${searchApiKey}`,
+            'Content-Type': 'application/json',
           },
-          timeout: 30000
+          timeout: 30000,
         }
       );
-      
+
       return {
         results: response.data.results || [],
-        message: `Found ${response.data.results?.length || 0} results for "${query}"`
+        message: `Found ${response.data.results?.length || 0} results for "${query}"`,
       };
     } catch (error: any) {
       throw new Error(`Web search failed: ${error.message}`);
@@ -840,29 +1304,44 @@ Each task needs:
 - Don't batch multiple completions - update as you go
 - Keep task descriptions clear and actionable
 - Use appropriate priority levels to indicate urgency`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
-  private todoList: Array<{ id: string; task: string; status: 'pending' | 'in_progress' | 'completed' | 'failed'; priority: 'high' | 'medium' | 'low' }> = [];
+  private todoList: Array<{
+    id: string;
+    task: string;
+    status: 'pending' | 'in_progress' | 'completed' | 'failed';
+    priority: 'high' | 'medium' | 'low';
+  }> = [];
 
   async execute(params: {
-    todos: Array<{ id: string; task: string; status: 'pending' | 'in_progress' | 'completed' | 'failed'; priority: 'high' | 'medium' | 'low' }>;
+    todos: Array<{
+      id: string;
+      task: string;
+      status: 'pending' | 'in_progress' | 'completed' | 'failed';
+      priority: 'high' | 'medium' | 'low';
+    }>;
   }): Promise<{ success: boolean; message: string; todos: any[] }> {
     const { todos } = params;
-    
+
     try {
       this.todoList = todos;
-      
+
       const summary = {
-        pending: todos.filter(t => t.status === 'pending').length,
-        in_progress: todos.filter(t => t.status === 'in_progress').length,
-        completed: todos.filter(t => t.status === 'completed').length,
-        failed: todos.filter(t => t.status === 'failed').length
+        pending: todos.filter((t) => t.status === 'pending').length,
+        in_progress: todos.filter((t) => t.status === 'in_progress').length,
+        completed: todos.filter((t) => t.status === 'completed').length,
+        failed: todos.filter((t) => t.status === 'failed').length,
       };
-      
+
       return {
         success: true,
         message: `Updated todo list: ${summary.pending} pending, ${summary.in_progress} in progress, ${summary.completed} completed, ${summary.failed} failed`,
-        todos: this.todoList
+        todos: this.todoList,
       };
     } catch (error: any) {
       throw new Error(`Failed to update todo list: ${error.message}`);
@@ -895,7 +1374,12 @@ export class TodoReadTool implements Tool {
 # Best Practices
 - Use todo_write to modify the list, not todo_read
 - Check todo_read after todo_write to verify updates`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
   private todoWriteTool: TodoWriteTool;
 
@@ -906,18 +1390,18 @@ export class TodoReadTool implements Tool {
   async execute(): Promise<{ todos: any[]; summary: any }> {
     try {
       const todos = this.todoWriteTool.getTodos();
-      
+
       const summary = {
         total: todos.length,
-        pending: todos.filter(t => t.status === 'pending').length,
-        in_progress: todos.filter(t => t.status === 'in_progress').length,
-        completed: todos.filter(t => t.status === 'completed').length,
-        failed: todos.filter(t => t.status === 'failed').length
+        pending: todos.filter((t) => t.status === 'pending').length,
+        in_progress: todos.filter((t) => t.status === 'in_progress').length,
+        completed: todos.filter((t) => t.status === 'completed').length,
+        failed: todos.filter((t) => t.status === 'failed').length,
       };
-      
+
       return {
         todos,
-        summary
+        summary,
       };
     } catch (error: any) {
       throw new Error(`Failed to read todo list: ${error.message}`);
@@ -928,7 +1412,15 @@ export class TodoReadTool implements Tool {
 export interface SubAgentTask {
   description: string;
   prompt: string;
-  subagent_type: 'general-purpose' | 'plan-agent' | 'explore-agent' | 'frontend-tester' | 'code-reviewer' | 'frontend-developer' | 'backend-developer' | 'gui-subagent';
+  subagent_type:
+    | 'general-purpose'
+    | 'plan-agent'
+    | 'explore-agent'
+    | 'frontend-tester'
+    | 'code-reviewer'
+    | 'frontend-developer'
+    | 'backend-developer'
+    | 'gui-subagent';
   useContext?: boolean;
   outputFormat?: string;
   constraints?: string[];
@@ -978,7 +1470,37 @@ export class TaskTool implements Tool {
 - Include relevant context (file paths, requirements, constraints)
 - Set appropriate executionMode if needed
 - For parallel execution, ensure tasks are truly independent`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
+
+  private isSdkMode: boolean = false;
+  private sdkOutputAdapter: any = null;
+
+  /**
+   * Set SDK mode for output
+   */
+  setSdkMode(adapter: any): void {
+    this.isSdkMode = true;
+    this.sdkOutputAdapter = adapter;
+  }
+
+  /**
+   * Output helper for SDK mode
+   */
+  private output(type: string, subtype: string, data: any): void {
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.output({
+        type,
+        subtype,
+        timestamp: Date.now(),
+        data
+      });
+    }
+  }
 
   async execute(params: {
     description: string;
@@ -992,24 +1514,19 @@ export class TaskTool implements Tool {
     parallel?: boolean;
   }, _executionMode?: ExecutionMode): Promise<{ success: boolean; message: string; result?: any }> {
     const mode = params.executionMode || _executionMode || ExecutionMode.YOLO;
-    
+
     try {
       const { getAgentManager } = await import('./agents.js');
       const agentManager = getAgentManager(process.cwd());
-      
+
       const { getConfigManager } = await import('./config.js');
       const config = getConfigManager();
-      
-      const { AIClient } = await import('./ai-client.js');
-      const aiClient = new AIClient({
-        type: AuthType.API_KEY,
-        apiKey: config.get('apiKey'),
-        baseUrl: config.get('baseUrl'),
-        modelName: config.get('modelName') || 'Qwen3-Coder'
-      });
-      
+
+      const authConfig = config.getAuthConfig();
+      const aiClient = createAIClient(authConfig);
+
       const toolRegistry = getToolRegistry();
-      
+
       if (params.agents && params.agents.length > 0) {
         return await this.executeParallelAgents(
           params.agents,
@@ -1017,17 +1534,34 @@ export class TaskTool implements Tool {
           mode,
           agentManager,
           toolRegistry,
-          aiClient
+          aiClient,
+          config,
+          1
         );
       }
-      
-      if (!params.subagent_type || !params.prompt) {
-        throw new Error('Either subagent_type and prompt, or agents array must be provided');
+
+      if (!params.subagent_type) {
+        throw new Error('subagent_type is required for Task tool');
       }
-      
+
+      // Support both 'prompt' and 'query' parameter names (tool definition uses 'query')
+      const prompt = params.prompt || params.query;
+      if (!prompt) {
+        throw new Error(
+          'Task query/prompt is required. Received params: ' +
+            JSON.stringify({
+              subagent_type: params.subagent_type,
+              prompt: params.prompt,
+              query: params.query,
+              description: params.description,
+              agents: params.agents?.length,
+            })
+        );
+      }
+
       const result = await this.executeSingleAgent(
         params.subagent_type,
-        params.prompt,
+        prompt,
         params.description,
         params.useContext ?? true,
         params.constraints || [],
@@ -1035,9 +1569,12 @@ export class TaskTool implements Tool {
         agentManager,
         toolRegistry,
         aiClient,
-        config
+        config,
+        this.isSdkMode,
+        this.sdkOutputAdapter,
+        1
       );
-      
+
       return result;
     } catch (error: any) {
       throw new Error(`Task execution failed: ${error.message}`);
@@ -1048,15 +1585,27 @@ export class TaskTool implements Tool {
    * Create unified VLM caller
    * Uses remote VLM if remoteAIClient is provided, otherwise uses local VLM
    * Both modes receive full messages array for consistent behavior
+   * @param remoteAIClient - Remote AI client for VLM calls
+   * @param taskId - Task identifier for backend tracking
+   * @param localConfig - Local VLM configuration
+   * @param isFirstVlmCallRef - Reference to boolean tracking if this is the first VLM call
+   * @param signal - Abort signal for cancellation
    */
   private createRemoteVlmCaller(
     remoteAIClient: any,
+    taskId: string | null,
     localConfig: { baseUrl: string; apiKey: string; modelName: string },
+    isFirstVlmCallRef: { current: boolean },
     signal?: AbortSignal
-  ): (messages: any[], systemPrompt: string) => Promise<string> {
+  ): (
+    messages: any[],
+    systemPrompt: string,
+    taskId: string,
+    isFirstVlmCallRef: { current: boolean }
+  ) => Promise<string> {
     // Remote mode: use RemoteAIClient
     if (remoteAIClient) {
-      return this.createRemoteVLMCaller(remoteAIClient, signal);
+      return this.createRemoteVLMCaller(remoteAIClient, taskId, isFirstVlmCallRef, signal);
     }
 
     // Local mode: use local API
@@ -1066,11 +1615,39 @@ export class TaskTool implements Tool {
   /**
    * Create remote VLM caller using RemoteAIClient
    * Now receives full messages array for consistent behavior with local mode
+   * @param remoteAIClient - Remote AI client
+   * @param taskId - Task identifier for backend tracking
+   * @param isFirstVlmCallRef - Reference to boolean tracking if this is the first VLM call
+   * @param signal - Abort signal for cancellation
    */
-  private createRemoteVLMCaller(remoteAIClient: any, signal?: AbortSignal) {
-    return async (messages: any[], systemPrompt: string): Promise<string> => {
+  private createRemoteVLMCaller(
+    remoteAIClient: any,
+    taskId: string | null,
+    isFirstVlmCallRef: { current: boolean },
+    signal?: AbortSignal
+  ): (
+    messages: any[],
+    systemPrompt: string,
+    taskId: string,
+    isFirstVlmCallRef: { current: boolean }
+  ) => Promise<string> {
+    return async (
+      messages: any[],
+      systemPrompt: string,
+      _taskId: string,
+      _isFirstVlmCallRef: { current: boolean }
+    ): Promise<string> => {
       try {
-        return await remoteAIClient.invokeVLM(messages, systemPrompt, { signal });
+        // Use the ref to track first call status for the backend
+        const status = isFirstVlmCallRef.current ? 'begin' : 'continue';
+        const result = await remoteAIClient.invokeVLM(messages, systemPrompt, {
+          signal,
+          taskId,
+          status,
+        });
+        // Update ref after call so subsequent calls use 'continue'
+        isFirstVlmCallRef.current = false;
+        return result;
       } catch (error: any) {
         throw new Error(`Remote VLM call failed: ${error.message}`);
       }
@@ -1107,7 +1684,7 @@ export class TaskTool implements Tool {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(requestBody),
         signal: abortSignal,
@@ -1118,7 +1695,9 @@ export class TaskTool implements Tool {
         throw new Error(`VLM API error: ${errorText}`);
       }
 
-      const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+      const result = (await response.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
       return result.choices?.[0]?.message?.content || '';
     };
   }
@@ -1134,41 +1713,100 @@ export class TaskTool implements Tool {
     mode: ExecutionMode,
     config: any,
     indentLevel: number = 1,
-    remoteAIClient?: any
+    remoteAIClient?: any,
+    isSdkMode: boolean = false,
+    sdkOutputAdapter: any = null
   ): Promise<{ success: boolean; cancelled?: boolean; message: string; result?: any }> {
     const indent = '  '.repeat(indentLevel);
 
-    console.log(`${indent}${colors.primaryBright(`${icons.robot} GUI Agent`)}: ${description}`);
-    console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
-    console.log('');
+    // SDK mode output helper
+    const sdkOutput = (type: string, subtype: string, data: Record<string, unknown>) => {
+      if (isSdkMode && sdkOutputAdapter) {
+        sdkOutputAdapter.output({
+          type: type as any,
+          subtype,
+          timestamp: Date.now(),
+          data
+        });
+      }
+    };
 
-    // Get VLM configuration (used for local mode fallback)
-    const baseUrl = config.get('guiSubagentBaseUrl') || config.get('baseUrl') || '';
-    const apiKey = config.get('guiSubagentApiKey') || config.get('apiKey') || '';
-    const modelName = config.get('guiSubagentModel') || config.get('modelName') || '';
+    // SDK mode: output header
+    if (isSdkMode) {
+      sdkOutput('system', 'gui_agent_start', {
+        description,
+        mode: remoteAIClient ? 'remote' : 'local'
+      });
+    } else {
+      console.log(`${indent}${colors.primaryBright(`${icons.robot} GUI Agent`)}: ${description}`);
+      console.log(`${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`);
+      console.log('');
+    }
+
+    // Get VLM configuration for local mode
+    // NOTE: guiSubagentBaseUrl must be explicitly configured, NOT fallback to baseUrl
+    const baseUrl = config.get('guiSubagentBaseUrl') || '';
+    const apiKey = config.get('guiSubagentApiKey') || '';
+    const modelName = config.get('guiSubagentModel') || '';
 
     // Determine mode: remote if remoteAIClient exists, otherwise local
     const isRemoteMode = !!remoteAIClient;
 
     // Log mode information
     if (isRemoteMode) {
-      console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
-    } else {
-      console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
-      // Local mode requires configuration check
-      if (!baseUrl) {
-        return {
-          success: false,
-          message: `GUI task "${description}" failed: No valid API URL configured`
-        };
+      if (isSdkMode) {
+        sdkOutput('system', 'info', {
+          message: 'Using remote VLM service'
+        });
+      } else {
+        console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
       }
-      console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
-      console.log(`${indent}${colors.textMuted(`  Base URL: ${baseUrl}`)}`);
+    } else {
+      if (isSdkMode) {
+        sdkOutput('system', 'info', {
+          message: 'Using local VLM configuration',
+          model: modelName,
+          baseUrl
+        });
+      } else {
+        console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
+        // Local mode requires configuration check
+        if (!baseUrl) {
+          return {
+            success: false,
+            message: `GUI task "${description}" failed: No valid API URL configured`
+          };
+        }
+        console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
+        console.log(`${indent}${colors.textMuted(`  Base URL: ${baseUrl}`)}`);
+      }
     }
-    console.log('');
+    if (!isSdkMode) {
+      console.log('');
+    }
+
+    // Get taskId from session for tracking (remote mode only)
+    let taskId: string | null = null;
+    if (isRemoteMode) {
+      try {
+        const { getSingletonSession } = await import('./session.js');
+        const session = getSingletonSession();
+        taskId = session?.getTaskId() || null;
+      } catch {
+        taskId = null;
+      }
+    }
+
+    // Track first VLM call for proper status management
+    const isFirstVlmCallRef = { current: true };
 
     // Create remoteVlmCaller using the unified method (handles both local and remote modes)
-    const remoteVlmCaller = this.createRemoteVlmCaller(remoteAIClient, { baseUrl, apiKey, modelName });
+    const remoteVlmCaller = this.createRemoteVlmCaller(
+      remoteAIClient,
+      taskId,
+      { baseUrl, apiKey, modelName },
+      isFirstVlmCallRef
+    );
 
     // Set up stdin polling for ESC cancellation
     let rawModeEnabled = false;
@@ -1177,14 +1815,16 @@ export class TaskTool implements Tool {
     const logger = getLogger();
 
     const setupStdinPolling = () => {
+      logger.debug(`[GUIAgent ESC] setupStdinPolling called, process.stdin.isTTY: ${process.stdin.isTTY}`);
       if (process.stdin.isTTY) {
         try {
           process.stdin.setRawMode(true);
           rawModeEnabled = true;
           process.stdin.resume();
           readline.emitKeypressEvents(process.stdin);
-        } catch (e) {
-          logger.debug(`[GUIAgent] Could not set raw mode: ${e}`);
+          logger.debug(`[GUIAgent ESC] Raw mode enabled successfully`);
+        } catch (e: any) {
+          logger.debug(`[GUIAgent ESC] Could not set raw mode: ${e.message}`);
         }
 
         stdinPollingInterval = setInterval(() => {
@@ -1193,13 +1833,20 @@ export class TaskTool implements Tool {
               const chunk = process.stdin.read(1);
               if (chunk && chunk.length > 0) {
                 const code = chunk[0];
-                if (code === 0x1B) { // ESC
-                  logger.debug('[GUIAgent] ESC detected!');
+                if (code === 0x1b) {
+                  // ESC
+                  logger.debug('[GUIAgent ESC Polling] ESC detected! Code: 0x1b');
                   cancellationManager.cancel();
+                } else {
+                  // Log other key codes for debugging
+                  logger.debug(`[GUIAgent ESC Polling] Key code: 0x${code.toString(16)}`);
                 }
               }
+            } else {
+              logger.debug('[GUIAgent ESC Polling] rawModeEnabled is false');
             }
-          } catch (e) {
+          } catch (e: any) {
+            logger.debug(`[GUIAgent ESC Polling] Error: ${e.message}`);
             // Ignore polling errors
           }
         }, 10);
@@ -1221,21 +1868,31 @@ export class TaskTool implements Tool {
     cancellationManager.on('cancelled', cancelHandler);
 
     // Start polling for ESC
+    logger.debug(`[GUIAgent ESC] About to call setupStdinPolling`);
     setupStdinPolling();
+    logger.debug(`[GUIAgent ESC] setupStdinPolling called`);
 
     try {
       // Import and create GUIAgent
       const { createGUISubAgent } = await import('./gui-subagent/index.js');
 
+      // SDK mode: create output handler for GUI Agent using SdkOutputAdapter
+      const sdkOutputHandler = isSdkMode && sdkOutputAdapter
+        ? sdkOutputAdapter.createGUIAgentHandler()
+        : undefined;
+
       const guiAgent = await createGUISubAgent({
         model: !isRemoteMode ? modelName : undefined,
         modelBaseUrl: !isRemoteMode ? baseUrl : undefined,
         modelApiKey: !isRemoteMode ? apiKey : undefined,
+        taskId: taskId || undefined,
+        isFirstVlmCallRef,
         remoteVlmCaller,
         isLocalMode: !isRemoteMode,
-        maxLoopCount: 30,
+        maxLoopCount: 100,
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
+        sdkOutputHandler,
       });
 
       // Add constraints to prompt if any
@@ -1251,13 +1908,22 @@ export class TaskTool implements Tool {
       if (cancelled || cancellationManager.isOperationCancelled()) {
         cleanupStdinPolling();
         cancellationManager.off('cancelled', cancelHandler);
-        // Flush stdout to prevent residual output after prompt
-        process.stdout.write('\n');
+
+        // SDK mode: output cancellation
+        if (isSdkMode) {
+          sdkOutput('system', 'gui_cancelled', {
+            description,
+            message: 'GUI task cancelled by user'
+          });
+        } else {
+          // Flush stdout to prevent residual output after prompt
+          process.stdout.write('\n');
+        }
         return {
           success: true,
-          cancelled: true,  // Mark as cancelled so main agent won't continue
+          cancelled: true, // Mark as cancelled so main agent won't continue
           message: `GUI task "${description}" cancelled by user`,
-          result: 'Task cancelled'
+          result: 'Task cancelled',
         };
       }
 
@@ -1265,61 +1931,158 @@ export class TaskTool implements Tool {
       cancellationManager.off('cancelled', cancelHandler);
 
       // Flush stdout to ensure all output is displayed before returning
-      process.stdout.write('\n');
+      if (!isSdkMode) {
+        process.stdout.write('\n');
+      }
 
       // Return result based on GUIAgent status
+      // Always return all info except screenshots (base64) to avoid huge payload
+      const conversationsWithoutScreenshots = result.conversations.map((conv: any) => ({
+        ...conv,
+        screenshotBase64: undefined, // Remove screenshots to avoid huge payload
+      }));
+
       if (result.status === 'end') {
         const iterations = result.conversations.filter(c => c.from === 'human' && c.screenshotBase64).length;
-        console.log(`${indent}${colors.success(`${icons.check} GUI task completed in ${iterations} iterations`)}`);
+        if (isSdkMode) {
+          sdkOutput('system', 'gui_complete', {
+            description,
+            iterations,
+            message: `GUI task completed in ${iterations} iterations`
+          });
+        } else {
+          console.log(`${indent}${colors.success(`${icons.check} GUI task completed in ${iterations} iterations`)}`);
+        }
         return {
           success: true,
           message: `GUI task "${description}" completed`,
-          result: `Completed in ${iterations} iterations`
+          result: {
+            status: result.status,
+            iterations,
+            actions: conversationsWithoutScreenshots
+              .filter((c: any) => c.from === 'assistant' && c.actionType)
+              .map((c: any) => c.actionType),
+            conversations: conversationsWithoutScreenshots,
+            error: result.error,
+          },
+        };
+      } else if (result.status === 'call_llm') {
+        // Empty action or needs LLM decision - return to main agent with full context
+        console.log(
+          `${indent}${colors.warning(`${icons.warning} GUI agent returned to main agent for LLM decision`)}`
+        );
+        return {
+          success: true,
+          message: `GUI task "${description}" returned for LLM decision`,
+          result: {
+            status: result.status,
+            iterations: conversationsWithoutScreenshots.filter(
+              (c: any) => c.from === 'human' && c.screenshotContext
+            ).length,
+            actions: conversationsWithoutScreenshots
+              .filter((c: any) => c.from === 'assistant' && c.actionType)
+              .map((c: any) => c.actionType),
+            conversations: conversationsWithoutScreenshots,
+            error: result.error,
+          },
         };
       } else if (result.status === 'user_stopped') {
         return {
           success: true,
           message: `GUI task "${description}" stopped by user`,
-          result: 'User stopped'
+          result: {
+            status: result.status,
+            iterations: conversationsWithoutScreenshots.filter(
+              (c: any) => c.from === 'human' && c.screenshotContext
+            ).length,
+            actions: conversationsWithoutScreenshots
+              .filter((c: any) => c.from === 'assistant' && c.actionType)
+              .map((c: any) => c.actionType),
+            conversations: conversationsWithoutScreenshots,
+            stopped: true,
+          },
         };
       } else {
         // status is 'error' or other non-success status
         const errorMsg = result.error || 'Unknown error';
+        if (isSdkMode) {
+          sdkOutput('error', 'gui_error', {
+            description,
+            message: errorMsg
+          });
+        }
         return {
           success: false,
-          message: `GUI task "${description}" failed: ${errorMsg}`
+          message: `GUI task "${description}" failed: ${errorMsg}`,
+          result: {
+            status: result.status,
+            iterations: conversationsWithoutScreenshots.filter(
+              (c: any) => c.from === 'human' && c.screenshotContext
+            ).length,
+            actions: conversationsWithoutScreenshots
+              .filter((c: any) => c.from === 'assistant' && c.actionType)
+              .map((c: any) => c.actionType),
+            conversations: conversationsWithoutScreenshots,
+            error: result.error,
+          },
         };
       }
     } catch (error: any) {
       cleanupStdinPolling();
       cancellationManager.off('cancelled', cancelHandler);
 
-      // Flush stdout to prevent residual output
-      process.stdout.write('\n');
-
       // If the user cancelled the task, ignore any API errors (like 429)
       // and return cancelled status instead
       if (cancelled || cancellationManager.isOperationCancelled()) {
+        if (isSdkMode) {
+          sdkOutput('system', 'gui_cancelled', {
+            description,
+            message: 'GUI task cancelled by user'
+          });
+        } else {
+          // Flush stdout to prevent residual output
+          process.stdout.write('\n');
+        }
         return {
           success: true,
-          cancelled: true,  // Mark as cancelled so main agent won't continue
+          cancelled: true, // Mark as cancelled so main agent won't continue
           message: `GUI task "${description}" cancelled by user`,
-          result: 'Task cancelled'
+          result: 'Task cancelled',
         };
       }
 
       if (error.message === 'Operation cancelled by user') {
+        if (isSdkMode) {
+          sdkOutput('system', 'gui_cancelled', {
+            description,
+            message: 'GUI task cancelled by user'
+          });
+        } else {
+          // Flush stdout to prevent residual output
+          process.stdout.write('\n');
+        }
         return {
           success: true,
           message: `GUI task "${description}" cancelled by user`,
-          result: 'Task cancelled'
+          result: 'Task cancelled',
         };
+      }
+
+      // SDK mode: output error
+      if (isSdkMode) {
+        sdkOutput('error', 'gui_error', {
+          description,
+          message: error.message
+        });
+      } else {
+        // Flush stdout to prevent residual output
+        process.stdout.write('\n');
       }
 
       // Return failure without throwing - let the main agent handle it
       return {
         success: false,
-        message: `GUI task "${description}" failed: ${error.message}`
+        message: `GUI task "${description}" failed: ${error.message}`,
       };
     }
   }
@@ -1333,8 +2096,9 @@ export class TaskTool implements Tool {
     mode: ExecutionMode,
     agentManager: any,
     toolRegistry: any,
-    aiClient: any,
     config: any,
+    isSdkMode: boolean = false,
+    sdkOutputAdapter: any = null,
     indentLevel: number = 1
   ): Promise<{ success: boolean; message: string; result?: any }> {
     const agent = agentManager.getAgent(subagent_type);
@@ -1353,7 +2117,7 @@ export class TaskTool implements Tool {
         if (session) {
           remoteAIClient = session.getRemoteAIClient();
         }
-      } catch (e) {
+      } catch {
         // Session not available, keep undefined
         remoteAIClient = undefined;
       }
@@ -1365,7 +2129,9 @@ export class TaskTool implements Tool {
         mode,
         config,
         indentLevel,
-        remoteAIClient
+        remoteAIClient,
+        isSdkMode,
+        sdkOutputAdapter
       );
     }
 
@@ -1373,7 +2139,7 @@ export class TaskTool implements Tool {
     let modelName = config.get('modelName') || 'Qwen3-Coder';
     let baseUrl = config.get('baseUrl') || 'https://apis.xagent.cn/v1';
     let apiKey = config.get('apiKey') || '';
-    
+
     if (agent.model) {
       // If agent has a model field, it can be a model name or a config reference like 'guiSubagentModel'
       if (typeof agent.model === 'string' && agent.model.endsWith('Model')) {
@@ -1393,31 +2159,71 @@ export class TaskTool implements Tool {
       }
     }
 
-    // Create a new AIClient for this subagent with its specific model
-    const { AIClient: SubAgentAIClient } = await import('./ai-client.js');
-    const subAgentClient = new SubAgentAIClient({
-      type: AuthType.API_KEY,
-      apiKey: apiKey,
-      baseUrl: baseUrl,
-      modelName: modelName,
-      showAIDebugInfo: config.get('showAIDebugInfo') || false
-    });
-    
+    // Create AI client for this subagent - each subagent gets its own independent client
+    let subAgentClient;
+    let isRemoteMode = false;
+    let mainTaskId: string | null = null;
+    const authConfig = config.getAuthConfig();
+
+    if (authConfig.type === AuthType.OAUTH_XAGENT) {
+      // Remote mode: create independent RemoteAIClient for each subagent
+      // This prevents message queue conflicts when multiple subagents run in parallel
+      const session = getSingletonSession();
+      const remoteAIClient = session?.getRemoteAIClient();
+
+      if (remoteAIClient) {
+        // Clone or create independent client for this subagent
+        // RemoteAIClient should be designed to handle concurrent requests
+        subAgentClient = remoteAIClient;
+        isRemoteMode = true;
+        mainTaskId = session?.getTaskId() || null;
+      } else {
+        subAgentClient = createAIClient(authConfig);
+      }
+    } else {
+      // Local mode: create client with subagent-specific model config
+      const subAuthConfig = {
+        ...authConfig,
+        type: AuthType.OPENAI_COMPATIBLE,
+        apiKey: apiKey,
+        baseUrl: baseUrl,
+        modelName: modelName,
+        showAIDebugInfo: config.get('showAIDebugInfo') || false,
+      };
+      subAgentClient = createAIClient(subAuthConfig);
+    }
+
     const indent = '  '.repeat(indentLevel);
-    const indentNext = '  '.repeat(indentLevel + 1);
+    const _indentNext = '  '.repeat(indentLevel + 1);
     const agentName = agent.name || subagent_type;
+
+    // Track execution history for better reporting to main agent
+    const executionHistory: Array<{
+      tool: string;
+      status: 'success' | 'error';
+      params: any; // 工具调用参数
+      result?: any; // 工具执行结果（成功时）
+      error?: string; // 错误信息（失败时）
+      timestamp: string;
+    }> = [];
 
     // Helper function to indent multi-line content
     const indentMultiline = (content: string, baseIndent: string): string => {
-      return content.split('\n').map(line => `${baseIndent}  ${line}`).join('\n');
+      return content
+        .split('\n')
+        .map((line) => `${baseIndent}  ${line}`)
+        .join('\n');
     };
-    
+
     const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, mode, agent);
-    const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(agent.systemPrompt);
-    
-    const fullPrompt = constraints.length > 0
-      ? `${prompt}\n\nConstraints:\n${constraints.map(c => `- ${c}`).join('\n')}`
-      : prompt;
+    const enhancedSystemPrompt = await systemPromptGenerator.generateEnhancedSystemPrompt(
+      agent.systemPrompt
+    );
+
+    const fullPrompt =
+      constraints.length > 0
+        ? `${prompt}\n\nConstraints:\n${constraints.map((c) => `- ${c}`).join('\n')}`
+        : prompt;
 
     // Set up raw mode and stdin polling for ESC detection
     const cancellationManager = getCancellationManager();
@@ -1445,13 +2251,14 @@ export class TaskTool implements Tool {
               const chunk = process.stdin.read(1);
               if (chunk && chunk.length > 0) {
                 const code = chunk[0];
-                if (code === 0x1B) { // ESC
+                if (code === 0x1b) {
+                  // ESC
                   logger.debug('[TaskTool] ESC detected via polling!');
                   cancellationManager.cancel();
                 }
               }
             }
-          } catch (e) {
+          } catch {
             // Ignore polling errors
           }
         }, 10);
@@ -1482,15 +2289,15 @@ export class TaskTool implements Tool {
         throw new Error('Operation cancelled by user');
       }
     };
-    
-    let messages: Message[] = [
+
+    const messages: Message[] = [
       { role: 'system', content: enhancedSystemPrompt },
-      { role: 'user', content: fullPrompt }
+      { role: 'user', content: fullPrompt },
     ];
-    
+
     const availableTools = agentManager.getAvailableToolsForAgent(agent, mode);
     const allToolDefinitions = toolRegistry.getToolDefinitions();
-    
+
     const toolDefinitions: ToolDefinition[] = availableTools.map((toolName: string) => {
       const fullDef = allToolDefinitions.find((def: any) => def.function.name === toolName);
       if (fullDef) {
@@ -1501,28 +2308,42 @@ export class TaskTool implements Tool {
         function: {
           name: toolName,
           description: `Tool: ${toolName}`,
-          parameters: { type: 'object', properties: {}, required: [] }
-        }
+          parameters: { type: 'object', properties: {}, required: [] },
+        },
       };
     });
 
     let iteration = 0;
-    const maxIterations = 10;
+    let lastContentStr = ''; // Track last content for final result
 
-    while (iteration < maxIterations) {
+    // Main agent style loop: continue until AI returns no more tool_calls
+    while (true) {
       iteration++;
-      
+
       // Check for cancellation before each iteration
       checkCancellation();
-      
+
+      // Prepare chat options with taskId and model names for remote mode
+      const chatOptions: any = {
+        tools: toolDefinitions,
+        temperature: 0.7,
+      };
+
+      // Pass taskId, status, and model names for remote mode subagent calls
+      // Subagent shares the same taskId as the main task
+      if (isRemoteMode && mainTaskId) {
+        chatOptions.taskId = mainTaskId;
+        chatOptions.status = iteration === 1 ? 'begin' : 'continue';
+        // Pass model names to ensure subagent uses the same models as main task
+        chatOptions.llmModelName = config.get('remote_llmModelName');
+        chatOptions.vlmModelName = config.get('remote_vlmModelName');
+      }
+
       // Use withCancellation to make API call cancellable
-      const result = await cancellationManager.withCancellation(
-        subAgentClient.chatCompletion(messages, {
-          tools: toolDefinitions,
-          temperature: 0.7
-        }),
+      const result = (await cancellationManager.withCancellation(
+        subAgentClient.chatCompletion(messages, chatOptions),
         `api-${subagent_type}-${iteration}`
-      ) as any;
+      )) as any;
 
       // Check for cancellation after API call
       checkCancellation();
@@ -1533,6 +2354,7 @@ export class TaskTool implements Tool {
 
       const choice = result.choices[0];
       const messageContent = choice.message?.content;
+      const reasoningContent = choice.message?.reasoning_content || '';
       const toolCalls = choice.message.tool_calls;
 
       let contentStr: string;
@@ -1543,8 +2365,8 @@ export class TaskTool implements Tool {
         hasValidContent = messageContent.trim() !== '';
       } else if (Array.isArray(messageContent)) {
         const textParts = messageContent
-          .filter(item => typeof item?.text === 'string' && item.text.trim() !== '')
-          .map(item => item.text);
+          .filter((item) => typeof item?.text === 'string' && item.text.trim() !== '')
+          .map((item) => item.text);
         contentStr = textParts.join('');
         hasValidContent = textParts.length > 0;
       } else {
@@ -1562,15 +2384,37 @@ export class TaskTool implements Tool {
         throw new Error(`Sub-agent ${subagent_type} response truncated due to length limits`);
       }
 
-      // Add assistant message to conversation
-      messages.push({ role: 'assistant', content: contentStr });
+      // Add assistant message to conversation (必须包含 tool_calls，否则 tool_result 无法匹配)
+      const assistantMessage: any = { role: 'assistant', content: contentStr };
+      if (toolCalls && toolCalls.length > 0) {
+        assistantMessage.tool_calls = toolCalls;
+      }
+      if (reasoningContent) {
+        assistantMessage.reasoning_content = reasoningContent;
+      }
+      messages.push(assistantMessage as Message);
+
+      // Display reasoning content if present
+      if (reasoningContent) {
+        console.log(`\n${indent}${colors.textDim(`${icons.brain} Thinking Process:`)}`);
+        const truncatedReasoning =
+          reasoningContent.length > 500
+            ? reasoningContent.substring(0, 500) + '...'
+            : reasoningContent;
+        const indentedReasoning = indentMultiline(truncatedReasoning, indent);
+        console.log(`${indentedReasoning}\n`);
+      }
 
       // Display assistant response (if there's any text content) with proper indentation
       if (contentStr) {
-        console.log(`\n${indent}${colors.primaryBright(agentName)}: ${description}`);
-        const truncatedContent = contentStr.length > 500 ? contentStr.substring(0, 500) + '...' : contentStr;
-        const indentedContent = indentMultiline(truncatedContent, indent);
-        console.log(`${indentedContent}\n`);
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputAssistant(contentStr);
+        } else {
+          console.log(`\n${indent}${colors.primaryBright(agentName)}: ${description}`);
+          const truncatedContent = contentStr.length > 500 ? contentStr.substring(0, 500) + '...' : contentStr;
+          const indentedContent = indentMultiline(truncatedContent, indent);
+          console.log(`${indentedContent}\n`);
+        }
       }
 
       // Process tool calls with proper indentation
@@ -1581,80 +2425,122 @@ export class TaskTool implements Tool {
           let parsedParams: any;
           try {
             parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
-          } catch (e) {
+          } catch {
             parsedParams = params;
           }
 
-          console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${name}`)}`);
+          if (isSdkMode && sdkOutputAdapter) {
+            sdkOutputAdapter.outputToolStart(name, parsedParams);
+          } else {
+            console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${name}`)}`);
+          }
 
           try {
             // Check cancellation before tool execution
             checkCancellation();
-            
-            const toolResult = await cancellationManager.withCancellation(
+
+            const toolResult: any = await cancellationManager.withCancellation(
               toolRegistry.execute(name, parsedParams, mode, indent),
               `subagent-${subagent_type}-${name}-${iteration}`
             );
 
             // Display tool result with proper indentation for multi-line content
-            const resultPreview = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
-            const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
-            const indentedPreview = indentMultiline(truncatedPreview, indent);
-            console.log(`${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`);
+            if (isSdkMode && sdkOutputAdapter) {
+              sdkOutputAdapter.outputToolResult(name, toolResult);
+            } else {
+              const resultPreview = typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
+              const truncatedPreview = resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
+              const indentedPreview = indentMultiline(truncatedPreview, indent);
+              console.log(`${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`);
+            }
 
             messages.push({
               role: 'tool',
               content: JSON.stringify(toolResult),
-              tool_call_id: toolCall.id
+              tool_call_id: toolCall.id,
             });
           } catch (error: any) {
             if (error.message === 'Operation cancelled by user') {
-              console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
+              if (isSdkMode && sdkOutputAdapter) {
+                sdkOutputAdapter.outputWarning('Operation cancelled');
+              } else {
+                console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
+              }
               cancellationManager.off('cancelled', cancelHandler);
               cleanupStdinPolling();
+              const summaryPreview =
+                contentStr.length > 300 ? contentStr.substring(0, 300) + '...' : contentStr;
               return {
                 success: false,
                 message: `Task "${description}" cancelled by user`,
-                result: contentStr
+                result: {
+                  summary: summaryPreview,
+                  executionHistory: {
+                    totalIterations: iteration,
+                    toolsExecuted: executionHistory.length,
+                    successfulTools: executionHistory.filter((t) => t.status === 'success').length,
+                    failedTools: executionHistory.filter((t) => t.status === 'error').length,
+                    history: executionHistory,
+                    cancelled: true,
+                  },
+                },
               };
             }
-            console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error.message}\n`);
+            if (isSdkMode && sdkOutputAdapter) {
+              sdkOutputAdapter.outputToolError(name, error.message);
+            } else {
+              console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error.message}\n`);
+            }
+
+            // Record failed tool execution in history
+            executionHistory.push({
+              tool: name,
+              status: 'error',
+              params: parsedParams,
+              error: error.message,
+              timestamp: new Date().toISOString(),
+            });
 
             messages.push({
               role: 'tool',
               content: JSON.stringify({ error: error.message }),
-              tool_call_id: toolCall.id
+              tool_call_id: toolCall.id,
             });
           }
         }
-        console.log('');
+        if (!isSdkMode) {
+          console.log('');
+        }
         continue; // Continue to next iteration to get final response
       }
 
-      // No more tool calls, return the result
-      cancellationManager.off('cancelled', cancelHandler);
-      cleanupStdinPolling();
-      return {
-        success: true,
-        message: `Task "${description}" completed by ${subagent_type}`,
-        result: contentStr
-      };
+      // No more tool calls - break loop (same as main agent)
+      lastContentStr = contentStr || '';
+      break;
     }
 
-    // Max iterations reached - return accumulated results instead of throwing error
-    // Get the last assistant message content
-    const lastAssistantMsg = messages.filter(m => m.role === 'assistant').pop();
-    const lastContent = lastAssistantMsg?.content || '';
-
+    // Loop ended - return result (same as main agent pattern)
     cancellationManager.off('cancelled', cancelHandler);
     cleanupStdinPolling();
+
+    const summaryPreview =
+      lastContentStr.length > 300 ? lastContentStr.substring(0, 300) + '...' : lastContentStr;
     return {
       success: true,
-      message: `Task "${description}" completed (max iterations reached) by ${subagent_type}`,
-      result: lastContent
+      message: `Task "${description}" completed by ${subagent_type}`,
+      result: {
+        summary: summaryPreview,
+        executionHistory: {
+          totalIterations: iteration,
+          toolsExecuted: executionHistory.length,
+          successfulTools: executionHistory.filter((t) => t.status === 'success').length,
+          failedTools: executionHistory.filter((t) => t.status === 'error').length,
+          history: executionHistory,
+        },
+      },
     };
   }
-  
+
   private async executeParallelAgents(
     agents: SubAgentTask[],
     description: string,
@@ -1662,6 +2548,7 @@ export class TaskTool implements Tool {
     agentManager: any,
     toolRegistry: any,
     aiClient: any,
+    config: any,
     indentLevel: number = 1
   ): Promise<{ success: boolean; message: string; results: any[]; errors: any[] }> {
     const indent = '  '.repeat(indentLevel);
@@ -1690,13 +2577,14 @@ export class TaskTool implements Tool {
               const chunk = process.stdin.read(1);
               if (chunk && chunk.length > 0) {
                 const code = chunk[0];
-                if (code === 0x1B) { // ESC
+                if (code === 0x1b) {
+                  // ESC
                   logger.debug('[ParallelAgents] ESC detected via polling!');
                   cancellationManager.cancel();
                 }
               }
             }
-          } catch (e) {
+          } catch {
             // Ignore polling errors
           }
         }, 10);
@@ -1720,18 +2608,28 @@ export class TaskTool implements Tool {
     };
     cancellationManager.on('cancelled', cancelHandler);
 
-    console.log(`\n${indent}${colors.accent('◆')} ${colors.primaryBright('Parallel Agents')}: ${agents.length} running...`);
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputSystem('parallel_start', {
+        agents: agents.map(a => ({
+          type: a.subagent_type,
+          description: a.description
+        })),
+        count: agents.length
+      });
+    } else {
+      console.log(`\n${indent}${colors.accent('◆')} ${colors.primaryBright('Parallel Agents')}: ${agents.length} running...`);
+    }
 
     const startTime = Date.now();
 
-    const agentPromises = agents.map(async (agentTask, index) => {
+    const agentPromises = agents.map(async (agentTask, _index) => {
       // Check if cancelled
       if (cancelled || cancellationManager.isOperationCancelled()) {
         return {
           success: false,
           agent: agentTask.subagent_type,
           description: agentTask.description,
-          error: 'Operation cancelled by user'
+          error: 'Operation cancelled by user',
         };
       }
 
@@ -1746,41 +2644,57 @@ export class TaskTool implements Tool {
           agentManager,
           toolRegistry,
           aiClient,
+          config,
+          this.isSdkMode,
+          this.sdkOutputAdapter,
           indentLevel + 1
         );
-        
+
         return {
           success: true,
           agent: agentTask.subagent_type,
           description: agentTask.description,
-          result: result.result
+          result: result.result,
         };
       } catch (error: any) {
         return {
           success: false,
           agent: agentTask.subagent_type,
           description: agentTask.description,
-          error: error.message
+          error: error.message,
         };
       }
     });
-    
+
     const results = await Promise.all(agentPromises);
-    
+
     const duration = Date.now() - startTime;
     
     const successfulAgents = results.filter(r => r.success);
     const failedAgents = results.filter(r => !r.success);
     
-    console.log(`${indent}${colors.success('✔')} Parallel task completed in ${colors.textMuted(duration + 'ms')}`);
-    console.log(`${indent}${colors.info('ℹ')} Success: ${successfulAgents.length}/${agents.length} agents\n`);
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputSystem('parallel_complete', {
+        successfulCount: successfulAgents.length,
+        failedCount: failedAgents.length,
+        totalCount: agents.length,
+        duration,
+        failedAgents: failedAgents.map(f => ({
+          agent: f.agent,
+          error: f.error
+        }))
+      });
+    } else {
+      console.log(`${indent}${colors.success('✔')} Parallel task completed in ${colors.textMuted(duration + 'ms')}`);
+      console.log(`${indent}${colors.info('ℹ')} Success: ${successfulAgents.length}/${agents.length} agents\n`);
 
-    if (failedAgents.length > 0) {
-      console.log(`${indent}${colors.error('✖')} Failed agents:`);
-      for (const failed of failedAgents) {
-        console.log(`${indentNext}  ${colors.error('•')} ${failed.agent}: ${failed.error}`);
+      if (failedAgents.length > 0) {
+        console.log(`${indent}${colors.error('✖')} Failed agents:`);
+        for (const failed of failedAgents) {
+          console.log(`${indentNext}  ${colors.error('•')} ${failed.agent}: ${failed.error}`);
+        }
+        console.log('');
       }
-      console.log('');
     }
 
     // Cleanup
@@ -1790,16 +2704,16 @@ export class TaskTool implements Tool {
     return {
       success: failedAgents.length === 0,
       message: `Parallel task "${description}" completed: ${successfulAgents.length}/${agents.length} successful`,
-      results: successfulAgents.map(r => ({
+      results: successfulAgents.map((r) => ({
         agent: r.agent,
         description: r.description,
-        result: r.result
+        result: r.result,
       })),
-      errors: failedAgents.map(r => ({
+      errors: failedAgents.map((r) => ({
         agent: r.agent,
         description: r.description,
-        error: r.error
-      }))
+        error: r.error,
+      })),
     };
   }
 }
@@ -1832,34 +2746,39 @@ export class ReadBashOutputTool implements Tool {
 - Use appropriate poll_interval based on expected task duration
 - Check status to see if task is still running or completed
 - Combine with todo_write to track background task progress`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
   async execute(params: {
     task_id: string;
     poll_interval?: number;
   }): Promise<{ taskId: string; output: string; status: string; duration: number }> {
     const { task_id, poll_interval = 10 } = params;
-    
+
     try {
       const toolRegistry = getToolRegistry();
       const task = (toolRegistry as any).getBackgroundTask(task_id);
-      
+
       if (!task) {
         throw new Error(`Task ${task_id} not found`);
       }
-      
+
       const interval = Math.min(Math.max(poll_interval, 1), 120);
-      await new Promise(resolve => setTimeout(resolve, interval * 1000));
-      
+      await new Promise((resolve) => setTimeout(resolve, interval * 1000));
+
       const duration = Date.now() - task.startTime;
       const output = task.output.join('');
       const status = task.process.exitCode === null ? 'running' : 'completed';
-      
+
       return {
         taskId: task_id,
         output,
         status,
-        duration: Math.floor(duration / 1000)
+        duration: Math.floor(duration / 1000),
       };
     } catch (error: any) {
       throw new Error(`Failed to read bash output: ${error.message}`);
@@ -1895,36 +2814,43 @@ export class WebFetchTool implements Tool {
 - Use specific prompts to extract relevant information
 - Check if the page is accessible if you get errors
 - Large pages may be truncated due to size limits`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
-  async execute(params: { prompt: string }): Promise<{ content: string; url: string; status: number }> {
+  async execute(params: {
+    prompt: string;
+  }): Promise<{ content: string; url: string; status: number }> {
     const { prompt } = params;
-    
+
     try {
       const urlMatch = prompt.match(/https?:\/\/[^\s]+/i);
-      
+
       if (!urlMatch) {
         throw new Error('No URL found in prompt');
       }
-      
+
       const url = urlMatch[0];
-      
+
       const response = await axios.get(url, {
         timeout: 30000,
         maxContentLength: 10 * 1024 * 1024,
-        validateStatus: () => true
+        validateStatus: () => true,
       });
-      
+
       let content = response.data;
-      
+
       if (typeof content === 'object') {
         content = JSON.stringify(content, null, 2);
       }
-      
+
       return {
         content,
         url,
-        status: response.status
+        status: response.status,
       };
     } catch (error: any) {
       throw new Error(`Failed to fetch URL: ${error.message}`);
@@ -1965,7 +2891,12 @@ export class AskUserQuestionTool implements Tool {
 - Provide options when possible for faster response
 - Use multiSelect=true when multiple answers are valid
 - Be clear and concise in question wording`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
   async execute(params: {
     questions: Array<{
@@ -1976,40 +2907,32 @@ export class AskUserQuestionTool implements Tool {
     }>;
   }): Promise<{ answers: string[] }> {
     const { questions } = params;
-    
+
     try {
       if (questions.length === 0 || questions.length > 4) {
         throw new Error('Must provide 1-4 questions');
       }
-      
+
       const answers: string[] = [];
-      
+
       for (const q of questions) {
         if (q.options && q.options.length > 0) {
-          const result = await inquirer.prompt([
-            {
-              type: q.multiSelect ? 'checkbox' : 'list',
-              name: 'answer',
-              message: q.question,
-              choices: q.options,
-              default: q.multiSelect ? [] : q.options[0]
-            }
-          ]);
-          
-          answers.push(Array.isArray(result.answer) ? result.answer.join(', ') : result.answer);
+          const options = q.options.map((opt) => ({ value: opt, label: opt }));
+          const result = await select({
+            message: q.question,
+            options,
+          });
+
+          answers.push(result as string);
         } else {
-          const result = await inquirer.prompt([
-            {
-              type: 'input',
-              name: 'answer',
-              message: q.question
-            }
-          ]);
-          
-          answers.push(result.answer);
+          const result = (await text({
+            message: q.question,
+          })) as string;
+
+          answers.push(result);
         }
       }
-      
+
       return { answers };
     } catch (error: any) {
       throw new Error(`Failed to ask user questions: ${error.message}`);
@@ -2046,20 +2969,25 @@ export class SaveMemoryTool implements Tool {
 - Keep facts concise and specific
 - Remember project-specific conventions for consistency
 - This persists across sessions (global memory)`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
   async execute(params: { fact: string }): Promise<{ success: boolean; message: string }> {
     const { fact } = params;
-    
+
     try {
       const { getMemoryManager } = await import('./memory.js');
       const memoryManager = getMemoryManager(process.cwd());
-      
+
       await memoryManager.saveMemory(fact, 'global');
-      
+
       return {
         success: true,
-        message: `Successfully saved fact to memory`
+        message: `Successfully saved fact to memory`,
       };
     } catch (error: any) {
       throw new Error(`Failed to save memory: ${error.message}`);
@@ -2095,16 +3023,23 @@ export class ExitPlanModeTool implements Tool {
 - Include all necessary steps and considerations
 - The plan will be saved for reference during execution
 - Use this only when truly ready to start coding`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
-  async execute(params: { plan: string }): Promise<{ success: boolean; message: string; plan: string }> {
+  async execute(params: {
+    plan: string;
+  }): Promise<{ success: boolean; message: string; plan: string }> {
     const { plan } = params;
-    
+
     try {
       return {
         success: true,
         message: 'Plan completed and ready for execution',
-        plan
+        plan,
       };
     } catch (error: any) {
       throw new Error(`Failed to exit plan mode: ${error.message}`);
@@ -2144,21 +3079,21 @@ export class XmlEscapeTool implements Tool {
     escape_all?: boolean;
   }): Promise<{ success: boolean; message: string; changes: number }> {
     const { file_path, escape_all = false } = params;
-    
+
     try {
       const absolutePath = path.resolve(file_path);
       let content = await fs.readFile(absolutePath, 'utf-8');
-      
+
       const specialChars = [
         { char: '&', replacement: '&amp;' },
         { char: '<', replacement: '&lt;' },
         { char: '>', replacement: '&gt;' },
         { char: '"', replacement: '&quot;' },
-        { char: "'", replacement: '&apos;' }
+        { char: "'", replacement: '&apos;' },
       ];
-      
+
       let changes = 0;
-      
+
       for (const { char, replacement } of specialChars) {
         const regex = new RegExp(this.escapeRegExp(char), 'g');
         const matches = content.match(regex);
@@ -2167,14 +3102,14 @@ export class XmlEscapeTool implements Tool {
           content = content.replace(regex, replacement);
         }
       }
-      
+
       if (escape_all) {
         const additionalChars = [
           { char: '©', replacement: '&copy;' },
           { char: '®', replacement: '&reg;' },
-          { char: '€', replacement: '&euro;' }
+          { char: '€', replacement: '&euro;' },
         ];
-        
+
         for (const { char, replacement } of additionalChars) {
           const regex = new RegExp(this.escapeRegExp(char), 'g');
           const matches = content.match(regex);
@@ -2184,13 +3119,13 @@ export class XmlEscapeTool implements Tool {
           }
         }
       }
-      
+
       await fs.writeFile(absolutePath, content, 'utf-8');
-      
+
       return {
         success: true,
         message: `Successfully escaped ${changes} character(s) in ${file_path}`,
-        changes
+        changes,
       };
     } catch (error: any) {
       throw new Error(`Failed to escape XML/HTML in file ${file_path}: ${error.message}`);
@@ -2231,7 +3166,12 @@ export class ImageReadTool implements Tool {
 - Provide clear prompts for what to look for
 - Use task_brief for context
 - Supports PNG, JPG, GIF, WEBP, SVG, BMP`;
-  allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.PLAN, ExecutionMode.SMART];
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
 
   async execute(params: {
     image_input: string;
@@ -2241,10 +3181,10 @@ export class ImageReadTool implements Tool {
     mime_type?: string;
   }): Promise<{ analysis: string; image_info: any }> {
     const { image_input, prompt, task_brief, input_type = 'file_path', mime_type } = params;
-    
+
     try {
       let imageData: string;
-      
+
       if (input_type === 'file_path') {
         const absolutePath = path.resolve(image_input);
         const imageBuffer = await fs.readFile(absolutePath);
@@ -2252,19 +3192,14 @@ export class ImageReadTool implements Tool {
       } else {
         imageData = image_input;
       }
-      
-      const { AIClient } = await import('./ai-client.js');
+
       const configManager = await import('./config.js');
       const { getConfigManager } = configManager;
       const config = getConfigManager();
-      
-      const aiClient = new AIClient({
-        type: AuthType.API_KEY,
-        apiKey: config.get('apiKey'),
-        baseUrl: config.get('baseUrl'),
-        modelName: config.get('modelName') || 'Qwen3-Coder'
-      });
-      
+      const authConfig = config.getAuthConfig();
+
+      const aiClient = createAIClient(authConfig);
+
       const textContent = task_brief ? `${task_brief}\n\n${prompt}` : prompt;
       const messages: Message[] = [
         {
@@ -2272,32 +3207,32 @@ export class ImageReadTool implements Tool {
           content: [
             {
               type: 'text',
-              text: textContent
+              text: textContent,
             },
             {
               type: 'image_url' as const,
               image_url: {
-                url: `data:${mime_type || 'image/jpeg'};base64,${imageData}`
-              }
-            }
-          ]
-        }
+                url: `data:${mime_type || 'image/jpeg'};base64,${imageData}`,
+              },
+            },
+          ],
+        },
       ];
-      
+
       const result = await aiClient.chatCompletion(messages, {
-        temperature: 0.7
+        temperature: 0.7,
       });
-      
+
       const messageContent = result.choices[0]?.message?.content;
       const analysis = typeof messageContent === 'string' ? messageContent : '';
-      
+
       return {
         analysis,
         image_info: {
           input_type,
           prompt,
-          task_brief
-        }
+          task_brief,
+        },
       };
     } catch (error: any) {
       throw new Error(`Failed to read image: ${error.message}`);
@@ -2370,7 +3305,7 @@ export class InvokeSkillTool implements Tool {
 
 # When NOT to Use
 - For simple file operations (use Read/Write instead)
-- For basic code changes (use Replace/Write instead)
+- For basic code changes (use Edit/Write instead)
 - When a regular tool can accomplish the task
 
 # Parameters
@@ -2387,13 +3322,16 @@ export class InvokeSkillTool implements Tool {
 - Skills will guide you through their specific workflows`;
   allowedModes = [ExecutionMode.YOLO, ExecutionMode.ACCEPT_EDITS, ExecutionMode.SMART];
 
-  async execute(params: {
-    skillId: string;
-    taskDescription: string;
-    inputFile?: string;
-    outputFile?: string;
-    options?: Record<string, any>;
-  }, _executionMode?: ExecutionMode): Promise<{
+  async execute(
+    params: {
+      skillId: string;
+      taskDescription: string;
+      inputFile?: string;
+      outputFile?: string;
+      options?: Record<string, any>;
+    },
+    _executionMode?: ExecutionMode
+  ): Promise<{
     success: boolean;
     message: string;
     skill: string;
@@ -2410,12 +3348,13 @@ export class InvokeSkillTool implements Tool {
       reason: string;
     }>;
     guidance?: string;
+    /** Skill directory path for dependency management */
+    skillPath?: string;
   }> {
     const { skillId, taskDescription, inputFile, outputFile, options } = params;
 
     try {
       const { getSkillInvoker } = await import('./skill-invoker.js');
-      const { SkillExecutionParams } = await import('./skill-invoker.js') as any;
       const skillInvoker = getSkillInvoker();
 
       await skillInvoker.initialize();
@@ -2432,7 +3371,7 @@ export class InvokeSkillTool implements Tool {
             taskDescription,
             inputFile,
             outputFile,
-            options
+            options,
           });
 
           if (result.success) {
@@ -2443,7 +3382,7 @@ export class InvokeSkillTool implements Tool {
               task: taskDescription,
               result: result.output,
               files: result.files,
-              nextSteps: result.nextSteps
+              nextSteps: result.nextSteps,
             };
           } else {
             throw new Error(result.error || 'Failed to execute matched skill');
@@ -2457,7 +3396,7 @@ export class InvokeSkillTool implements Tool {
         taskDescription,
         inputFile,
         outputFile,
-        options
+        options,
       });
 
       if (result.success) {
@@ -2468,7 +3407,8 @@ export class InvokeSkillTool implements Tool {
           task: taskDescription,
           result: result.output,
           files: result.files,
-          nextSteps: result.nextSteps
+          nextSteps: result.nextSteps,
+          skillPath: result.skillPath
         };
       } else {
         throw new Error(result.error);
@@ -2528,7 +3468,7 @@ export class InvokeSkillTool implements Tool {
 
 //   async execute(params: { skill: string }): Promise<{ success: boolean; details: any }> {
 //     const { skill } = params;
-    
+
 //     if (!skill) {
 //       throw new Error('Skill parameter is required');
 //     }
@@ -2562,10 +3502,25 @@ export class ToolRegistry {
   private tools: Map<string, Tool> = new Map();
   private todoWriteTool: TodoWriteTool;
   private backgroundTasks: Map<string, { process: any; startTime: number; output: string[] }> = new Map();
+  private _isSdkMode: boolean = false;
+  private _sdkOutputAdapter: any = null;
 
   constructor() {
     this.todoWriteTool = new TodoWriteTool();
     this.registerDefaultTools();
+  }
+
+  public setSdkMode(enabled: boolean, adapter: any = null): void {
+    this._isSdkMode = enabled;
+    this._sdkOutputAdapter = adapter;
+  }
+
+  public get isSdkMode(): boolean {
+    return this._isSdkMode && this._sdkOutputAdapter !== null;
+  }
+
+  public get sdkOutputAdapter(): any {
+    return this._sdkOutputAdapter;
   }
 
   private registerDefaultTools(): void {
@@ -2574,10 +3529,10 @@ export class ToolRegistry {
     this.register(new GrepTool());
     this.register(new BashTool());
     this.register(new ListDirectoryTool());
-    this.register(new SearchCodebaseTool());
+    this.register(new SearchFilesTool());
     this.register(new DeleteFileTool());
     this.register(new CreateDirectoryTool());
-    this.register(new ReplaceTool());
+    this.register(new EditTool());
     this.register(new WebSearchTool());
     this.register(this.todoWriteTool);
     this.register(new TodoReadTool(this.todoWriteTool));
@@ -2612,23 +3567,21 @@ export class ToolRegistry {
   registerMCPTools(mcpTools: Map<string, any>): void {
     let registeredCount = 0;
 
-        for (const [fullName, tool] of mcpTools) {
+    for (const [fullName, tool] of mcpTools) {
+      const firstUnderscoreIndex = fullName.indexOf('__');
 
-          const firstUnderscoreIndex = fullName.indexOf('__');
+      if (
+        firstUnderscoreIndex === -1 ||
+        firstUnderscoreIndex === 0 ||
+        firstUnderscoreIndex === fullName.length - 2
+      )
+        continue;
 
-          if (firstUnderscoreIndex === -1 || firstUnderscoreIndex === 0 || 
+      const serverName = fullName.substring(0, firstUnderscoreIndex);
 
-              firstUnderscoreIndex === fullName.length - 2) continue;
+      const originalName = fullName.substring(firstUnderscoreIndex + 2);
 
-          
-
-          const serverName = fullName.substring(0, firstUnderscoreIndex);
-
-          const originalName = fullName.substring(firstUnderscoreIndex + 2);
-
-    
-
-          if (!originalName || originalName.trim() === '') continue;
+      if (!originalName || originalName.trim() === '') continue;
 
       // Auto-rename if conflict, ensure unique name
       let toolName = originalName;
@@ -2648,36 +3601,45 @@ export class ToolRegistry {
         suffix++;
       }
 
-      if (!this.tools.has(toolName)) {
-        // Create a wrapper tool for the MCP tool - hide MCP origin from LLM
-        const mcpTool: any = {
-          name: toolName,
-          description: tool.description || 'MCP tool',
-          allowedModes: [ExecutionMode.YOLO, ExecutionMode.SMART, ExecutionMode.ACCEPT_EDITS],
-          inputSchema: tool.inputSchema,
-          _isMcpTool: true,
-          _mcpServerName: serverName,
-          _mcpFullName: fullName,
-          execute: async (params: any) => {
-            const { getMCPManager } = await import('./mcp.js');
-            const mcpManager = getMCPManager();
-            return await mcpManager.callTool(fullName, params);
+              if (!this.tools.has(toolName)) {
+              // Create a wrapper tool for the MCP tool - hide MCP origin from LLM
+              const mcpTool: any = {
+                name: toolName,
+                description: tool.description || 'MCP tool',
+                allowedModes: [ExecutionMode.YOLO, ExecutionMode.SMART, ExecutionMode.ACCEPT_EDITS],
+                inputSchema: tool.inputSchema,
+                _isMcpTool: true,
+                _mcpServerName: serverName,
+                _mcpFullName: fullName,
+                execute: async (params: any) => {
+                  const { getMCPManager } = await import('./mcp.js');
+                  const mcpManager = getMCPManager();
+                  return await mcpManager.callTool(fullName, params);
+                }
+              };
+              this.tools.set(toolName, mcpTool);
+              registeredCount++;
+      
+              if (toolName !== originalName) {
+                const renameMsg = `[MCP] Tool '${originalName}' renamed to '${toolName}' to avoid conflict`;
+                if (this._isSdkMode && this._sdkOutputAdapter) {
+                  this._sdkOutputAdapter.outputSystem('info', { message: renameMsg });
+                } else {
+                  console.log(renameMsg);
+                }
+              }
+            }
           }
-        };
-        this.tools.set(toolName, mcpTool);
-        registeredCount++;
-
-        if (toolName !== originalName) {
-          console.log(`[MCP] Tool '${originalName}' renamed to '${toolName}' to avoid conflict`);
+      
+          if (registeredCount > 0) {
+            const msg = `[MCP] Registered ${registeredCount} tool(s)`;
+            if (this._isSdkMode && this._sdkOutputAdapter) {
+              this._sdkOutputAdapter.outputSystem('success', { message: msg });
+            } else {
+              console.log(msg);
+            }
+          }
         }
-      }
-    }
-
-    if (registeredCount > 0) {
-      console.log(`[MCP] Registered ${registeredCount} tool(s)`);
-    }
-  }
-
   /**
    * Remove all MCP tool wrappers (useful when MCP servers are removed)
    */
@@ -2703,11 +3665,16 @@ export class ToolRegistry {
     return Array.from(this.tools.values());
   }
 
-  addBackgroundTask(taskId: string, task: { process: any; startTime: number; output: string[] }): void {
+  addBackgroundTask(
+    taskId: string,
+    task: { process: any; startTime: number; output: string[] }
+  ): void {
     this.backgroundTasks.set(taskId, task);
   }
 
-  getBackgroundTask(taskId: string): { process: any; startTime: number; output: string[] } | undefined {
+  getBackgroundTask(
+    taskId: string
+  ): { process: any; startTime: number; output: string[] } | undefined {
     return this.backgroundTasks.get(taskId);
   }
 
@@ -2716,11 +3683,11 @@ export class ToolRegistry {
   }
 
   getToolDefinitions(): any[] {
-    return Array.from(this.tools.values()).map(tool => {
+    return Array.from(this.tools.values()).map((tool) => {
       let parameters: any = {
         type: 'object',
         properties: {},
-        required: []
+        required: [],
       };
 
       // Define specific parameters for each tool
@@ -2731,18 +3698,18 @@ export class ToolRegistry {
             properties: {
               filePath: {
                 type: 'string',
-                description: 'The absolute path to the file to read'
+                description: 'The absolute path to the file to read',
               },
               offset: {
                 type: 'number',
-                description: 'Optional: Line number to start reading from (0-based)'
+                description: 'Optional: Line number to start reading from (0-based)',
               },
               limit: {
                 type: 'number',
-                description: 'Optional: Maximum number of lines to read'
-              }
+                description: 'Optional: Maximum number of lines to read',
+              },
             },
-            required: ['filePath']
+            required: ['filePath'],
           };
           break;
 
@@ -2752,14 +3719,14 @@ export class ToolRegistry {
             properties: {
               filePath: {
                 type: 'string',
-                description: 'The absolute path to the file to write'
+                description: 'The absolute path to the file to write',
               },
               content: {
                 type: 'string',
-                description: 'The content to write to the file'
-              }
+                description: 'The content to write to the file',
+              },
             },
-            required: ['filePath', 'content']
+            required: ['filePath', 'content'],
           };
           break;
 
@@ -2769,26 +3736,34 @@ export class ToolRegistry {
             properties: {
               pattern: {
                 type: 'string',
-                description: 'The regex pattern to search for'
+                description: 'The regex pattern or literal string to search for',
               },
               path: {
                 type: 'string',
-                description: 'Optional: The path to search in (default: current directory)'
+                description: 'Optional: The path to search in (default: current directory)',
               },
-              include: {
+              glob: {
                 type: 'string',
-                description: 'Optional: Glob pattern to filter files'
+                description: 'Optional: Glob pattern to filter files (e.g., "*.ts", "**/*.js")',
               },
-              case_sensitive: {
+              ignoreCase: {
                 type: 'boolean',
-                description: 'Optional: Case-sensitive search (default: false)'
+                description: 'Optional: Case-insensitive search (default: false)',
+              },
+              literal: {
+                type: 'boolean',
+                description: 'Optional: Treat pattern as literal string (default: false)',
               },
               context: {
                 type: 'number',
-                description: 'Optional: Number of context lines to show'
-              }
+                description: 'Optional: Number of context lines to show before and after',
+              },
+              limit: {
+                type: 'number',
+                description: 'Optional: Maximum number of matches to return',
+              },
             },
-            required: ['pattern']
+            required: ['pattern'],
           };
           break;
 
@@ -2798,26 +3773,26 @@ export class ToolRegistry {
             properties: {
               command: {
                 type: 'string',
-                description: 'The shell command to execute'
+                description: 'The shell command to execute',
               },
               cwd: {
                 type: 'string',
-                description: 'Optional: Working directory'
+                description: 'Optional: Working directory',
               },
               description: {
                 type: 'string',
-                description: 'Optional: Brief description of the command'
+                description: 'Optional: Brief description of the command',
               },
               timeout: {
                 type: 'number',
-                description: 'Optional: Timeout in seconds (default: 120)'
+                description: 'Optional: Timeout in seconds (default: 120)',
               },
               run_in_bg: {
                 type: 'boolean',
-                description: 'Optional: Run in background (default: false)'
-              }
+                description: 'Optional: Run in background (default: false)',
+              },
             },
-            required: ['command']
+            required: ['command'],
           };
           break;
 
@@ -2827,31 +3802,35 @@ export class ToolRegistry {
             properties: {
               path: {
                 type: 'string',
-                description: 'Optional: The directory path to list (default: current directory)'
+                description: 'Optional: The directory path to list (default: current directory)',
               },
               recursive: {
                 type: 'boolean',
-                description: 'Optional: List recursively (default: false)'
-              }
+                description: 'Optional: List recursively (default: false)',
+              },
             },
-            required: []
+            required: [],
           };
           break;
 
-        case 'SearchCodebase':
+        case 'SearchFiles':
           parameters = {
             type: 'object',
             properties: {
               pattern: {
                 type: 'string',
-                description: 'The glob pattern to match files'
+                description: 'The glob pattern to match files',
               },
               path: {
                 type: 'string',
-                description: 'Optional: The path to search in (default: current directory)'
-              }
+                description: 'Optional: The path to search in (default: current directory)',
+              },
+              limit: {
+                type: 'integer',
+                description: 'Optional: Maximum number of results to return (default: 1000)',
+              },
             },
-            required: ['pattern']
+            required: ['pattern'],
           };
           break;
 
@@ -2861,10 +3840,10 @@ export class ToolRegistry {
             properties: {
               filePath: {
                 type: 'string',
-                description: 'The path to the file to delete'
-              }
+                description: 'The path to the file to delete',
+              },
             },
-            required: ['filePath']
+            required: ['filePath'],
           };
           break;
 
@@ -2874,39 +3853,39 @@ export class ToolRegistry {
             properties: {
               dirPath: {
                 type: 'string',
-                description: 'The directory path to create'
+                description: 'The directory path to create',
               },
               recursive: {
                 type: 'boolean',
-                description: 'Optional: Create parent directories (default: true)'
-              }
+                description: 'Optional: Create parent directories (default: true)',
+              },
             },
-            required: ['dirPath']
+            required: ['dirPath'],
           };
           break;
 
-        case 'replace':
+        case 'Edit':
           parameters = {
             type: 'object',
             properties: {
               file_path: {
                 type: 'string',
-                description: 'The absolute path to the file'
+                description: 'The absolute path to the file to edit',
               },
               instruction: {
                 type: 'string',
-                description: 'Description of what needs to be changed'
+                description: 'Description of what needs to be changed',
               },
               old_string: {
                 type: 'string',
-                description: 'The exact text to replace'
+                description: 'The exact text to replace (supports fuzzy matching)',
               },
               new_string: {
                 type: 'string',
-                description: 'The exact text to replace with'
-              }
+                description: 'The new text to replace with',
+              },
             },
-            required: ['file_path', 'instruction', 'old_string', 'new_string']
+            required: ['file_path', 'instruction', 'old_string', 'new_string'],
           };
           break;
 
@@ -2916,10 +3895,10 @@ export class ToolRegistry {
             properties: {
               query: {
                 type: 'string',
-                description: 'The search query'
-              }
+                description: 'The search query',
+              },
             },
-            required: ['query']
+            required: ['query'],
           };
           break;
 
@@ -2935,14 +3914,17 @@ export class ToolRegistry {
                   properties: {
                     id: { type: 'string' },
                     task: { type: 'string' },
-                    status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'failed'] },
-                    priority: { type: 'string', enum: ['high', 'medium', 'low'] }
+                    status: {
+                      type: 'string',
+                      enum: ['pending', 'in_progress', 'completed', 'failed'],
+                    },
+                    priority: { type: 'string', enum: ['high', 'medium', 'low'] },
                   },
-                  required: ['id', 'task', 'status']
-                }
-              }
+                  required: ['id', 'task', 'status'],
+                },
+              },
             },
-            required: ['todos']
+            required: ['todos'],
           };
           break;
 
@@ -2950,7 +3932,7 @@ export class ToolRegistry {
           parameters = {
             type: 'object',
             properties: {},
-            required: []
+            required: [],
           };
           break;
 
@@ -2960,60 +3942,79 @@ export class ToolRegistry {
             properties: {
               description: {
                 type: 'string',
-                description: 'Brief description of the task (3-5 words)'
+                description: 'Brief description of the task (3-5 words)',
               },
               agents: {
                 type: 'array',
-                description: 'Optional: Array of agents to run in parallel for comprehensive analysis',
+                description:
+                  'Optional: Array of agents to run in parallel for comprehensive analysis',
                 items: {
                   type: 'object',
                   properties: {
                     description: {
                       type: 'string',
-                      description: 'Brief description of the sub-agent task'
+                      description: 'Brief description of the sub-agent task',
                     },
                     prompt: {
                       type: 'string',
-                      description: 'The task for the sub-agent to perform'
+                      description: 'The task for the sub-agent to perform',
                     },
                     subagent_type: {
                       type: 'string',
-                      enum: ['general-purpose', 'plan-agent', 'explore-agent', 'frontend-tester', 'code-reviewer', 'frontend-developer', 'backend-developer'],
-                      description: 'The type of specialized agent'
+                      enum: [
+                        'general-purpose',
+                        'plan-agent',
+                        'explore-agent',
+                        'frontend-tester',
+                        'code-reviewer',
+                        'frontend-developer',
+                        'backend-developer',
+                      ],
+                      description: 'The type of specialized agent',
                     },
                     constraints: {
                       type: 'array',
                       items: { type: 'string' },
-                      description: 'Optional: Constraints or limitations'
-                    }
+                      description: 'Optional: Constraints or limitations',
+                    },
                   },
-                  required: ['description', 'prompt', 'subagent_type']
-                }
+                  required: ['description', 'prompt', 'subagent_type'],
+                },
               },
               prompt: {
                 type: 'string',
-                description: 'Optional: The task for the agent to perform (use agents for parallel execution)'
+                description:
+                  'Optional: The task for the agent to perform (use agents for parallel execution)',
               },
               subagent_type: {
                 type: 'string',
-                enum: ['general-purpose', 'plan-agent', 'explore-agent', 'frontend-tester', 'code-reviewer', 'frontend-developer', 'backend-developer'],
-                description: 'Optional: The type of specialized agent (use agents for parallel execution)'
+                enum: [
+                  'general-purpose',
+                  'plan-agent',
+                  'explore-agent',
+                  'frontend-tester',
+                  'code-reviewer',
+                  'frontend-developer',
+                  'backend-developer',
+                ],
+                description:
+                  'Optional: The type of specialized agent (use agents for parallel execution)',
               },
               useContext: {
                 type: 'boolean',
-                description: 'Optional: Include main agent context'
+                description: 'Optional: Include main agent context',
               },
               outputFormat: {
                 type: 'string',
-                description: 'Optional: Output format template'
+                description: 'Optional: Output format template',
               },
               constraints: {
                 type: 'array',
                 items: { type: 'string' },
-                description: 'Optional: Constraints or limitations'
-              }
+                description: 'Optional: Constraints or limitations',
+              },
             },
-            required: ['description']
+            required: ['description'],
           };
           break;
 
@@ -3023,14 +4024,14 @@ export class ToolRegistry {
             properties: {
               task_id: {
                 type: 'string',
-                description: 'The ID of the task'
+                description: 'The ID of the task',
               },
               poll_interval: {
                 type: 'number',
-                description: 'Optional: Polling interval in seconds (default: 10)'
-              }
+                description: 'Optional: Polling interval in seconds (default: 10)',
+              },
             },
-            required: ['task_id']
+            required: ['task_id'],
           };
           break;
 
@@ -3040,10 +4041,10 @@ export class ToolRegistry {
             properties: {
               prompt: {
                 type: 'string',
-                description: 'Prompt containing URL(s) and processing instructions'
-              }
+                description: 'Prompt containing URL(s) and processing instructions',
+              },
             },
-            required: ['prompt']
+            required: ['prompt'],
           };
           break;
 
@@ -3062,15 +4063,15 @@ export class ToolRegistry {
                     options: {
                       type: 'array',
                       items: { type: 'string' },
-                      description: 'Available choices (2-4 options)'
+                      description: 'Available choices (2-4 options)',
                     },
-                    multiSelect: { type: 'boolean' }
+                    multiSelect: { type: 'boolean' },
                   },
-                  required: ['question', 'header', 'options', 'multiSelect']
-                }
-              }
+                  required: ['question', 'header', 'options', 'multiSelect'],
+                },
+              },
             },
-            required: ['questions']
+            required: ['questions'],
           };
           break;
 
@@ -3080,10 +4081,10 @@ export class ToolRegistry {
             properties: {
               fact: {
                 type: 'string',
-                description: 'The specific fact to remember'
-              }
+                description: 'The specific fact to remember',
+              },
             },
-            required: ['fact']
+            required: ['fact'],
           };
           break;
 
@@ -3093,10 +4094,10 @@ export class ToolRegistry {
             properties: {
               plan: {
                 type: 'string',
-                description: 'The plan to present'
-              }
+                description: 'The plan to present',
+              },
             },
-            required: ['plan']
+            required: ['plan'],
           };
           break;
 
@@ -3106,14 +4107,14 @@ export class ToolRegistry {
             properties: {
               file_path: {
                 type: 'string',
-                description: 'The absolute path to the XML/HTML file'
+                description: 'The absolute path to the XML/HTML file',
               },
               escape_all: {
                 type: 'boolean',
-                description: 'Optional: Escape all special characters (default: false)'
-              }
+                description: 'Optional: Escape all special characters (default: false)',
+              },
             },
-            required: ['file_path']
+            required: ['file_path'],
           };
           break;
 
@@ -3123,27 +4124,27 @@ export class ToolRegistry {
             properties: {
               image_input: {
                 type: 'string',
-                description: 'Image file path or base64 data'
+                description: 'Image file path or base64 data',
               },
               prompt: {
                 type: 'string',
-                description: 'Comprehensive VLM instruction'
+                description: 'Comprehensive VLM instruction',
               },
               task_brief: {
                 type: 'string',
-                description: 'Brief task description (max 15 words)'
+                description: 'Brief task description (max 15 words)',
               },
               input_type: {
                 type: 'string',
                 enum: ['file_path', 'base64'],
-                description: 'Input type (default: file_path)'
+                description: 'Input type (default: file_path)',
               },
               mime_type: {
                 type: 'string',
-                description: 'Optional: MIME type for base64 input'
-              }
+                description: 'Optional: MIME type for base64 input',
+              },
             },
-            required: ['image_input', 'prompt']
+            required: ['image_input', 'prompt'],
           };
           break;
 
@@ -3153,10 +4154,10 @@ export class ToolRegistry {
             properties: {
               skill: {
                 type: 'string',
-                description: 'The skill name to execute'
-              }
+                description: 'The skill name to execute',
+              },
             },
-            required: ['skill']
+            required: ['skill'],
           };
           break;
 
@@ -3164,7 +4165,7 @@ export class ToolRegistry {
           parameters = {
             type: 'object',
             properties: {},
-            required: []
+            required: [],
           };
           break;
 
@@ -3174,14 +4175,14 @@ export class ToolRegistry {
             properties: {
               skill: {
                 type: 'string',
-                description: 'The skill name/id to get details for'
-              }
+                description: 'The skill name/id to get details for',
+              },
             },
-            required: ['skill']
+            required: ['skill'],
           };
           break;
 
-        default:
+        default: {
           // For MCP tools, use their inputSchema; for other unknown tools, keep empty schema
           const mcpTool = tool as any;
           if (mcpTool._isMcpTool && mcpTool.inputSchema) {
@@ -3189,13 +4190,15 @@ export class ToolRegistry {
             parameters = {
               type: 'object',
               properties: {},
-              required: []
+              required: [],
             };
             if (mcpTool.inputSchema.properties) {
-              for (const [paramName, paramDef] of Object.entries<any>(mcpTool.inputSchema.properties)) {
+              for (const [paramName, paramDef] of Object.entries<any>(
+                mcpTool.inputSchema.properties
+              )) {
                 parameters.properties[paramName] = {
                   type: paramDef.type || 'string',
-                  description: paramDef.description || ''
+                  description: paramDef.description || '',
                 };
               }
             }
@@ -3206,9 +4209,10 @@ export class ToolRegistry {
             parameters = {
               type: 'object',
               properties: {},
-              required: []
+              required: [],
             };
           }
+        }
       }
 
       return {
@@ -3216,13 +4220,18 @@ export class ToolRegistry {
         function: {
           name: tool.name,
           description: tool.description,
-          parameters
-        }
+          parameters,
+        },
       };
     });
   }
 
-  async execute(toolName: string, params: any, executionMode: ExecutionMode, indent: string = ''): Promise<any> {
+  async execute(
+    toolName: string,
+    params: any,
+    executionMode: ExecutionMode,
+    indent: string = ''
+  ): Promise<any> {
     // First try to execute as local tool
     const localTool = this.tools.get(toolName);
     if (localTool) {
@@ -3236,20 +4245,20 @@ export class ToolRegistry {
 
     // Check if this is an MCP tool (format: serverName__toolName)
     if (toolName.includes('__') && allMcpTools.has(toolName)) {
-      return await this.executeMCPTool(toolName, params, executionMode, indent);
+      return await this.executeMCPTool(toolName, params, executionMode, indent, this.isSdkMode, this.sdkOutputAdapter);
     }
 
     // Try to find MCP tool with just the tool name (try each server)
-    for (const [fullName, tool] of allMcpTools) {
+    for (const [fullName, _tool] of allMcpTools) {
       // Split only on the first __ to preserve underscores in tool names
       const firstUnderscoreIndex = fullName.indexOf('__');
       if (firstUnderscoreIndex === -1) continue;
-      const [serverName, actualToolName] = [
+      const [_serverName, actualToolName] = [
         fullName.substring(0, firstUnderscoreIndex),
-        fullName.substring(firstUnderscoreIndex + 2)
+        fullName.substring(firstUnderscoreIndex + 2),
       ];
       if (actualToolName === toolName) {
-        return await this.executeMCPTool(fullName, params, executionMode, indent);
+        return await this.executeMCPTool(fullName, params, executionMode, indent, this.isSdkMode, this.sdkOutputAdapter);
       }
     }
 
@@ -3260,7 +4269,12 @@ export class ToolRegistry {
   /**
    * Execute local tool (extracted for reuse)
    */
-  private async executeLocalTool(toolName: string, params: any, executionMode: ExecutionMode, indent: string): Promise<any> {
+  private async executeLocalTool(
+    toolName: string,
+    params: any,
+    executionMode: ExecutionMode,
+    indent: string
+  ): Promise<any> {
     const tool = this.get(toolName);
     const cancellationManager = getCancellationManager();
 
@@ -3269,9 +4283,7 @@ export class ToolRegistry {
     }
 
     if (!tool.allowedModes.includes(executionMode)) {
-      throw new Error(
-        `Tool ${toolName} is not allowed in ${executionMode} mode`
-      );
+      throw new Error(`Tool ${toolName} is not allowed in ${executionMode} mode`);
     }
 
     // Smart approval mode
@@ -3283,7 +4295,9 @@ export class ToolRegistry {
         if (debugMode) {
           const { getLogger } = await import('./logger.js');
           const logger = getLogger();
-          logger.debug(`[SmartApprovalEngine] Tool '${toolName}' bypassed smart approval completely`);
+          logger.debug(
+            `[SmartApprovalEngine] Tool '${toolName}' bypassed smart approval completely`
+          );
         }
         return await cancellationManager.withCancellation(
           tool.execute(params, executionMode),
@@ -3298,9 +4312,17 @@ export class ToolRegistry {
       const authConfig = configManager.getAuthConfig();
       const isRemoteMode = authConfig.type === AuthType.OAUTH_XAGENT;
       if (isRemoteMode && toolName === 'InvokeSkill') {
-        console.log('');
-        console.log(`${indent}${colors.success(`✅ [Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`)}`);
-        console.log('');
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputSystem('approval', {
+            tool: toolName,
+            decision: 'auto_approved',
+            reason: 'remote_mode_skill'
+          });
+        } else {
+          console.log('');
+          console.log(`${indent}${colors.success(`✅ [Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`)}`);
+          console.log('');
+        }
         return await cancellationManager.withCancellation(
           tool.execute(params, executionMode),
           `tool-${toolName}`
@@ -3315,17 +4337,26 @@ export class ToolRegistry {
       const result = await approvalEngine.evaluate({
         toolName,
         params,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
 
       // Decide whether to execute based on approval result
       if (result.decision === 'approved') {
         // Whitelist or AI approval passed, execute directly
-        console.log('');
-        console.log(`${indent}${colors.success(`✅ [Smart Mode] Tool '${toolName}' passed approval, executing directly`)}`);
-        console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
-        console.log(`${indent}${colors.textDim(`  Latency: ${result.latency}ms`)}`);
-        console.log('');
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputSystem('approval', {
+            tool: toolName,
+            decision: 'approved',
+            detectionMethod: result.detectionMethod,
+            latency: result.latency
+          });
+        } else {
+          console.log('');
+          console.log(`${indent}${colors.success(`✅ [Smart Mode] Tool '${toolName}' passed approval, executing directly`)}`);
+          console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
+          console.log(`${indent}${colors.textDim(`  Latency: ${result.latency}ms`)}`);
+          console.log('');
+        }
         return await cancellationManager.withCancellation(
           tool.execute(params, executionMode),
           `tool-${toolName}`
@@ -3335,25 +4366,47 @@ export class ToolRegistry {
         const confirmed = await approvalEngine.requestConfirmation(result);
 
         if (confirmed) {
-          console.log('');
-          console.log(`${indent}${colors.success(`✅ [Smart Mode] User confirmed execution of tool '${toolName}'`)}`);
-          console.log('');
+          if (this.isSdkMode && this.sdkOutputAdapter) {
+            this.sdkOutputAdapter.outputSystem('approval', {
+              tool: toolName,
+              decision: 'user_confirmed'
+            });
+          } else {
+            console.log('');
+            console.log(`${indent}${colors.success(`✅ [Smart Mode] User confirmed execution of tool '${toolName}'`)}`);
+            console.log('');
+          }
           return await cancellationManager.withCancellation(
             tool.execute(params, executionMode),
             `tool-${toolName}`
           );
         } else {
-          console.log('');
-          console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled execution of tool '${toolName}'`)}`);
-          console.log('');
+          if (this.isSdkMode && this.sdkOutputAdapter) {
+            this.sdkOutputAdapter.outputSystem('approval', {
+              tool: toolName,
+              decision: 'user_cancelled'
+            });
+          } else {
+            console.log('');
+            console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled execution of tool '${toolName}'`)}`);
+            console.log('');
+          }
           throw new Error(`Tool execution cancelled by user: ${toolName}`);
         }
       } else {
         // Rejected execution
-        console.log('');
-        console.log(`${indent}${colors.error(`❌ [Smart Mode] Tool '${toolName}' execution rejected`)}`);
-        console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
-        console.log('');
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputSystem('approval', {
+            tool: toolName,
+            decision: 'rejected',
+            reason: result.description
+          });
+        } else {
+          console.log('');
+          console.log(`${indent}${colors.error(`❌ [Smart Mode] Tool '${toolName}' execution rejected`)}`);
+          console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
+          console.log('');
+        }
         throw new Error(`Tool execution rejected: ${toolName}`);
       }
     }
@@ -3368,7 +4421,7 @@ export class ToolRegistry {
   /**
    * Execute an MCP tool call
    */
-  private async executeMCPTool(toolName: string, params: any, executionMode: ExecutionMode, indent: string = ''): Promise<any> {
+  private async executeMCPTool(toolName: string, params: any, executionMode: ExecutionMode, indent: string = '', isSdkMode: boolean = false, sdkOutputAdapter: any = null): Promise<any> {
     const { getMCPManager } = await import('./mcp.js');
     const mcpManager = getMCPManager();
     const cancellationManager = getCancellationManager();
@@ -3377,14 +4430,22 @@ export class ToolRegistry {
     const firstUnderscoreIndex = toolName.indexOf('__');
     const serverName = toolName.substring(0, firstUnderscoreIndex);
     const actualToolName = toolName.substring(firstUnderscoreIndex + 2);
-    
+
     // Get server info for display
     const server = mcpManager.getServer(serverName);
-    const serverTools = server?.getToolNames() || [];
-    
+    const _serverTools = server?.getToolNames() || [];
+
     // Display tool call info
-    console.log('');
-    console.log(`${indent}${colors.warning(`${icons.tool} MCP Tool Call: ${serverName}::${actualToolName}`)}`);
+    if (isSdkMode && sdkOutputAdapter) {
+      sdkOutputAdapter.outputSystem('mcp_tool_call', {
+        server: serverName,
+        tool: actualToolName,
+        status: 'calling'
+      });
+    } else {
+      console.log('');
+      console.log(`${indent}${colors.warning(`${icons.tool} MCP Tool Call: ${serverName}::${actualToolName}`)}`);
+    }
 
     // Smart approval mode for MCP tools
     if (executionMode === ExecutionMode.SMART) {
@@ -3397,7 +4458,15 @@ export class ToolRegistry {
 
       // Remote mode: remote LLM has already approved the tool, auto-approve
       if (isRemoteMode) {
-        console.log(`${indent}${colors.success(`✅ [Smart Mode] Remote mode: MCP tool '${serverName}::${actualToolName}' auto-approved`)}`);
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputSystem('approval', {
+            tool: `MCP[${serverName}]::${actualToolName}`,
+            decision: 'auto_approved',
+            reason: 'remote_mode'
+          });
+        } else {
+          console.log(`${indent}${colors.success(`✅ [Smart Mode] Remote mode: MCP tool '${serverName}::${actualToolName}' auto-approved`)}`);
+        }
       } else {
         const approvalEngine = getSmartApprovalEngine(debugMode);
 
@@ -3405,21 +4474,45 @@ export class ToolRegistry {
         const result = await approvalEngine.evaluate({
           toolName: `MCP[${serverName}]::${actualToolName}`,
           params,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
 
         if (result.decision === 'approved') {
-          console.log(`${indent}${colors.success(`✅ [Smart Mode] MCP tool '${serverName}::${actualToolName}' passed approval`)}`);
-          console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
+          if (isSdkMode && sdkOutputAdapter) {
+            sdkOutputAdapter.outputSystem('approval', {
+              tool: `MCP[${serverName}]::${actualToolName}`,
+              decision: 'approved',
+              detectionMethod: result.detectionMethod,
+              latency: result.latency
+            });
+          } else {
+            console.log(`${indent}${colors.success(`✅ [Smart Mode] MCP tool '${serverName}::${actualToolName}' passed approval`)}`);
+            console.log(`${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`);
+          }
         } else if (result.decision === 'requires_confirmation') {
           const confirmed = await approvalEngine.requestConfirmation(result);
           if (!confirmed) {
-            console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled MCP tool execution`)}`);
+            if (isSdkMode && sdkOutputAdapter) {
+              sdkOutputAdapter.outputSystem('approval', {
+                tool: `MCP[${serverName}]::${actualToolName}`,
+                decision: 'user_cancelled'
+              });
+            } else {
+              console.log(`${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled MCP tool execution`)}`);
+            }
             throw new Error(`Tool execution cancelled by user: ${toolName}`);
           }
         } else {
-          console.log(`${indent}${colors.error(`❌ [Smart Mode] MCP tool execution rejected`)}`);
-          console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
+          if (isSdkMode && sdkOutputAdapter) {
+            sdkOutputAdapter.outputSystem('approval', {
+              tool: `MCP[${serverName}]::${actualToolName}`,
+              decision: 'rejected',
+              reason: result.description
+            });
+          } else {
+            console.log(`${indent}${colors.error(`❌ [Smart Mode] MCP tool execution rejected`)}`);
+            console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
+          }
           throw new Error(`Tool execution rejected: ${toolName}`);
         }
       }

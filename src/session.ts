@@ -717,6 +717,11 @@ export class InteractiveSession {
     console.log('');
 
     this.showExecutionMode();
+
+    // In SDK mode, output ready signal
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputReady();
+    }
   }
 
   /**

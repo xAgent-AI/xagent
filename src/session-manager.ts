@@ -19,8 +19,8 @@ export class SessionManager {
     if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
       relativePath = resolvedProjectRoot;
     }
-    // Replace path separator with underscore，移除非法字符
-    const pathSegment = relativePath.replace(/[:\\\/]/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '');
+    // Replace path separator with underscore，remove illegal characters
+    const pathSegment = relativePath.replace(/[:\\/g, '_').replace(/[^a-zA-Z0-9_-]/g, '');
     // Build project-specific directory structure：路径信息_项目名
     this.sessionsDir = path.join(homeDir, '.xagent', 'sessions', `${pathSegment}_${projectName}`);
   }
@@ -205,7 +205,7 @@ export class SessionManager {
 
     try {
       await fs.unlink(filePath);
-    } catch (error) {
+    } catch {
       // File might not exist, that's okay
     }
 

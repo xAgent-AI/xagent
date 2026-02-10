@@ -1,22 +1,49 @@
 import readline from 'readline';
 import chalk from 'chalk';
+import https from 'https';
+import axios from 'axios';
+import crypto from 'crypto';
 import ora from 'ora';
-import inquirer from 'inquirer';
-import { ExecutionMode, ChatMessage, ToolCall, AuthType } from './types.js';
-import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
-import { RemoteAIClient, TokenInvalidError } from './remote-ai-client.js';
+import { createRequire } from 'module';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
+import fsPromises from 'fs/promises';
+import os from 'os';
+
+const require = createRequire(import.meta.url);
+const packageJson = require('../package.json');
+import {
+  ExecutionMode,
+  ChatMessage,
+  ToolCall,
+  AuthType,
+} from './types.js';
+import type { AgentConfig, ToolCallItem } from './types.js';
+import { createAIClient, type AIClientInterface } from './ai-client-factory.js';
+import { detectThinkingKeywords, getThinkingTokens } from './ai-client/types.js';
+import { TokenInvalidError } from './ai-client/types.js';
+import { fetchDefaultModels } from './ai-client/providers/remote.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { AuthService, selectAuthType } from './auth.js';
 import { getToolRegistry } from './tools.js';
-import { getAgentManager, DEFAULT_AGENTS, AgentManager } from './agents.js';
+import { getAgentManager, AgentManager } from './agents.js';
 import { getMemoryManager, MemoryManager } from './memory.js';
 import { getMCPManager, MCPManager } from './mcp.js';
 import { getCheckpointManager, CheckpointManager } from './checkpoint.js';
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { getSessionManager, SessionManager } from './session-manager.js';
-import { SlashCommandHandler, parseInput, detectImageInput } from './slash-commands.js';
+import { SlashCommandHandler, parseInput } from './slash-commands.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
-import { theme, icons, colors, styleHelpers, renderMarkdown } from './theme.js';
+import {
+  theme,
+  icons,
+  colors,
+  styleHelpers,
+  renderMarkdown,
+  renderDiff,
+  renderLines,
+} from './theme.js';
 import { getCancellationManager, CancellationManager } from './cancellation.js';
 import {
   getContextCompressor,
@@ -35,7 +62,7 @@ export class InteractiveSession {
   private aiClient: AIClient | null = null;
   private remoteAIClient: RemoteAIClient | null = null;
   private conversation: ChatMessage[] = [];
-  private toolCalls: ToolCall[] = [];
+  private tool_calls: ToolCall[] = [];
   private executionMode: ExecutionMode;
   private slashCommandHandler: SlashCommandHandler;
   private configManager: ConfigManager;
@@ -43,7 +70,7 @@ export class InteractiveSession {
   private memoryManager: MemoryManager;
   private mcpManager: MCPManager;
   private checkpointManager: CheckpointManager;
-  private currentAgent: any = null;
+  private currentAgent: AgentConfig | null = null;
   private rl: readline.Interface;
   private cancellationManager: CancellationManager;
   private indentLevel: number;
@@ -175,6 +202,34 @@ export class InteractiveSession {
     this.aiClient = aiClient;
   }
 
+  /**
+   * Update aiClient config when /auth changes config (called from callback)
+   */
+  updateAiClientConfig(): void {
+    const authConfig = this.configManager.getAuthConfig();
+    const isRemote = authConfig.type === AuthType.OAUTH_XAGENT;
+
+    if (isRemote) {
+      // Already in remote mode, no change needed
+      if (this.remoteAIClient !== null) {
+        return;
+      }
+      // Switch to remote: clear local client, create remote client
+      this.aiClient = null;
+      this.remoteAIClient = createAIClient(authConfig);
+    } else {
+      // Already in local mode, no change needed
+      if (this.aiClient !== null) {
+        return;
+      }
+      // Switch to local: clear remote client, create local client
+      this.remoteAIClient = null;
+      this.aiClient = createAIClient(authConfig);
+    }
+
+    this.slashCommandHandler.setRemoteAIClient(this.remoteAIClient);
+  }
+
   setExecutionMode(mode: ExecutionMode): void {
     this.executionMode = mode;
   }
@@ -209,6 +264,15 @@ export class InteractiveSession {
    * Update system prompt to reflect MCP changes (called after add/remove MCP)
    */
   async updateSystemPrompt(): Promise<void> {
+    // Reload skills to pick up any newly added/removed skills
+    // First reset the SkillLoader to clear all cached skills
+    const { resetSkillLoader } = await import('./skill-loader.js');
+    resetSkillLoader();
+
+    // Then reload the skill invoker
+    const skillInvoker = (await import('./skill-invoker.js')).getSkillInvoker();
+    await skillInvoker.reload();
+
     const toolRegistry = getToolRegistry();
     const promptGenerator = new SystemPromptGenerator(
       toolRegistry,
@@ -234,11 +298,54 @@ export class InteractiveSession {
     this.slashCommandHandler.setConversationHistory(this.conversation);
   }
 
-  setAgent(agent: any): void {
+  /**
+   * Watch for skill updates from CLI and update system prompt accordingly
+   */
+  private startSkillUpdateWatcher(): void {
+    const SKILL_STATE_FILE = '.skill-state.json';
+    const configManager = getConfigManager();
+    const userSkillsPath = configManager.getUserSkillsPath();
+    const stateFilePath = userSkillsPath 
+      ? path.join(userSkillsPath, SKILL_STATE_FILE)
+      : null;
+    
+    if (!stateFilePath) {
+      return; // No user skills path configured
+    }
+
+    let lastUpdateTime = 0;
+
+    // Check for updates every 2 seconds
+    const checkInterval = setInterval(async () => {
+      try {
+        const { existsSync, readFileSync } = await import('fs');
+        if (existsSync(stateFilePath)) {
+          const content = readFileSync(stateFilePath, 'utf-8');
+          const state = JSON.parse(content);
+          
+          if (state.lastSkillUpdate && state.lastSkillUpdate > lastUpdateTime) {
+            lastUpdateTime = state.lastSkillUpdate;
+            
+            // Update system prompt with new skills
+            await this.updateSystemPrompt();
+            
+            console.log(colors.textMuted('  🔄 Skills updated from CLI'));
+          }
+        }
+      } catch {
+        // Silent fail - watcher is optional
+      }
+    }, 2000);
+
+    // Clean up on session end
+    (this as any)._skillWatcherInterval = checkInterval;
+  }
+
+  setAgent(agent: AgentConfig): void {
     this.currentAgent = agent;
   }
 
-  async start(): Promise<void> {
+  async start(initializedCount: number = 0): Promise<void> {
     // Set this session as the singleton for access from other modules
     setSingletonSession(this);
 
@@ -272,18 +379,23 @@ export class InteractiveSession {
     await this.initialize();
     this.showWelcomeMessage();
 
+    // Start watching for skill updates from CLI
+    this.startSkillUpdateWatcher();
+    // Set up ESC key handler using the terminal module
+    // This avoids conflicts with readline and provides clean ESC detection
+    let _escCleanup: (() => void) | undefined;
+    if (process.stdin.isTTY) {
+      _escCleanup = setupEscKeyHandler(() => {
+        if ((this as any)._isOperationInProgress) {
+          // An operation is running, let it be cancelled
+          this.cancellationManager.cancel();
+        }
+        // No operation running, ignore ESC
+      });
+    }
+
     // Track if an operation is in progress
     (this as any)._isOperationInProgress = false;
-
-    // Listen for ESC cancellation - only cancel operations, don't exit the program
-    const cancelHandler = () => {
-      if ((this as any)._isOperationInProgress) {
-        // An operation is running, let it be cancelled
-        return;
-      }
-      // No operation running, ignore ESC or show a message
-    };
-    this.cancellationManager.on('cancelled', cancelHandler);
 
     this.promptLoop();
 
@@ -316,18 +428,25 @@ export class InteractiveSession {
         this.sdkOutputAdapter?.outputSystem('info', { message: 'Initializing XAGENT CLI...' });
       }
 
+      const spinnerInterval = setInterval(() => {
+        process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${validatingText}`);
+        frameIndex = (frameIndex + 1) % frames.length;
+      }, 120);
       logger.debug('[SESSION] 调用 configManager.load()...');
-      await this.configManager.load();
+      this.configManager.load();
 
-      logger.debug('[SESSION] 调用 configManager.getAuthConfig()...');
+      logger.debug('[SESSION] Config loaded');
       let authConfig = this.configManager.getAuthConfig();
-      const selectedAuthType = this.configManager.get('selectedAuthType');
+      let selectedAuthType = this.configManager.get('selectedAuthType');
 
-      logger.debug('[SESSION] getAuthConfig() 返回:');
-      logger.debug('  - apiKey exists:', !!authConfig.apiKey ? 'true' : 'false');
-      logger.debug('  - selectedAuthType:', String(selectedAuthType));
-      logger.debug('  - authConfig.type:', String(authConfig.type));
-      logger.debug('  - authConfig.baseUrl:', String(authConfig.baseUrl));
+      logger.debug('[SESSION] authConfig.apiKey exists:', String(!!authConfig.apiKey));
+      logger.debug('[SESSION] selectedAuthType (initial):', String(selectedAuthType));
+      logger.debug('[SESSION] AuthType.OAUTH_XAGENT:', String(AuthType.OAUTH_XAGENT));
+      logger.debug('[SESSION] AuthType.OPENAI_COMPATIBLE:', String(AuthType.OPENAI_COMPATIBLE));
+      logger.debug(
+        '[SESSION] Will validate OAuth:',
+        String(!!(authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT))
+      );
 
       // Only validate OAuth tokens, skip validation for third-party API keys
       if (authConfig.apiKey && selectedAuthType === AuthType.OAUTH_XAGENT) {
@@ -347,11 +466,12 @@ export class InteractiveSession {
             this.sdkOutputAdapter?.outputSystem('info', { message: 'Refreshing authentication...' });
           }
           const newToken = await this.refreshToken(baseUrl, authConfig.refreshToken);
+          clearInterval(refreshInterval);
+          process.stdout.write('\r' + ' '.repeat(50) + '\r');
 
           if (newToken) {
-            // Save new token and persist
-            await this.configManager.set('apiKey', newToken);
-            await this.configManager.save('global');
+            this.configManager.set('apiKey', newToken);
+            this.configManager.save('global');
             authConfig.apiKey = newToken;
             isValid = true;
           }
@@ -369,13 +489,11 @@ export class InteractiveSession {
             this.sdkOutputAdapter?.outputSystem('info', { message: 'Please log in again to continue.' });
           }
 
-          // Clear invalid credentials and persist
-          await this.configManager.set('apiKey', '');
-          await this.configManager.set('refreshToken', '');
-          await this.configManager.set('selectedAuthType', AuthType.OAUTH_XAGENT);
-          await this.configManager.save('global');
+          this.configManager.set('apiKey', '');
+          this.configManager.set('refreshToken', '');
+          this.configManager.save('global');
 
-          await this.configManager.load();
+          this.configManager.load();
           authConfig = this.configManager.getAuthConfig();
 
           await this.setupAuthentication();
@@ -430,10 +548,7 @@ export class InteractiveSession {
       }
       // For OPENAI_COMPATIBLE with API key, skip validation and proceed directly
 
-      this.aiClient = new AIClient(authConfig);
-      this.contextCompressor.setAIClient(this.aiClient);
-
-      // Initialize remote AI client for OAuth XAGENT mode
+      // Initialize AI clients and set contextCompressor appropriately
       if (selectedAuthType === AuthType.OAUTH_XAGENT) {
         const webBaseUrl = authConfig.xagentApiBaseUrl || 'http://xagent-colife.net:3000';
         // In OAuth XAGENT mode, we still pass apiKey (can be empty or used for other purposes)
@@ -444,6 +559,9 @@ export class InteractiveSession {
         );
         logger.debug('[DEBUG Initialize] RemoteAIClient created successfully');
       } else {
+        // Local mode: create local AIClient
+        this.aiClient = createAIClient(authConfig);
+        this.contextCompressor.setAIClient(this.aiClient);
         logger.debug('[DEBUG Initialize] RemoteAIClient NOT created (not OAuth XAGENT mode)');
       }
 
@@ -497,19 +615,9 @@ export class InteractiveSession {
           const toolRegistry = getToolRegistry();
           const allMcpTools = this.mcpManager.getAllTools();
           toolRegistry.registerMCPTools(allMcpTools);
-
-          // Sync MCP tools to remote server (remote mode only)
-          if (this.remoteAIClient) {
-            await this.syncMCPToRemote(allMcpTools);
-          }
         } catch (error: any) {
           this.sdkOutputAdapter?.outputMCPConnectionFailed(error.message);
         }
-      }
-
-      // Sync skills to remote server (remote mode only)
-      if (this.remoteAIClient) {
-        await this.syncSkillsToRemote();
       }
 
       const checkpointingConfig = this.configManager.getCheckpointingConfig();
@@ -522,7 +630,7 @@ export class InteractiveSession {
         await this.checkpointManager.initialize();
       }
 
-      this.currentAgent = this.agentManager.getAgent('general-purpose');
+      this.currentAgent = this.agentManager.getAgent('general-purpose') ?? null;
 
       if (spinner) {
         spinner.succeed(colors.success('Initialization complete'));
@@ -545,21 +653,31 @@ export class InteractiveSession {
    * Returns true if token is valid, false otherwise
    */
   private async validateToken(baseUrl: string, apiKey: string): Promise<boolean> {
+    logger.debug('[SESSION] validateToken called with baseUrl:', baseUrl);
+    logger.debug('[SESSION] apiKey exists:', apiKey ? 'yes' : 'no');
+
     try {
       // For OAuth XAGENT auth, use /api/auth/me endpoint
       const url = `${baseUrl}/api/auth/me`;
+      const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
-      const response = await fetch(url, {
-        method: 'GET',
+      logger.debug('[SESSION] Sending validation request to:', url);
+
+      const response = await axios.get(url, {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
       });
 
-      return response.ok;
+      logger.debug('[SESSION] Validation response status:', String(response.status));
+      return response.status === 200;
     } catch (error: any) {
       // Network error - log details but still consider token may be invalid
+      logger.debug('[SESSION] Error:', error.message);
+      if (error.response) {
+        logger.debug('[SESSION] Response status:', error.response.status);
+      }
       // For network errors, we still return false to trigger re-authentication
       // This ensures security but the user can retry
       return false;
@@ -569,6 +687,7 @@ export class InteractiveSession {
   private async refreshToken(baseUrl: string, refreshToken: string): Promise<string | null> {
     try {
       const url = `${baseUrl}/api/auth/refresh`;
+      const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 
       const response = await fetch(url, {
         method: 'POST',
@@ -584,7 +703,7 @@ export class InteractiveSession {
       } else {
         return null;
       }
-    } catch (error: any) {
+    } catch {
       return null;
     }
   }
@@ -598,6 +717,9 @@ export class InteractiveSession {
 
     const authType = await selectAuthType();
     this.configManager.set('selectedAuthType', authType);
+
+    // Get xagentApiBaseUrl from config (respects XAGENT_BASE_URL env var)
+    const config = this.configManager.getAuthConfig();
 
     const authService = new AuthService({
       type: authType,
@@ -627,8 +749,27 @@ export class InteractiveSession {
       console.log('');
     }
 
-    // Save LLM config only, skip VLM for now
-    await this.configManager.setAuthConfig(authConfig);
+    // VLM configuration is optional - only show for non-OAuth (local) mode
+    // Remote mode uses backend VLM configuration
+    if (authType !== AuthType.OAUTH_XAGENT) {
+      console.log('');
+      console.log(colors.info(`${icons.info} VLM configuration is optional.`));
+      console.log(colors.info(`You can configure it later using the /model command if needed.`));
+      console.log('');
+    }
+
+    this.configManager.setAuthConfig(authConfig);
+
+    // Set default remote model settings if not already set
+    if (authType === AuthType.OAUTH_XAGENT) {
+      if (!this.configManager.get('remote_llmModelName')) {
+        this.configManager.set('remote_llmModelName', '');
+      }
+      if (!this.configManager.get('remote_vlmModelName')) {
+        this.configManager.set('remote_vlmModelName', '');
+      }
+      this.configManager.save('global');
+    }
   }
 
   private showWelcomeMessage(): void {
@@ -719,12 +860,9 @@ export class InteractiveSession {
       this.rl.close();
     }
 
-    // Enable raw mode BEFORE emitKeypressEvents for better ESC detection
-    if (process.stdin.isTTY) {
-      process.stdin.setRawMode(true);
-    }
-    process.stdin.resume();
-    readline.emitKeypressEvents(process.stdin);
+    // Ensure TTY is in proper state for input handling
+    // This handles any state left by @clack/prompts or other interactions
+    ensureTtySane();
 
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -1127,14 +1265,8 @@ export class InteractiveSession {
       timestamp: Date.now(),
     };
 
-    // Save last user message for recovery after compression
-    const lastUserMessage = userMessage;
-
     this.conversation.push(userMessage);
     await this.conversationManager.addMessage(userMessage);
-
-    // Check if context compression is needed
-    await this.checkAndCompressContext(lastUserMessage);
 
     // Use remote AI client if available (OAuth XAGENT mode)
     logger.debug(
@@ -1145,7 +1277,7 @@ export class InteractiveSession {
       logger.debug('[DEBUG processUserMessage] Using generateRemoteResponse');
       await this.generateRemoteResponse(thinkingTokens);
     } else {
-      logger.debug('[DEBUG processUserMessage] Using generateResponse (local mode)');
+      logger.debug('[DEBUG] Using generateResponse (local mode)');
       await this.generateResponse(thinkingTokens);
     }
   }
@@ -1175,7 +1307,7 @@ export class InteractiveSession {
         console.log(`${indent}${colors.textDim(reasoningContent.replace(/^/gm, indent))}`);
         break;
 
-      case 'compact':
+      case 'compact': {
         // Compact display, truncate partial content
         const maxLength = 500;
         const truncatedContent =
@@ -1188,6 +1320,7 @@ export class InteractiveSession {
         console.log(`${indent}${colors.textDim(truncatedContent.replace(/^/gm, indent))}`);
         console.log(`${indent}${colors.textDim(`[${reasoningContent.length} chars total]`)}`);
         break;
+      }
 
       case 'indicator':
         // Show indicator only
@@ -1210,14 +1343,17 @@ export class InteractiveSession {
   /**
    * Check and compress conversation context
    */
-  private async checkAndCompressContext(lastUserMessage?: ChatMessage): Promise<void> {
+  private async checkAndCompressContext(): Promise<void> {
     const compressionConfig = this.configManager.getContextCompressionConfig();
 
     if (!compressionConfig.enabled) {
       return;
     }
 
-    const { needsCompression, reason } = this.contextCompressor.needsCompression(
+    const indent = this.getIndent();
+    const _currentTokens = this.contextCompressor.estimateContextTokens(this.conversation);
+    const currentMessages = this.conversation.length;
+    const { needsCompression, reason, tokenCount } = this.contextCompressor.needsCompression(
       this.conversation,
       compressionConfig
     );
@@ -1236,10 +1372,28 @@ export class InteractiveSession {
       const enhancedSystemPrompt =
         await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
-      const result: CompressionResult = await this.contextCompressor.compressContext(
-        this.conversation,
-        enhancedSystemPrompt,
-        compressionConfig
+    console.log('');
+    console.log(
+      `${indent}${colors.success(`${icons.sparkles} Compressing context (${currentMessages} msgs, ${tokenCount.toLocaleString()} > ${threshold.toLocaleString()}/${contextWindow.toLocaleString()} tokens, ${Math.round((tokenCount / contextWindow) * 100)}% of context window)...`)}`
+    );
+
+    const toolRegistry = getToolRegistry();
+    const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
+    const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+    const enhancedSystemPrompt =
+      await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
+
+    const result: CompressionResult = await this.contextCompressor.compressContext(
+      this.conversation,
+      enhancedSystemPrompt,
+      compressionConfig
+    );
+
+    if (result.wasCompressed) {
+      this.conversation = result.compressedMessages;
+      const reductionPercent = Math.round((1 - result.compressedSize / result.originalSize) * 100);
+      console.log(
+        `${indent}${colors.success(`${icons.success} Compressed ${result.originalMessageCount} → ${result.compressedMessageCount} messages (${reductionPercent}% smaller)`)}`
       );
 
       if (result.wasCompressed) {
@@ -1296,15 +1450,42 @@ export class InteractiveSession {
           }
           console.log(`${indent}${colors.border(separator)}`);
         }
+      }
 
-        // Restore user messages after compression, ensuring user message exists for API calls
-        if (lastUserMessage) {
-          this.conversation.push(lastUserMessage);
+      if (summaryMessage && summaryMessage.content) {
+        const maxPreviewLength = 800;
+        let summaryContent = summaryMessage.content;
+        const isTruncated = summaryContent.length > maxPreviewLength;
+
+        if (isTruncated) {
+          summaryContent = summaryContent.substring(0, maxPreviewLength) + '\n...';
         }
 
-        // Sync compressed conversation history to slashCommandHandler
-        this.slashCommandHandler.setConversationHistory(this.conversation);
+        console.log('');
+        console.log(
+          `${indent}${theme.predefinedStyles.title(`${icons.sparkles} Conversation Summary`)}`
+        );
+        const separator = icons.separator.repeat(
+          Math.min(60, process.stdout.columns || 80) - indent.length * 2
+        );
+        console.log(`${indent}${colors.border(separator)}`);
+        const renderedSummary = renderMarkdown(
+          summaryContent,
+          (process.stdout.columns || 80) - indent.length * 4
+        );
+        console.log(
+          `${indent}${theme.predefinedStyles.dim(renderedSummary).replace(/^/gm, indent)}`
+        );
+        if (isTruncated) {
+          console.log(
+            `${indent}${colors.textMuted(`(... ${summaryMessage.content.length - maxPreviewLength} more chars hidden)`)}`
+          );
+        }
+        console.log(`${indent}${colors.border(separator)}`);
       }
+
+      // Sync compressed conversation history to slashCommandHandler
+      this.slashCommandHandler.setConversationHistory(this.conversation);
     }
   }
 
@@ -1338,7 +1519,7 @@ export class InteractiveSession {
         timestamp: Date.now(),
       };
 
-      this.toolCalls.push(toolCall);
+      this.tool_calls.push(toolCall);
 
       // Record command execution to session manager
       await this.sessionManager.addInput({
@@ -1365,10 +1546,10 @@ export class InteractiveSession {
    * Create unified LLM Caller
    * Implement transparency: caller doesn't need to care about remote vs local mode
    */
-  private createLLMCaller() {
+  private createLLMCaller(taskId: string, status: 'begin' | 'continue') {
     // Remote mode: use RemoteAIClient
     if (this.remoteAIClient) {
-      return this.createRemoteCaller();
+      return this.createRemoteCaller(taskId, status);
     }
 
     // Local mode: use AIClient
@@ -1381,8 +1562,10 @@ export class InteractiveSession {
   /**
    * Create remote mode LLM caller
    */
-  private createRemoteCaller() {
+  private createRemoteCaller(taskId: string, _status: 'begin' | 'continue') {
     const client = this.remoteAIClient!;
+
+
     return {
       chatCompletion: (messages: ChatMessage[], options: any) =>
         client.chatCompletion(messages, options),
@@ -1565,7 +1748,9 @@ export class InteractiveSession {
       });
 
       if (assistantMessage.tool_calls) {
-        await this.handleToolCalls(assistantMessage.tool_calls);
+        await this.handleToolCalls(assistantMessage.tool_calls as unknown as import('./types.js').ToolCallItem[]);
+      } else {
+        await this.checkAndCompressContext();
       }
 
       if (this.checkpointManager.isEnabled()) {
@@ -1606,6 +1791,10 @@ export class InteractiveSession {
       }
 
       if (error.message === 'Operation cancelled by user') {
+        // Notify backend to cancel the task
+        if (this.remoteAIClient && this.currentTaskId) {
+          await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
+        }
         return;
       }
 
@@ -1617,34 +1806,38 @@ export class InteractiveSession {
    * Generate response using remote AI service（OAuth XAGENT 模式）
    * Support full tool calling loop
    * 与本地模式 generateResponse 保持一致
+   * @param thinkingTokens - Optional thinking tokens config
+   * @param existingTaskId - Optional existing taskId to reuse (for tool call continuation)
    */
-  private async generateRemoteResponse(thinkingTokens: number = 0): Promise<void> {
-    // 使用统一的 LLM Caller
-    const { chatCompletion, isRemote } = this.createLLMCaller();
+  private async generateRemoteResponse(
+    thinkingTokens: number = 0,
+    existingTaskId?: string
+  ): Promise<void> {
+    // Reuse existing taskId or create new one for this user interaction
+    const taskId = existingTaskId || crypto.randomUUID();
+    this.currentTaskId = taskId;
+    logger.debug(
+      `[Session] generateRemoteResponse: taskId=${taskId}, existingTaskId=${!!existingTaskId}`
+    );
 
-    if (!isRemote) {
-      // 如果不是远程模式，回退到本地模式
-      return this.generateResponse(thinkingTokens);
+    // Each new user message is a fresh task - always set isFirstApiCall = true
+    // This ensures status is 'begin' for every user message
+    this.isFirstApiCall = true;
+    const status: 'begin' | 'continue' = 'begin';
+    logger.debug(
+      `[Session] Status for this call: ${status}, isFirstApiCall=${this.isFirstApiCall}`
+    );
+
+    // Check if remote client is available
+    if (!this.remoteAIClient) {
+      console.log(colors.error('Remote AI client not initialized'));
+      return;
     }
 
-    const indent = this.getIndent();
-    const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
-    const icon = colors.primary(icons.brain);
-    const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-    let frameIndex = 0;
-
-    // Mark that an operation is in progress
-    (this as any)._isOperationInProgress = true;
-
-    // Custom spinner: only icon rotates, text stays static
-    const spinnerInterval = setInterval(() => {
-      process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
-      frameIndex = (frameIndex + 1) % frames.length;
-    }, 120);
-
     try {
-      // Load memory (与本地模式一致)
-      const memory = await this.memoryManager.loadMemory();
+      // Use unified generateResponse without passing customAIClient,
+      // let createLLMCaller handle remote/local selection
+      await this.generateResponse(thinkingTokens, undefined, taskId);
 
       // Get tool definitions
       const toolRegistry = getToolRegistry();
@@ -1775,6 +1968,10 @@ export class InteractiveSession {
       }
 
       if (error.message === 'Operation cancelled by user') {
+        // Notify backend to cancel the task
+        if (this.remoteAIClient && this.currentTaskId) {
+          await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
+        }
         return;
       }
 
@@ -1790,10 +1987,9 @@ export class InteractiveSession {
         }
 
         // Clear invalid credentials and persist
-        await this.configManager.set('apiKey', '');
-        await this.configManager.set('refreshToken', '');
-        await this.configManager.set('selectedAuthType', AuthType.OAUTH_XAGENT);
-        await this.configManager.save('global');
+        this.configManager.set('apiKey', '');
+        this.configManager.set('refreshToken', '');
+        this.configManager.save('global');
 
         logger.debug(
           '[DEBUG generateRemoteResponse] Cleared invalid credentials, starting re-authentication...'
@@ -1816,7 +2012,7 @@ export class InteractiveSession {
           authConfig.apiKey ? authConfig.apiKey.substring(0, 20) + '...' : 'empty'
         );
 
-        // Recreate readline interface after inquirer
+        // Recreate readline interface after interactive prompt
         this.rl.close();
         this.rl = readline.createInterface({
           input: process.stdin,
@@ -1842,6 +2038,9 @@ export class InteractiveSession {
             '[DEBUG generateRemoteResponse] WARNING: No apiKey after re-authentication!'
           );
         }
+
+        // Sync remoteAIClient reference to slashCommandHandler for /provider command
+        this.slashCommandHandler.setRemoteAIClient(this.remoteAIClient);
 
         // Retry the current operation
         if (!this.isSdkMode) {
@@ -1884,11 +2083,11 @@ export class InteractiveSession {
       let parsedParams: any;
       try {
         parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
-      } catch (e) {
+      } catch {
         parsedParams = params;
       }
 
-      return { name, params: parsedParams, index };
+      return { name, params: parsedParams, index, id: toolCall.id };
     });
 
     // Display all tool calls info
@@ -1901,7 +2100,6 @@ export class InteractiveSession {
         console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
       } else {
         const toolDescription = this.getToolDescription(name, params);
-        console.log('');
         console.log(`${indent}${colors.textMuted(`${icons.loading} ${toolDescription}`)}`);
       }
     }
@@ -1917,13 +2115,27 @@ export class InteractiveSession {
       const toolCall = preparedToolCalls.find((tc) => tc.name === tool);
       if (!toolCall) continue;
 
-      const { params } = toolCall;
+    // Process results in the original tool_calls order (critical for Anthropic format APIs)
+    let _hasError = false;
+    for (let i = 0; i < preparedToolCalls.length; i++) {
+      const toolCall = preparedToolCalls[i];
+      const { name: tool, params } = toolCall;
+      
+      const resultData = resultsByIndex.get(i);
+      const result = resultData?.result;
+      const error = resultData?.error;
 
       if (error) {
-        // Clear the operation flag
-        (this as any)._isOperationInProgress = false;
-
         if (error === 'Operation cancelled by user') {
+          // Notify backend to cancel the task
+          if (this.remoteAIClient && this.currentTaskId) {
+            await this.remoteAIClient.cancelTask?.(this.currentTaskId).catch(() => {});
+          }
+
+          // 清理 conversation 中未完成的 tool_call
+          this.cleanupIncompleteToolCalls();
+
+          (this as any)._isOperationInProgress = false;
           return;
         }
 
@@ -1934,6 +2146,10 @@ export class InteractiveSession {
           console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${error}`)}`);
         }
 
+        console.log('');
+        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${tool} - ${error}`)}`);
+
+        // Add detailed error info including tool name and params for AI understanding and correction
         this.conversation.push({
           role: 'tool',
           content: JSON.stringify({ error }),
@@ -1980,7 +2196,7 @@ export class InteractiveSession {
           timestamp: Date.now(),
         };
 
-        this.toolCalls.push(toolCallRecord);
+        this.tool_calls.push(toolCallRecord);
 
         // Record tool output to session manager
         await this.sessionManager.addOutput({
@@ -1992,6 +2208,8 @@ export class InteractiveSession {
           timestamp: Date.now(),
         });
 
+        // Unified message format with tool name and params
+        // Format: OpenAI-compatible tool result with plain text content
         this.conversation.push({
           role: 'tool',
           content: JSON.stringify(result),
@@ -2025,9 +2243,60 @@ export class InteractiveSession {
       return;
     }
 
-    // For all other cases (GUI success/failure, other tool errors), return results to main agent
-    // This allows main agent to decide how to handle failures (retry, fallback, user notification, etc.)
-    await this.generateResponse();
+    // Continue based on mode - unified handling for both success and error cases
+    if (onComplete) {
+      await this.checkAndCompressContext();
+      // Remote mode: use provided callback
+      await onComplete();
+    } else {
+      await this.checkAndCompressContext();
+      // Local mode: default behavior - continue with generateResponse
+      await this.generateResponse();
+    }
+  }
+
+  /**
+   * Clean up incomplete tool calls from conversation after cancellation
+   * This removes assistant messages with tool_calls that don't have corresponding tool_results
+   */
+  private async cleanupIncompleteToolCalls(): Promise<void> {
+    // 从后往前找到包含 tool_calls 的 assistant 消息
+    for (let i = this.conversation.length - 1; i >= 0; i--) {
+      const msg = this.conversation[i];
+
+      if (msg.role === 'assistant' && msg.tool_calls?.length) {
+        // 收集所有 tool_call IDs
+        const allToolCallIds = new Set(msg.tool_calls.map((tc: any) => tc.id));
+
+        // 找出哪些 tool_call IDs 已经有对应的 tool_result
+        const completedToolCallIds = new Set<string>();
+        for (let k = i + 1; k < this.conversation.length; k++) {
+          const resultMsg = this.conversation[k];
+          if (resultMsg.role === 'tool' && resultMsg.tool_call_id) {
+            completedToolCallIds.add(resultMsg.tool_call_id);
+          } else if (resultMsg.role === 'user' || resultMsg.role === 'assistant') {
+            break; // 遇到下一个角色消息就停止
+          }
+        }
+
+        // 找出未完成的 tool_call IDs
+        const incompleteToolCallIds = [...allToolCallIds].filter(
+          id => !completedToolCallIds.has(id)
+        );
+
+        // 如果所有 tool_call 都已完成，不需要清理
+        if (incompleteToolCallIds.length === 0) {
+          break;
+        }
+
+        // 只移除未完成的 tool_call，不移除已完成的 tool_result
+        msg.tool_calls = msg.tool_calls.filter(
+          (tc: any) => !incompleteToolCallIds.includes(tc.id)
+        );
+
+        break;
+      }
+    }
   }
 
   /**
@@ -2379,31 +2648,29 @@ export class InteractiveSession {
   }
 
   /**
-   * Get a VLM caller function that uses the RemoteAIClient
-   * Returns a function compatible with GUIAgent's vlmCaller configuration
-   * Now uses full messages array for consistent behavior with local mode
+   * Get the current taskId for this user interaction
+   * Used by GUI operations to track the same task
    */
-  getVLMCaller(): ((messages: any[], systemPrompt: string) => Promise<string>) | undefined {
-    if (!this.remoteAIClient) {
-      return undefined;
-    }
-
-    return async (messages: any[], systemPrompt: string): Promise<string> => {
-      return this.remoteAIClient!.invokeVLM(messages, systemPrompt);
-    };
+  getTaskId(): string | null {
+    return this.currentTaskId;
   }
+}
 
-  // ============================================================================
-  // Remote Mode Tool Sync Methods
-  // ============================================================================
+/**
+ * Clean up stale temporary workspaces from previous sessions.
+ * Called at startup to ensure no leftover temp files accumulate.
+ */
+async function cleanupStaleWorkspaces(): Promise<void> {
+  try {
+    const configManager = getConfigManager();
+    const workspacePath = configManager.getWorkspacePath();
+    // Use default workspace path if workspacePath is empty or undefined
+    const effectiveWorkspacePath = (workspacePath && workspacePath.trim()) 
+      ? workspacePath 
+      : os.homedir();
+    const baseWorkspaceDir = path.join(effectiveWorkspacePath, '.xagent', 'workspace');
 
-  /**
-   * Sync MCP tool definitions to remote server
-   * @param allMcpTools - Map containing complete MCP tool information
-   */
-  private async syncMCPToRemote(allMcpTools: Map<string, any>): Promise<void> {
-    if (!this.remoteAIClient) return;
-
+    // First, verify the workspace directory exists before attempting cleanup
     try {
       const tools: Array<{
         name: string;
@@ -2428,25 +2695,13 @@ export class InteractiveSession {
           inputSchema: tool.inputSchema || { type: 'object', properties: {} },
         });
       }
-
-      await this.remoteAIClient.syncMCPTools(tools);
-      console.log(`${colors.success(`✓ Synced ${tools.length} MCP tools to remote server`)}`);
-    } catch (error: any) {
-      console.log(`${colors.warning(`⚠ Failed to sync MCP tools to remote: ${error.message}`)}`);
-      // Non-blocking failure, continue initialization
+    } catch {
+      // Directory doesn't exist - nothing to clean
+      return;
     }
-  }
-
-  /**
-   * Sync Skill definitions to remote server
-   */
-  private async syncSkillsToRemote(): Promise<void> {
-    if (!this.remoteAIClient) return;
 
     try {
-      const { getSkillInvoker } = await import('./skill-invoker.js');
-      const skillInvoker = getSkillInvoker();
-      await skillInvoker.initialize();
+      const entries = await fsPromises.readdir(baseWorkspaceDir, { withFileTypes: true });
 
       const skills: Array<{
         id: string;
@@ -2472,16 +2727,133 @@ export class InteractiveSession {
         }
       }
 
-      await this.remoteAIClient.syncSkills(skills);
-      console.log(`${colors.success(`✓ Synced ${skills.length} skills to remote server`)}`);
-    } catch (error: any) {
-      console.log(`${colors.warning(`⚠ Failed to sync skills to remote: ${error.message}`)}`);
-      // Non-blocking failure, continue initialization
+      if (cleanedCount > 0) {
+        console.log(colors.textDim(`🧹 Cleaned up ${cleanedCount} stale workspace(s)`));
+      }
+    } catch {
+      // Can't read directory - skip cleanup
+    }
+  } catch {
+    // Config not available - skip cleanup
+  }
+}
+
+/**
+ * Initialize built-in skills on first run.
+ * Checks if user skills directory is empty or doesn't exist,
+ * then copies all built-in skills including the protected find-skills.
+ * @returns Number of skills initialized, or 0 if no initialization was needed.
+ */
+async function initializeSkillsOnDemand(): Promise<number> {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+
+  // Get user skills directory (respects OS-specific paths)
+  const configManager = getConfigManager();
+  const userSkillsPath = configManager.getUserSkillsPath() || path.join(os.homedir(), '.xagent', 'skills');
+
+  // Check if user skills directory exists and has skills
+  let hasSkills = false;
+  try {
+    const entries = await fsPromises.readdir(userSkillsPath, { withFileTypes: true });
+    hasSkills = entries.some(e => e.isDirectory());
+  } catch {
+    hasSkills = false;
+  }
+
+  // If skills already exist, skip initialization
+  if (hasSkills) {
+    return 0;
+  }
+
+  // Ensure user skills directory exists
+  await fsPromises.mkdir(userSkillsPath, { recursive: true });
+
+  // Define skill source directories
+  const builtinSkillsDir = path.join(__dirname, '..', 'skills', 'skills');
+  const findSkillsDir = path.join(__dirname, '..', 'find-skills');
+
+  const skillsToInstall: { source: string; name: string }[] = [];
+
+  // Add find-skills from root directory
+  if (fs.existsSync(findSkillsDir) && fs.existsSync(path.join(findSkillsDir, 'SKILL.md'))) {
+    skillsToInstall.push({ source: findSkillsDir, name: 'find-skills' });
+  }
+
+  // Add skills from skills/skills directory
+  if (fs.existsSync(builtinSkillsDir)) {
+    const entries = fs.readdirSync(builtinSkillsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const skillPath = path.join(builtinSkillsDir, entry.name);
+        if (fs.existsSync(path.join(skillPath, 'SKILL.md'))) {
+          skillsToInstall.push({ source: skillPath, name: entry.name });
+        }
+      }
+    }
+  }
+
+  if (skillsToInstall.length === 0) {
+    return 0;
+  }
+
+  // Create user skills directory (already done above, but ensure it exists)
+  await fsPromises.mkdir(userSkillsPath, { recursive: true });
+
+  // Copy all skills
+  for (const { source, name } of skillsToInstall) {
+    const destPath = path.join(userSkillsPath, name);
+    if (!fs.existsSync(destPath)) {
+      await copyDirectoryRecursiveAsync(source, destPath);
+    }
+  }
+
+  return skillsToInstall.length;
+}
+
+// Synchronous version (kept for backwards compatibility)
+function _copyDirectoryRecursive(src: string, dest: string): void {
+  if (!fs.existsSync(dest)) {
+    fs.mkdirSync(dest, { recursive: true });
+  }
+
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+
+    if (entry.isDirectory()) {
+      _copyDirectoryRecursive(srcPath, destPath);
+    } else if (entry.isFile()) {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+// Asynchronous version for concurrent-safe initialization
+async function copyDirectoryRecursiveAsync(src: string, dest: string): Promise<void> {
+  await fsPromises.mkdir(dest, { recursive: true });
+  const entries = await fsPromises.readdir(src, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+
+    if (entry.isDirectory()) {
+      await copyDirectoryRecursiveAsync(srcPath, destPath);
+    } else if (entry.isFile()) {
+      await fsPromises.copyFile(srcPath, destPath);
     }
   }
 }
 
 export async function startInteractiveSession(): Promise<void> {
+  // Clean up any leftover temp workspaces from previous sessions
+  await cleanupStaleWorkspaces();
+
+  // Initialize built-in skills on first run (silent, returns count)
+  const initializedCount = await initializeSkillsOnDemand();
+
   const session = new InteractiveSession();
 
   // Flag to control shutdown
@@ -2525,6 +2897,15 @@ export async function startInteractiveSession(): Promise<void> {
     // Force exit
     process.exit(0);
   });
+
+  await session.start(initializedCount);
+  // Check for updates on startup
+  try {
+    const { checkUpdatesOnStartup } = await import('./update.js');
+    await checkUpdatesOnStartup();
+  } catch {
+    // Silently ignore update check failures
+  }
 
   await session.start();
 }

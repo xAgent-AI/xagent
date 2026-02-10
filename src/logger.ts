@@ -1,8 +1,6 @@
-import chalk from 'chalk';
 import wrapAnsi from 'wrap-ansi';
 import stringWidth from 'string-width';
-import stripAnsi from 'strip-ansi';
-import { theme, icons, colors, styleHelpers } from './theme.js';
+import { icons, colors, styleHelpers } from './theme.js';
 
 export enum LogLevel {
   ERROR = 'error',
@@ -232,7 +230,7 @@ export class Logger {
       return Math.max(stringWidth(header), maxRowWidth);
     });
 
-    const totalWidth = columnWidths.reduce((sum, width) => sum + width + 2, 0) + (columnWidths.length - 1);
+    const _totalWidth = columnWidths.reduce((sum, width) => sum + width + 2, 0) + (columnWidths.length - 1);
 
     const createSeparator = (left: string, middle: string, right: string, horizontal: string) => {
       return left + columnWidths.map(width => horizontal.repeat(width + 2)).join(middle) + right;

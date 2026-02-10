@@ -80,3 +80,13 @@ UI-TARS-desktop-main/
 
 xagent-web/*
 *.png
+*.docx
+*.xlsx
+*.pptx
+*.doc
+*.xls
+*.ppt
+*.jpg
+*.jpeg
+*.gif
+*.svg

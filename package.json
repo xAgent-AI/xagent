@@ -1,6 +1,6 @@
 {
   "name": "@xagent-ai/cli",
-  "version": "1.0.1",
+  "version": "1.3.0",
   "description": "xAgent CLI - AI-powered command-line assistant for autonomous living",
   "type": "module",
   "main": "dist/index.js",
@@ -21,7 +21,9 @@
     "start": "node dist/cli.js",
     "test": "vitest",
     "lint": "eslint src --ext .ts",
-    "format": "prettier --write \"src/**/*.ts\""
+    "format": "prettier --write \"src/**/*.ts\"",
+    "postinstall": "node scripts/install-ripgrep.js",
+    "install-ripgrep": "node scripts/install-ripgrep.js"
   },
   "keywords": [
     "ai",
@@ -33,8 +35,8 @@
   "author": "xAgent CLI Team",
   "license": "MIT",
   "dependencies": {
+    "@clack/prompts": "^1.0.0",
     "@computer-use/nut-js": "^4.2.0",
-    "@nut-tree-fork/nut-js": "^4.2.6",
     "ansi-escapes": "^6.2.0",
     "archiver": "^7.0.0",
     "axios": "^1.6.0",
@@ -42,9 +44,10 @@
     "clipboardy": "^4.0.0",
     "commander": "^12.0.0",
     "diff": "^5.1.0",
+    "docx": "^9.5.1",
     "eventemitter3": "^5.0.1",
     "glob": "^10.3.0",
-    "inquirer": "^9.2.0",
+    "inquirer": "^9.3.8",
     "jimp": "^1.6.0",
     "lodash.isnumber": "^3.0.3",
     "marked": "^11.0.0",
@@ -53,34 +56,37 @@
     "node-pty": "^1.0.0",
     "open": "^10.0.0",
     "ora": "^8.0.0",
-    "playwright": "^1.57.0",
-    "pptxgenjs": "^4.0.1",
-    "puppeteer": "^23.11.1",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "react-icons": "^5.5.0",
     "sharp": "^0.34.5",
+    "simple-git": "^3.30.0",
     "string-width": "^7.0.0",
     "strip-ansi": "^7.1.0",
     "terminal-link": "^3.0.0",
-    "wrap-ansi": "^9.0.0"
+    "wrap-ansi": "^9.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.12",
     "@types/archiver": "^7.0.0",
-    "@types/inquirer": "^9.0.0",
+    "@types/diff": "^7.0.2",
     "@types/lodash.isnumber": "^3.0.9",
     "@types/mime-types": "^2.1.4",
     "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
     "eslint": "^8.56.0",
     "prettier": "^3.1.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0",
-    "vitest": "^1.1.0"
+    "vitest": "^4.0.18"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "directories": {
-    "doc": "docs",
-    "test": "test"
+    "doc": "docs"
   },
   "types": "./dist/index.d.ts"
 }

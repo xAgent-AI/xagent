@@ -1,0 +1,76 @@
+# .github/release.yml
+# Configuration for GitHub auto-generated release notes
+# Reference: https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+
+changelog:
+  # Excluded labels and authors - PRs with these labels won't appear in release notes
+  exclude:
+    labels:
+      - ignore-for-release
+      - duplicate
+      - wontfix
+    authors:
+      - dependabot[bot]
+
+  # PR categorization configuration
+  categories:
+    - title: Breaking Changes 🛠
+      labels:
+        - Semver-Major
+        - breaking-change
+      description: Breaking changes that may affect existing functionality
+
+    - title: New Features 🎉
+      labels:
+        - Semver-Minor
+        - feature
+        - enhancement
+      description: New features and enhancements
+
+    - title: Bug Fixes 🐛
+      labels:
+        - Semver-Patch
+        - bug
+        - fix
+      description: Bug fixes
+
+    - title: Documentation 📚
+      labels:
+        - documentation
+        - docs
+      description: Documentation updates
+
+    - title: Refactoring 🔧
+      labels:
+        - refactor
+        - refactoring
+      description: Code refactoring without behavior changes
+
+    - title: Performance ⚡
+      labels:
+        - performance
+      description: Performance improvements
+
+    - title: Testing 🧪
+      labels:
+        - test
+        - testing
+      description: Testing-related changes
+
+    - title: CI/CD 🚀
+      labels:
+        - ci
+        - cicd
+        - github-actions
+      description: CI/CD related changes
+
+    - title: Dependencies 📦
+      labels:
+        - dependencies
+        - dependabot
+      description: Dependency updates
+
+    - title: Other Changes
+      labels:
+        - "*"
+      description: Other changes

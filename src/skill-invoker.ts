@@ -2,8 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { getSkillLoader, SkillInfo, SkillLoader } from './skill-loader.js';
-import { getToolRegistry } from './tools.js';
-import { ExecutionMode, Tool } from './types.js';
+import { ExecutionMode } from './types.js';
 import { getConfigManager } from './config.js';
 
 // Re-export SkillInfo for other modules
@@ -91,6 +90,8 @@ export interface SkillExecutionResult {
   workspaceDir?: string;
   /** Files to preserve (relative paths), skipped during cleanup */
   preserveFiles?: string[];
+  /** Skill directory path - for dependency management and file operations */
+  skillPath?: string;
 }
 
 export interface SkillMatcherResult {
@@ -333,144 +334,139 @@ export async function readSkillContent(skillPath: string, keywords: string[], ma
 // SKILL Trigger Keywords Mapping
 // ============================================================
 
-interface SkillTrigger {
-  skillId: string;
-  keywords: string[];
-  category: string;
-}
+// NOTE: SKILL_TRIGGERS is disabled for experiment purposes.
+// Let the LLM decide which skill to use based on system prompt information.
 
-export const SKILL_TRIGGERS: Record<string, SkillTrigger> = {
-  docx: {
-    skillId: 'docx',
-    keywords: [
-      'word document', 'docx', 'microsoft word', 'create word', 'edit word',
-      'create .docx', '.docx file', 'word file', 'document creation',
-      'word editing', 'tracked changes', 'comments'
-    ],
-    category: 'Document Processing'
-  },
-  pdf: {
-    skillId: 'pdf',
-    keywords: [
-      'pdf', 'create pdf', 'edit pdf', 'pdf document', 'pdf file',
-      'extract pdf', 'merge pdf', 'split pdf', 'pdf form', 'manipulate pdf'
-    ],
-    category: 'Document Processing'
-  },
-  pptx: {
-    skillId: 'pptx',
-    keywords: [
-      'powerpoint', 'ppt', 'pptx', 'presentation', 'slide',
-      'create presentation', 'edit powerpoint', 'create slides',
-      'powerpoint file', 'presentation file'
-    ],
-    category: 'Document Processing'
-  },
-  xlsx: {
-    skillId: 'xlsx',
-    keywords: [
-      'excel', 'spreadsheet', 'xlsx', 'create excel', 'edit spreadsheet',
-      'excel file', 'spreadsheet file', 'formulas', 'data analysis'
-    ],
-    category: 'Spreadsheet & Data'
-  },
-  frontend_design: {
-    skillId: 'frontend-design',
-    keywords: [
-      'web page', 'website', 'web app', 'frontend', 'ui', 'user interface',
-      'create website', 'build website', 'web component', 'html css',
-      'landing page', 'dashboard', 'react', 'vue', 'web interface'
-    ],
-    category: 'Frontend & Web Development'
-  },
-  web_artifacts_builder: {
-    skillId: 'web-artifacts-builder',
-    keywords: [
-      'complex react', 'react artifact', 'stateful artifact', 'routing',
-      'web artifact', 'interactive artifact', 'web-based tool'
-    ],
-    category: 'Frontend & Web Development'
-  },
-  webapp_testing: {
-    skillId: 'webapp-testing',
-    keywords: [
-      'test web', 'web testing', 'browser test', 'playwright', 'e2e test',
-      'frontend test', 'capture screenshot', 'verify web'
-    ],
-    category: 'Frontend & Web Development'
-  },
-  canvas_design: {
-    skillId: 'canvas-design',
-    keywords: [
-      'poster', 'artwork', 'visual art', 'canvas', 'design art',
-      'create poster', 'create artwork', 'visual design', 'graphic art'
-    ],
-    category: 'Visual & Creative Design'
-  },
-  algorithmic_art: {
-    skillId: 'algorithmic-art',
-    keywords: [
-      'generative art', 'algorithmic art', 'p5.js', 'particle system',
-      'flow field', 'creative coding', 'code art'
-    ],
-    category: 'Visual & Creative Design'
-  },
-  theme_factory: {
-    skillId: 'theme-factory',
-    keywords: [
-      'theme', 'color scheme', 'font theme', 'styling theme',
-      'consistent theme', 'apply theme', 'theme colors'
-    ],
-    category: 'Visual & Creative Design'
-  },
-  brand_guidelines: {
-    skillId: 'brand-guidelines',
-    keywords: [
-      'brand colors', 'brand guidelines', 'anthropic brand',
-      'official brand', 'brand styling'
-    ],
-    category: 'Visual & Creative Design'
-  },
-  slack_gif_creator: {
-    skillId: 'slack-gif-creator',
-    keywords: [
-      'slack gif', 'animated gif', 'gif for slack', 'slack animation'
-    ],
-    category: 'Visual & Creative Design'
-  },
-  mcp_builder: {
-    skillId: 'mcp-builder',
-    keywords: [
-      'mcp server', 'model context protocol', 'create mcp',
-      'mcp integration', 'external api integration'
-    ],
-    category: 'Development & Integration'
-  },
-  skill_creator: {
-    skillId: 'skill-creator',
-    keywords: [
-      'create skill', 'new skill', 'skill development',
-      'extend capabilities', 'custom skill'
-    ],
-    category: 'Development & Integration'
-  },
-  doc_coauthoring: {
-    skillId: 'doc-coauthoring',
-    keywords: [
-      'documentation', 'technical docs', 'write documentation',
-      'coauthor', 'doc writing', 'technical writing'
-    ],
-    category: 'Communication & Documentation'
-  },
-  internal_comms: {
-    skillId: 'internal-comms',
-    keywords: [
-      'internal communication', 'status report', 'newsletter',
-      'internal update', 'team communication', 'announcement'
-    ],
-    category: 'Communication & Documentation'
-  }
-};
+// interface SkillTrigger {
+//   skillId: string;
+//   keywords: string[];
+//   category: string;
+// }
+
+// export const SKILL_TRIGGERS: Record<string, SkillTrigger> = {
+//   docx: {
+//     skillId: 'docx',
+//     keywords: [
+//       'word document', 'docx', 'microsoft word', 'create word', 'edit word',
+//       'create .docx', '.docx file', 'word file', 'document creation',
+//       'word editing', 'tracked changes', 'comments'
+//     ],
+//     category: 'Document Processing'
+//   },
+//   pdf: {
+//     skillId: 'pdf',
+//     keywords: [
+//       'pdf', 'create pdf', 'edit pdf', 'pdf document', 'pdf file',
+//       'extract pdf', 'merge pdf', 'split pdf', 'pdf form', 'manipulate pdf'
+//     ],
+//     category: 'Document Processing'
+//   },
+//   pptx: {
+//     skillId: 'pptx',
+//     keywords: [
+//       'powerpoint', 'ppt', 'pptx', 'presentation', 'slide',
+//       'create presentation', 'edit powerpoint', 'create slides',
+//       'powerpoint file', 'presentation file'
+//     ],
+//     category: 'Document Processing'
+//   },
+//   xlsx: {
+//     skillId: 'xlsx',
+//     keywords: [
+//       'excel', 'spreadsheet', 'xlsx', 'create excel', 'edit spreadsheet',
+//       'excel file', 'spreadsheet file', 'formulas', 'data analysis'
+//     ],
+//     category: 'Spreadsheet & Data'
+//   },
+//   frontend_design: {
+//     skillId: 'frontend-design',
+//     keywords: [
+//       'web page', 'website', 'web app', 'frontend', 'ui', 'user interface',
+//       'create website', 'build website', 'web component', 'html css',
+//       'landing page', 'dashboard', 'react', 'vue', 'web interface'
+//     ],
+//     category: 'Frontend & Web Development'
+//   },
+//   web_artifacts_builder: {
+//     skillId: 'web-artifacts-builder',
+//     keywords: [
+//       'complex react', 'react artifact', 'stateful artifact', 'routing',
+//       'web artifact', 'interactive artifact', 'web-based tool'
+//     ],
+//     category: 'Frontend & Web Development'
+//   },
+//   webapp_testing: {
+//     skillId: 'webapp-testing',
+//     keywords: [
+//       'test web', 'web testing', 'browser test', 'playwright', 'e2e test',
+//       'frontend test', 'capture screenshot', 'verify web'
+//     ],
+//     category: 'Frontend & Web Development'
+//   },
+//   canvas_design: {
+//     skillId: 'canvas-design',
+//     keywords: [
+//       'poster', 'artwork', 'visual art', 'canvas', 'design art',
+//       'create poster', 'create artwork', 'visual design', 'graphic art'
+//     ],
+//     category: 'Visual & Creative Design'
+//   },
+//   algorithmic_art: {
+//     skillId: 'algorithmic-art',
+//     keywords: [
+//       'generative art', 'algorithmic art', 'p5.js', 'particle system',
+//       'flow field', 'creative coding', 'code art'
+//     ],
+//     category: 'Visual & Creative Design'
+//   },
+//   theme_factory: {
+//     skillId: 'theme-factory',
+//     keywords: [
+//       'theme', 'color scheme', 'font theme', 'styling theme',
+//       'consistent theme', 'apply theme', 'theme colors'
+//     ],
+//     category: 'Visual & Creative Design'
+//   },
+//   brand_guidelines: {
+//     skillId: 'brand-guidelines',
+//     keywords: [
+//       'brand colors', 'brand guidelines', 'anthropic brand',
+//       'official brand', 'brand styling'
+//     ],
+//     category: 'Visual & Creative Design'
+//   },
+//   slack_gif_creator: {
+//     skillId: 'slack-gif-creator',
+//     keywords: [
+//       'slack gif', 'animated gif', 'gif for slack', 'slack animation'
+//     ],
+//     category: 'Visual & Creative Design'
+//   },
+//   mcp_builder: {
+//     skillId: 'mcp-builder',
+//     keywords: [
+//       'mcp server', 'model context protocol', 'create mcp',
+//       'mcp integration', 'external api integration'
+//     ],
+//     category: 'Development & Integration'
+//   },
+//   skill_creator: {
+//     skillId: 'skill-creator',
+//     keywords: [
+//       'create skill', 'new skill', 'skill development',
+//       'extend capabilities', 'custom skill'
+//     ],
+//     category: 'Development & Integration'
+//   },
+//   doc_coauthoring: {
+//     skillId: 'doc-coauthoring',
+//     keywords: [
+//       'documentation', 'technical docs', 'write documentation',
+//       'coauthor', 'doc writing', 'technical writing'
+//     ],
+//     category: 'Communication & Documentation'
+//   }
+// };
 
 // ============================================================
 // SkillInvoker Main Class
@@ -480,7 +476,7 @@ export class SkillInvoker {
   private skillLoader: SkillLoader;
   private initialized: boolean = false;
   private skillCache: Map<string, SkillInfo> = new Map(); // Stores metadata only
-  private skillContentCache: Map<string, string> = new Map(); // Stores full SKILL.md content
+  // private skillContentCache: Map<string, string> = new Map(); // Stores full SKILL.md content - UNUSED
 
   constructor(skillLoader?: SkillLoader) {
     this.skillLoader = skillLoader || getSkillLoader();
@@ -544,7 +540,7 @@ export class SkillInvoker {
       }
 
       skill.markdown = content; // Now we have the full content
-      this.skillContentCache.set(skillId, content);
+      // this.skillContentCache.set(skillId, content); // UNUSED
     } catch (error) {
       console.warn(`[SkillInvoker] Failed to load metadata for skill ${skillId}:`, error);
     }
@@ -565,38 +561,27 @@ export class SkillInvoker {
   }
 
   /**
-   * Match the most relevant skill based on user input
+   * Reload all skills (e.g., after adding/removing a skill via CLI)
+   * Clears the cache and re-discovers all skills
    */
-  async matchSkill(userInput: string): Promise<SkillMatcherResult | null> {
+  async reload(): Promise<void> {
+    // Reset initialization state to allow re-discovery
+    this.initialized = false;
+    this.skillCache.clear();
+    
+    // Re-initialize
     await this.initialize();
+  }
 
-    const lowerInput = userInput.toLowerCase();
-    let bestMatch: SkillMatcherResult | null = null;
-
-    // First check predefined trigger keywords
-    for (const trigger of Object.values(SKILL_TRIGGERS)) {
-      const matchedKeywords = trigger.keywords.filter(kw => lowerInput.includes(kw.toLowerCase()));
-
-      if (matchedKeywords.length > 0) {
-        const confidence = matchedKeywords.length / trigger.keywords.length;
-        const skill = this.skillCache.get(trigger.skillId);
-
-        if (skill) {
-          const result: SkillMatcherResult = {
-            skill,
-            confidence,
-            matchedKeywords,
-            category: trigger.category
-          };
-
-          if (!bestMatch || confidence > bestMatch.confidence) {
-            bestMatch = result;
-          }
-        }
-      }
-    }
-
-    return bestMatch;
+  /**
+   * Match the most relevant skill based on user input
+   * NOTE: SKILL_TRIGGERS disabled. Let LLM decide based on system prompt.
+   * Returns null to indicate no explicit match - LLM should use its own judgment.
+   */
+  async matchSkill(_userInput: string): Promise<SkillMatcherResult | null> {
+    // SKILL_TRIGGERS is disabled for experiment purposes.
+    // The LLM should decide which skill to use based on system prompt information.
+    return null;
   }
 
   /**
@@ -634,10 +619,14 @@ export class SkillInvoker {
       const executor = this.getSkillExecutor(skill.id);
       const result = await executor.execute(skill, { ...params, taskId });
 
-      // Add workspaceDir to result
-      if (result.success && result.nextSteps && result.nextSteps.length > 0) {
-        result.workspaceDir = getWorkspaceDir(taskId);
-        await ensureWorkspaceDir(result.workspaceDir);
+      // Add skillPath and workspaceDir to result (delay creation until actually needed)
+      if (result.success) {
+        // Get skillPath directly from skillDirectories (more reliable)
+        result.skillPath = this.skillLoader.getSkillDirectory?.(params.skillId) || skill.skillsPath || '';
+        if (result.nextSteps && result.nextSteps.length > 0) {
+          result.workspaceDir = getWorkspaceDir(taskId);
+          // Don't pre-create workspace - only create when actually used by LLM
+        }
       }
 
       return result;
@@ -694,7 +683,7 @@ export class SkillInvoker {
    * Get executor for skill
    * Unified dynamic approach - all skills use GenericSkillExecutor
    */
-  private getSkillExecutor(skillId: string): SkillExecutor {
+  private getSkillExecutor(_skillId: string): SkillExecutor {
     return new GenericSkillExecutor();
   }
 
@@ -707,16 +696,13 @@ export class SkillInvoker {
    * Used for remote mode tool execution
    */
   isSkillTool(toolName: string): boolean {
-    // Check if it's a skill ID
-    if (this.skillCache.has(toolName)) {
-      return true;
-    }
-    // Check if in SKILL_TRIGGERS
-    return Object.values(SKILL_TRIGGERS).some(t => t.skillId === toolName);
+    // Check if it's a skill ID in cache
+    return this.skillCache.has(toolName);
   }
 
   /**
    * Get all Skill definitions (for syncing to remote server)
+   * NOTE: triggers field is empty since SKILL_TRIGGERS is disabled
    */
   getAllSkillDefinitions(): Array<{
     id: string;
@@ -733,17 +719,14 @@ export class SkillInvoker {
       triggers: string[];
     }> = [];
 
-    for (const [key, trigger] of Object.entries(SKILL_TRIGGERS)) {
-      const skill = this.skillCache.get(trigger.skillId);
-      if (skill) {
-        definitions.push({
-          id: skill.id,
-          name: skill.name,
-          description: skill.description,
-          category: trigger.category,
-          triggers: trigger.keywords
-        });
-      }
+    for (const skill of this.skillCache.values()) {
+      definitions.push({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        category: skill.category,
+        triggers: [] // SKILL_TRIGGERS disabled - LLM decides based on description
+      });
     }
 
     return definitions;
@@ -759,23 +742,14 @@ export class SkillInvoker {
     toolName: string,
     params: Record<string, any>
   ): Promise<{ success: boolean; result?: any; error?: string }> {
-    // Find corresponding Skill
-    const skillTrigger = Object.entries(SKILL_TRIGGERS).find(
-      ([_, t]) => t.skillId === toolName
-    );
-
-    if (!skillTrigger) {
-      // Try direct skillId match
-      if (!this.skillCache.has(toolName)) {
-        return { success: false, error: `Skill not found: ${toolName}` };
-      }
+    // Check if skill exists in cache
+    if (!this.skillCache.has(toolName)) {
+      return { success: false, error: `Skill not found: ${toolName}` };
     }
-
-    const triggerSkillId = skillTrigger ? skillTrigger[1].skillId : toolName;
 
     try {
       const result = await this.executeSkill({
-        skillId: triggerSkillId,
+        skillId: toolName,
         taskDescription: params.taskDescription || params.description || '',
         inputFile: params.inputFile,
         outputFile: params.outputFile,
@@ -790,9 +764,10 @@ export class SkillInvoker {
 
   /**
    * Get all available Skill ID list
+   * NOTE: SKILL_TRIGGERS disabled - return all skill IDs from cache
    */
   getAvailableSkillIds(): string[] {
-    return Object.values(SKILL_TRIGGERS).map(t => t.skillId);
+    return Array.from(this.skillCache.keys());
   }
 }
 
@@ -889,47 +864,32 @@ class GenericSkillExecutor implements SkillExecutor {
       allFiles = [path.join(skillPath, 'SKILL.md')];
     }
 
-    // Separate markdown files and script files
-    const mdFiles = allFiles.filter(f => f.endsWith('.md'));
-    const scriptFiles = allFiles.filter(f => f.endsWith('.js') || f.endsWith('.py'));
-
-    // Sort: SKILL.md first, then other .md files, then scripts
-    mdFiles.sort((a, b) => {
-      if (a.endsWith('SKILL.md')) return -1;
-      if (b.endsWith('SKILL.md')) return 1;
-      return a.localeCompare(b);
-    });
-
+    // Step 1: Read SKILL.md first
+    const skillMdPathOnly = path.join(skillPath, 'SKILL.md');
     nextSteps.push({
       step: 1,
-      action: 'Explore skill directory and read documentation',
-      description: `List directory: ${skillPath}`,
-      reason: 'Discover available files and documentation'
+      action: 'Read SKILL.md to understand the skill workflow',
+      description: `Read: ${skillMdPathOnly}`,
+      reason: 'Understand the skill workflow and best practices from the main documentation'
     });
 
+    // Step 2: Explore skill directory and read reference files if needed (optional)
     nextSteps.push({
       step: 2,
-      action: 'Read SKILL.md and other documentation',
-      description: `Read: ${mdFiles.join(', ')}`,
-      reason: 'Understand the skill workflow and best practices'
+      action: 'Explore skill directory and read reference files (if needed)',
+      description: `Explore: ${skillPath}`,
+      reason: 'Discover available reference files and read them based on SKILL.md guidance'
     });
 
     nextSteps.push({
       step: 3,
-      action: 'Read relevant scripts if needed',
-      description: `Read: ${scriptFiles.slice(0, 3).join(', ')}`,
-      reason: 'Understand implementation details if documentation is insufficient'
+      action: 'Analyze documentation, verify data/content completeness, and design approach',
+      description: `For content creation: ensure all info/materials collected. For info retrieval: ensure all required data retrieved. Then design execution plan for: ${taskWorkspace}`,
+      reason: 'Review requirements, verify data/content completeness, fill gaps if needed, then plan execution based on the documentation'
     });
 
     nextSteps.push({
       step: 4,
-      action: 'Analyze documentation and design approach',
-      description: `Based on documentation, determine the best approach for: ${taskWorkspace}`,
-      reason: 'Plan your execution based on the documentation'
-    });
-
-    nextSteps.push({
-      step: 5,
       action: 'Execute your plan',
       description: 'Create workspace, write code, run scripts, verify output',
       reason: 'Execute the task using your own understanding'
@@ -937,27 +897,33 @@ class GenericSkillExecutor implements SkillExecutor {
 
     return `### Skill Execution\n\n` +
            `**Your task**: ${params.taskDescription}\n\n` +
-           `**Step 1**: Explore the skill directory to see what files are available\n` +
-           `  - Command: ListDirectory(path="${skillPath}")\n\n` +
-           `**Step 2**: Read documentation files (SKILL.md first, then other .md files)\n` +
-           mdFiles.map(f => `  - read_file: ${f}`).join('\n') + '\n\n' +
-           (scriptFiles.length > 0
-             ? `**Step 3**: Read relevant scripts if needed\n` +
-               scriptFiles.slice(0, 3).map(f => `  - read_file: ${f}`).join('\n') + '\n\n'
-             : '') +
+           `**Step 1**: Read SKILL.md to understand the skill workflow\n` +
+           `  - read_file: ${skillMdPathOnly}\n\n` +
+           `**Step 2**: Explore skill directory and read reference files (if needed)\n` +
+           `  - ListDirectory(path="${skillPath}")\n` +
+           `  - read_file relevant .md and script files as needed\n\n` +
            `Then analyze the documentation and create your own execution plan.\n\n` +
            `**Workspace**: \`${taskWorkspace}\`\n\n` +
            `**⚠️ Windows Path Execution**: Use absolute paths, NOT \`cd && command\`:\n` +
            `  - ✅ Correct: \`node "${taskWorkspace}/script.js"\`\n` +
            `  - ❌ Wrong: \`cd "${taskWorkspace}" && node script.js\` (fails in PowerShell 5.1)\n` +
            `  - ✅ Correct: \`python "${taskWorkspace}/script.py"\`\n\n` +
-           `**📦 Dependency Management**: REUSE existing libraries FIRST:\n` +
-           `  1. Use xagent/node_modules - check before installing anything\n` +
-           `  2. If module missing, install to: xagent/node_modules or xagent/skills/[skill-name]/\n` +
-           `  3. NEVER install in taskWorkspace - dependencies persist across calls\n\n` +
+           `**📦 Dependency Management**:\n` +
+           `  - Use \`skillPath\` parameter to install dependencies to skill's node_modules (persists across invocations)\n` +
+           `  - ✅ Correct: Bash(command="npm install <package>", skillPath="${skillPath}")\n` +
+           `  - ✅ Correct: Bash(command="npm install", skillPath="${skillPath}")\n` +
+           `  - Dependencies are saved to: <userSkillsPath>/<skillName>/node_modules\n` +
+           `  - 💡 Tip: Install once, reuse forever - no need to reinstall on each call!\n` +
+           `  - After install, scripts can use require() directly with NODE_PATH auto-set\n` +
+           `  - NODE_PATH precedence: skill's node_modules > xAgent's node_modules\n` +
+           `  - Manual execution (Windows): set "NODE_PATH=${skillPath}/node_modules;<xAgentPath>/node_modules" && node script.js\n` +
+           `  - Manual execution (Linux/Mac): NODE_PATH=${skillPath}/node_modules:${process.cwd()}/node_modules node script.js\n` +
+           `  - ⚠️ If skillPath approach fails (module not found errors): Install directly in workspace\n` +
+           `    Priority: skill's node_modules > workspace's node_modules > xAgent's node_modules\n\n` +
            `**🧹 Cleanup**: Delete all intermediate/temporary files when task completes:\n` +
            `  - Remove: all files generated during the task\n` +
-           `  - Keep: Only the final output file (output.pptx/docx/xlsx/pdf)\n\n` +
+           `  - Keep: Only the final output file (output.pptx/docx/xlsx/pdf or other file format required by user)\n` +
+           `  - ⚠️ If user needs to check results or make adjustments: RETAIN intermediate/temporary files for debugging\n\n` +
            `**Instructions**: read_file the documentation, understand the API, and create your own execution plan.\n` +
            `**If you encounter issues**: Explain what went wrong and suggest a different approach.\n`;
   }

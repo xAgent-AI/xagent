@@ -4,7 +4,7 @@ import { MCPServerConfig } from './types.js';
 export interface MCPTool {
   name: string;
   description: string;
-  inputSchema: any;
+  inputSchema: Record<string, unknown>;
 }
 
 export class MCPServer {
@@ -48,6 +48,9 @@ export class MCPServer {
         await this.connectStdio();
       }
 
+      // Wait for tools to be loaded (max 10 seconds)
+      await this.waitForTools(10000);
+
       this.isConnected = true;
       if (this.sdkOutputAdapter) {
         this.sdkOutputAdapter.outputSystem('success', { message: 'MCP Server connected' });
@@ -55,9 +58,40 @@ export class MCPServer {
         console.log(`✅ MCP Server connected`);
       }
     } catch (error) {
-      console.error(`❌ Failed to connect MCP Server:`, error);
+      console.error(`❌ [mcp] Failed to connect MCP Server: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }
+  }
+
+  /**
+   * Wait for tools to be loaded from MCP server
+   * @param timeoutMs Maximum time to wait in milliseconds
+   */
+  async waitForTools(timeoutMs: number = 10000): Promise<void> {
+    if (this.tools.size > 0) {
+      return;  // Tools already loaded
+    }
+
+    return new Promise((resolve, _reject) => {
+      const checkInterval = 100;
+      const startTime = Date.now();
+
+      const check = () => {
+        if (this.tools.size > 0) {
+          clearInterval(checkInterval);
+          resolve();
+        } else if (Date.now() - startTime > timeoutMs) {
+          clearInterval(checkInterval);
+          console.warn(`[MCP] Timeout waiting for tools (${timeoutMs}ms), proceeding anyway`);
+          resolve();  // Don't reject, just proceed without tools
+        } else {
+          // Continue checking
+        }
+      };
+
+      const _intervalId = setInterval(check, checkInterval);
+      check();  // Check immediately first
+    });
   }
 
   private async connectStdio(): Promise<void> {
@@ -66,9 +100,6 @@ export class MCPServer {
         reject(new Error('Command is required for stdio transport'));
         return;
       }
-
-      let toolsLoaded = false;
-      const toolsLoadTimeout = 5000; // 5 seconds max wait
 
       this.process = spawn(this.config.command, this.config.args || [], {
         env: { ...process.env, ...this.config.env },
@@ -91,10 +122,6 @@ export class MCPServer {
       if (this.process.stdout) {
         this.process.stdout.on('data', (data) => {
           this.handleMessage(data.toString());
-          // Check if tools have been loaded after each message
-          if (!toolsLoaded && this.tools.size > 0) {
-            toolsLoaded = true;
-          }
         });
       }
 
@@ -116,22 +143,8 @@ export class MCPServer {
         }
       });
 
-      // Wait for tools to be loaded or timeout
-      const checkInterval = setInterval(() => {
-        if (this.tools.size > 0) {
-          clearInterval(checkInterval);
-          clearTimeout(timeout);
-          resolve();
-        }
-      }, 100);
-
-      const timeout = setTimeout(() => {
-        clearInterval(checkInterval);
-        if (this.tools.size === 0) {
-          console.warn('MCP Server tools not loaded within timeout');
-        }
-        resolve();
-      }, toolsLoadTimeout);
+      // Connection established, tools loading is handled by waitForTools() in connect()
+      resolve();
     });
   }
 
@@ -254,6 +267,7 @@ export class MCPServer {
         const decoder = new TextDecoder();
         let buffer = '';
 
+        // eslint-disable-next-line no-constant-condition
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -267,7 +281,7 @@ export class MCPServer {
               try {
                 const data = JSON.parse(line.slice(6));
                 this.handleJsonRpcMessage(data);
-              } catch (e) {
+              } catch {
                 // Ignore parse errors
               }
             }
@@ -276,10 +290,15 @@ export class MCPServer {
       }
     } catch (error: any) {
       clearTimeout(timeoutId);
+      const serverInfo = this.config.url || this.config.command || 'MCP server';
       if (error.name === 'AbortError') {
-        console.error('SSE connection timed out');
+        console.error(`\n❌ SSE connection timed out`);
+        console.error(`   Server: ${serverInfo}`);
+        console.error(`   The server is not responding. Please try again later.`);
       } else {
-        console.error(`SSE connection failed: ${error.message}`);
+        console.error(`\n❌ SSE connection failed`);
+        console.error(`   Server: ${serverInfo}`);
+        console.error(`   ${error.message}`);
       }
       throw error;
     }
@@ -293,7 +312,7 @@ export class MCPServer {
         const message = JSON.parse(line);
         this.handleJsonRpcMessage(message);
       } catch (error) {
-        console.warn('Failed to parse MCP message:', line);
+        console.warn(`[mcp] Failed to parse MCP message: ${error instanceof Error ? error.message : String(error)}`, line);
       }
     }
   }
@@ -397,10 +416,14 @@ export class MCPServer {
       } else if (resultData?.tools) {
         this.handleToolsList(resultData);
       } else if (resultData?.error) {
-        console.error(`MCP tools/list error: ${resultData.error.message}`);
+        console.error(`\n❌ MCP server returned an error`);
+        console.error(`   ${resultData.error.message || 'Unknown error'}`);
       }
     } catch (error: any) {
-      console.error(`Failed to load MCP tools: ${error.message}`);
+      const serverInfo = this.config.url || this.config.command || 'MCP server';
+      console.error(`\n❌ Failed to load MCP tools`);
+      console.error(`   Server: ${serverInfo}`);
+      console.error(`   ${error.message}`);
     }
   }
 
@@ -473,16 +496,44 @@ export class MCPServer {
       if (contentType.includes('text/event-stream') || 
           (typeof response.data === 'string' && response.data.startsWith('id:'))) {
         // Parse SSE format: "id:1\nevent:message\ndata:{...}"
-        const sseData = response.data;
-        const dataMatch = sseData.match(/data:(.+)$/m);
-        if (dataMatch) {
-          try {
-            resultData = JSON.parse(dataMatch[1].trim());
-          } catch (e: any) {
-            throw new Error(`Failed to parse SSE data: ${e.message}`);
+        // MCP SSE responses may contain multiple data blocks, need to find the one with the result
+        const responseStr = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+        const dataMatches = responseStr.match(/data:(.+)/g);
+        
+        if (dataMatches) {
+          // Look for the data block that contains the matching id or result
+          for (const dataMatch of dataMatches) {
+            try {
+              const dataContent = dataMatch.replace('data:', '').trim();
+              const parsed = JSON.parse(dataContent);
+              // Find the data block that has the matching id or result
+              if (parsed.id === message.id || parsed.result) {
+                resultData = parsed;
+                break;
+              }
+            } catch {
+              continue;
+            }
           }
-        } else {
-          throw new Error('No data field found in SSE response');
+        }
+
+        // Fallback: try to parse the last data block if no matching one found
+        if (!resultData) {
+          const dataMatch = responseStr.match(/data:({.*})/);
+          if (dataMatch) {
+            try {
+              resultData = JSON.parse(dataMatch[1]);
+            } catch {
+              throw new Error('Failed to parse SSE response');
+            }
+          } else if (!resultData) {
+            // Try to parse the entire response as JSON
+            try {
+              resultData = JSON.parse(responseStr);
+            } catch {
+              throw new Error('No valid data field found in SSE response');
+            }
+          }
         }
       } else {
         // Direct JSON response
@@ -492,9 +543,15 @@ export class MCPServer {
       // Check for error response
       if (resultData?.isError) {
         const errorMsg = resultData?.content?.[0]?.text || 'Unknown error';
-        throw new Error(`MCP error: ${errorMsg}`);
+        throw new Error(`MCP server error: ${errorMsg}`);
       }
 
+      // Return the content array from result (MCP result format: { content: [{type: 'text', text: '...'}] })
+      if (resultData?.result?.content) {
+        return resultData.result.content;
+      }
+      
+      // Fallback: return result as-is if no content field
       return resultData?.result;
     } catch (error: any) {
       throw new Error(`MCP Tool call failed: ${error.message}`);
@@ -529,15 +586,16 @@ export class MCPServer {
             this.process?.stdout?.off('data', responseHandler);
             
             if (response.error) {
-              reject(new Error(response.error.message));
+              reject(new Error(`MCP tool error: ${response.error.message || 'Unknown error'}`));
             } else {
               resolve(response.result);
             }
           }
         } catch (error) {
+          const errorMsg = error instanceof Error ? error.message : String(error);
           console.error('\n========== MCP STDIO Parse Error ==========');
           console.error('Raw data:', data.toString());
-          console.error('Error:', error);
+          console.error('Error:', errorMsg);
           console.error('==========================================\n');
           reject(error);
         }
@@ -581,7 +639,7 @@ export class MCPManager {
   async connectServer(name: string): Promise<void> {
     const server = this.servers.get(name);
     if (!server) {
-      throw new Error(`MCP Server not found: ${name}`);
+      throw new Error(`MCP server not found: ${name}. Please check the server name and try again.`);
     }
     await server.connect();
   }
@@ -592,7 +650,7 @@ export class MCPManager {
         try {
           await server.connect();
         } catch (error) {
-          console.error(`Failed to connect MCP Server ${name}:`, error);
+          console.error(`[mcp] Failed to connect MCP server ${name}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     );

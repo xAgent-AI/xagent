@@ -1,9 +1,11 @@
-import inquirer from 'inquirer';
-import { AIClient, Message } from './ai-client.js';
+import { confirm } from '@clack/prompts';
+import { Message } from './ai-client/types.js';
+import { createAIClient, AIClientInterface } from './ai-client-factory.js';
 import { getConfigManager } from './config.js';
 import { AuthType } from './types.js';
 import { getLogger } from './logger.js';
 import { colors, icons } from './theme.js';
+import { getCancellationManager } from './cancellation.js';
 
 const logger = getLogger();
 
@@ -14,7 +16,7 @@ export enum ApprovalDecision {
   APPROVED = 'approved',
   REJECTED = 'rejected',
   REQUIRES_CONFIRMATION = 'requires_confirmation',
-  AI_REVIEW = 'ai_review'
+  AI_REVIEW = 'ai_review',
 }
 
 /**
@@ -24,7 +26,7 @@ export enum RiskLevel {
   LOW = 'LOW',
   MEDIUM = 'MEDIUM',
   HIGH = 'HIGH',
-  CRITICAL = 'CRITICAL'
+  CRITICAL = 'CRITICAL',
 }
 
 /**
@@ -56,7 +58,7 @@ export class WhitelistChecker {
     // Information reading tools
     'Read',
     'ListDirectory',
-    'SearchCodebase',
+    'SearchFiles',
     'Grep',
     'image_read',
 
@@ -68,15 +70,16 @@ export class WhitelistChecker {
     'web_search',
 
     // File editing tools
-    'replace',
+    'Edit',
     'Write',
+    'DeleteFile',
 
     // Other safe tools
     'web_fetch',
     'ask_user_question',
     'save_memory',
     'xml_escape',
-    'Skill'
+    'Skill',
   ]);
 
   /**
@@ -114,31 +117,31 @@ export class BlacklistChecker {
       pattern: /rm\s+-rf\s+\/$/,
       category: 'System destruction',
       riskLevel: RiskLevel.CRITICAL,
-      description: 'Delete root directory'
+      description: 'Delete root directory',
     },
     {
       pattern: /rm\s+-rf\s+(\/etc|\/usr|\/bin|\/sbin|\/lib|\/lib64)/,
       category: 'System destruction',
       riskLevel: RiskLevel.CRITICAL,
-      description: 'Delete system directories'
+      description: 'Delete system directories',
     },
     {
       pattern: /rm\s+-rf\s+.*\*/,
       category: 'System destruction',
       riskLevel: RiskLevel.HIGH,
-      description: 'Batch delete files'
+      description: 'Batch delete files',
     },
     {
       pattern: /(mkfs|format)\s+/,
       category: 'System destruction',
       riskLevel: RiskLevel.CRITICAL,
-      description: 'Format disk'
+      description: 'Format disk',
     },
     {
       pattern: /dd\s+.*of=\/dev\/(sd[a-z]|nvme[0-9]n[0-9])/,
       category: 'System destruction',
       riskLevel: RiskLevel.CRITICAL,
-      description: 'Overwrite disk data'
+      description: 'Overwrite disk data',
     },
 
     // Privilege escalation
@@ -146,25 +149,25 @@ export class BlacklistChecker {
       pattern: /chmod\s+777\s+/,
       category: 'Privilege escalation',
       riskLevel: RiskLevel.HIGH,
-      description: 'Set file permissions to 777'
+      description: 'Set file permissions to 777',
     },
     {
       pattern: /chmod\s+[45][0-9]{3}\s+/,
       category: 'Privilege escalation',
       riskLevel: RiskLevel.HIGH,
-      description: 'Set SUID/SGID permissions'
+      description: 'Set SUID/SGID permissions',
     },
     {
       pattern: /vi\s+\/etc\/sudoers/,
       category: 'Privilege escalation',
       riskLevel: RiskLevel.CRITICAL,
-      description: 'Modify sudo permissions'
+      description: 'Modify sudo permissions',
     },
     {
       pattern: /echo.*>>.*\/etc\/sudoers/,
       category: 'Privilege escalation',
       riskLevel: RiskLevel.CRITICAL,
-      description: 'Modify sudo permissions'
+      description: 'Modify sudo permissions',
     },
 
     // Data theft
@@ -172,31 +175,31 @@ export class BlacklistChecker {
       pattern: /cat\s+\/etc\/passwd/,
       category: 'Data theft',
       riskLevel: RiskLevel.HIGH,
-      description: 'Read password file'
+      description: 'Read password file',
     },
     {
       pattern: /cat\s+\/etc\/shadow/,
       category: 'Data theft',
       riskLevel: RiskLevel.CRITICAL,
-      description: 'Read shadow file'
+      description: 'Read shadow file',
     },
     {
       pattern: /cat\s+.*\/\.ssh\/id_rsa/,
       category: 'Data theft',
       riskLevel: RiskLevel.CRITICAL,
-      description: 'Read SSH private key'
+      description: 'Read SSH private key',
     },
     {
       pattern: /grep\s+-[rRi].*password/,
       category: 'Data theft',
       riskLevel: RiskLevel.HIGH,
-      description: 'Search for password information'
+      description: 'Search for password information',
     },
     {
       pattern: /(curl|wget).*\|(sh|bash|python|perl)/,
       category: 'Data theft',
       riskLevel: RiskLevel.CRITICAL,
-      description: 'Remote code execution'
+      description: 'Remote code execution',
     },
 
     // Network attacks
@@ -204,19 +207,19 @@ export class BlacklistChecker {
       pattern: /nmap\s+-[sS].*/,
       category: 'Network attacks',
       riskLevel: RiskLevel.MEDIUM,
-      description: 'Network scanning'
+      description: 'Network scanning',
     },
     {
       pattern: /nc\s+.*-l/,
       category: 'Network attacks',
       riskLevel: RiskLevel.HIGH,
-      description: 'Create network listener'
+      description: 'Create network listener',
     },
     {
       pattern: /iptables\s+-F/,
       category: 'Network attacks',
       riskLevel: RiskLevel.HIGH,
-      description: 'Clear firewall rules'
+      description: 'Clear firewall rules',
     },
 
     // Resource exhaustion
@@ -224,14 +227,14 @@ export class BlacklistChecker {
       pattern: /:\)\s*{\s*:\s*\|\s*:&\s*};/,
       category: 'Resource exhaustion',
       riskLevel: RiskLevel.CRITICAL,
-      description: 'Fork bomb'
+      description: 'Fork bomb',
     },
     {
       pattern: /while\s+true\s*;\s*do\s+.*done/,
       category: 'Resource exhaustion',
       riskLevel: RiskLevel.HIGH,
-      description: 'Infinite loop'
-    }
+      description: 'Infinite loop',
+    },
   ];
 
   /**
@@ -252,7 +255,7 @@ export class BlacklistChecker {
     }
 
     // For file operation tools, check path
-    if (['Write', 'DeleteFile', 'replace'].includes(toolName)) {
+    if (['Write', 'DeleteFile', 'Edit'].includes(toolName)) {
       const filePath = params.filePath || params.file_path || '';
       if (this.isSystemPath(filePath)) {
         return {
@@ -261,8 +264,8 @@ export class BlacklistChecker {
             pattern: /system-path/,
             category: 'System destruction',
             riskLevel: RiskLevel.HIGH,
-            description: 'Modify system files'
-          }
+            description: 'Modify system files',
+          },
         };
       }
     }
@@ -284,11 +287,11 @@ export class BlacklistChecker {
       '/boot',
       '/sys',
       '/proc',
-      '/dev'
+      '/dev',
     ];
 
     const normalizedPath = filePath.toLowerCase().replace(/\\/g, '/');
-    return systemPaths.some(sysPath => normalizedPath.startsWith(sysPath));
+    return systemPaths.some((sysPath) => normalizedPath.startsWith(sysPath));
   }
 
   /**
@@ -303,7 +306,7 @@ export class BlacklistChecker {
  * AI approval checker
  */
 export class AIApprovalChecker {
-  private aiClient: AIClient | null = null;
+  private aiClient: AIClientInterface | null = null;
   private isRemoteMode: boolean = false;
 
   constructor() {
@@ -324,24 +327,29 @@ export class AIApprovalChecker {
       // Remote mode: AI review handled by remote LLM, no local AIClient needed
       // Local mode: use local AIClient
       if (!this.isRemoteMode && authConfig.apiKey) {
-        this.aiClient = new AIClient(authConfig);
+        this.aiClient = createAIClient(authConfig);
       }
     } catch (error) {
-      logger.error('Failed to initialize AI approval checker', error instanceof Error ? error.message : String(error));
+      logger.error(
+        'Failed to initialize AI approval checker',
+        error instanceof Error ? error.message : String(error)
+      );
     }
   }
 
   /**
    * Use AI for intelligent review
    */
-  async check(context: ToolCallContext): Promise<{ approved: boolean; analysis: string; riskLevel: RiskLevel }> {
+  async check(
+    context: ToolCallContext
+  ): Promise<{ approved: boolean; analysis: string; riskLevel: RiskLevel }> {
     // In Remote mode, the remote LLM has already approved the tool_calls
     // Local AI review approves directly, no need to repeat
     if (this.isRemoteMode) {
       return {
         approved: true,
         analysis: 'Remote mode: tool approval handled by remote LLM',
-        riskLevel: RiskLevel.LOW
+        riskLevel: RiskLevel.LOW,
       };
     }
 
@@ -349,8 +357,9 @@ export class AIApprovalChecker {
       // If AI client is not initialized, default to medium risk, requires user confirmation
       return {
         approved: false,
-        analysis: 'AI review not available (no local LLM configured), requires manual user confirmation',
-        riskLevel: RiskLevel.MEDIUM
+        analysis:
+          'AI review not available (no local LLM configured), requires manual user confirmation',
+        riskLevel: RiskLevel.MEDIUM,
       };
     }
 
@@ -373,22 +382,27 @@ Please return results in JSON format:
   "approved": boolean,
   "riskLevel": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
   "analysis": "Detailed analysis description"
-}`
+}`,
         },
         {
           role: 'user',
-          content: prompt
-        }
+          content: prompt,
+        },
       ];
 
-      const response = await this.aiClient.chatCompletion(messages, {
-        temperature: 0.3,
-        // maxTokens: 500
-      });
+      const controller = new AbortController();
+      const response = await getCancellationManager().withCancellation(
+        this.aiClient.chatCompletion(messages, {
+          temperature: 0.3,
+          signal: controller.signal,
+        }),
+        'smart-approval'
+      );
 
-      const content = typeof response.choices[0].message.content === 'string'
-        ? response.choices[0].message.content
-        : '{}';
+      const content =
+        typeof response.choices[0].message.content === 'string'
+          ? response.choices[0].message.content
+          : '{}';
 
       // Parse AI response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -397,7 +411,7 @@ Please return results in JSON format:
         return {
           approved: result.approved || false,
           analysis: result.analysis || 'No detailed analysis',
-          riskLevel: result.riskLevel || RiskLevel.MEDIUM
+          riskLevel: result.riskLevel || RiskLevel.MEDIUM,
         };
       }
 
@@ -405,10 +419,22 @@ Please return results in JSON format:
       return {
         approved: false,
         analysis: 'Unable to parse AI response, requires manual confirmation',
-        riskLevel: RiskLevel.MEDIUM
+        riskLevel: RiskLevel.MEDIUM,
       };
     } catch (error: any) {
-      logger.error('AI approval check failed', error instanceof Error ? error.message : String(error));
+      // Check if it was cancelled by user first - don't log error for cancellations
+      const isCancelled = error.message === 'Operation cancelled by user' ||
+                         error.message.includes('cancelled') ||
+                         error.message.includes('aborted');
+
+      if (isCancelled) {
+        throw new Error('Operation cancelled by user');
+      }
+
+      logger.error(
+        'AI approval check failed',
+        error instanceof Error ? error.message : String(error)
+      );
 
       // In Remote mode, remote LLM already approved, local failure means auto-approve
       const configManager = getConfigManager();
@@ -419,14 +445,21 @@ Please return results in JSON format:
         return {
           approved: true,
           analysis: 'Remote mode: approved (remote LLM handled approval)',
-          riskLevel: RiskLevel.LOW
+          riskLevel: RiskLevel.LOW,
         };
       }
 
+      // If user cancelled the AI review, directly cancel the entire task
+      // instead of just canceling the AI review and continuing
+      if (isCancelled) {
+        throw new Error('Operation cancelled by user');
+      }
+
+      // Other errors require manual confirmation
       return {
         approved: false,
         analysis: `AI review failed: ${error.message}, requires manual confirmation`,
-        riskLevel: RiskLevel.MEDIUM
+        riskLevel: RiskLevel.MEDIUM,
       };
     }
   }
@@ -443,7 +476,7 @@ Please return results in JSON format:
     // Add specific analysis guidance based on tool type
     if (toolName === 'Bash') {
       prompt += `This is a Shell command execution request. Please check if the command contains:\n- Dangerous system operations (such as deletion, formatting)\n- Privilege escalation operations\n- Data theft operations\n- Remote code execution\n- Resource exhaustion attacks`;
-    } else if (['Write', 'replace', 'DeleteFile'].includes(toolName)) {
+    } else if (['Write', 'Edit', 'DeleteFile'].includes(toolName)) {
       prompt += `This is a file operation request. Please check:\n- Whether the target path is a system path\n- Whether the operation may damage system files\n- Whether it involves sensitive configuration files`;
     } else if (toolName === 'web_fetch' || toolName === 'web_search') {
       prompt += `This is a network request. Please check:\n- Whether the URL is a malicious website\n- Whether it may leak sensitive information\n- Whether it may execute remote code`;
@@ -484,7 +517,9 @@ export class SmartApprovalEngine {
     if (whitelistCheck) {
       const latency = Date.now() - startTime;
       if (this.debugMode) {
-        logger.debug(`[WhitelistChecker] Tool '${context.toolName}' in whitelist, latency: ${latency}ms`);
+        logger.debug(
+          `[WhitelistChecker] Tool '${context.toolName}' in whitelist, latency: ${latency}ms`
+        );
       }
 
       return {
@@ -492,7 +527,7 @@ export class SmartApprovalEngine {
         riskLevel: RiskLevel.LOW,
         detectionMethod: 'whitelist',
         description: `Tool '${context.toolName}' is in the whitelist, executing directly`,
-        latency
+        latency,
       };
     }
 
@@ -505,7 +540,9 @@ export class SmartApprovalEngine {
     if (blacklistCheck.matched && blacklistCheck.rule) {
       const latency = Date.now() - startTime;
       if (this.debugMode) {
-        logger.debug(`[BlacklistChecker] Matched rule: ${blacklistCheck.rule.description}, Risk: ${blacklistCheck.rule.riskLevel}, latency: ${latency}ms`);
+        logger.debug(
+          `[BlacklistChecker] Matched rule: ${blacklistCheck.rule.description}, Risk: ${blacklistCheck.rule.riskLevel}, latency: ${latency}ms`
+        );
       }
 
       return {
@@ -513,7 +550,7 @@ export class SmartApprovalEngine {
         riskLevel: blacklistCheck.rule.riskLevel,
         detectionMethod: 'blacklist',
         description: `Detected potentially risky operation: ${blacklistCheck.rule.description}`,
-        latency
+        latency,
       };
     }
 
@@ -526,16 +563,20 @@ export class SmartApprovalEngine {
     const latency = Date.now() - startTime;
 
     if (this.debugMode) {
-      logger.debug(`[AIApprovalChecker] AI review result: approved=${aiCheck.approved}, risk=${aiCheck.riskLevel}, latency: ${latency}ms`);
+      logger.debug(
+        `[AIApprovalChecker] AI review result: approved=${aiCheck.approved}, risk=${aiCheck.riskLevel}, latency: ${latency}ms`
+      );
     }
 
     return {
-      decision: aiCheck.approved ? ApprovalDecision.APPROVED : ApprovalDecision.REQUIRES_CONFIRMATION,
+      decision: aiCheck.approved
+        ? ApprovalDecision.APPROVED
+        : ApprovalDecision.REQUIRES_CONFIRMATION,
       riskLevel: aiCheck.riskLevel,
       detectionMethod: 'ai_review',
       description: aiCheck.analysis,
       latency,
-      aiAnalysis: aiCheck.analysis
+      aiAnalysis: aiCheck.analysis,
     };
   }
 
@@ -545,11 +586,17 @@ export class SmartApprovalEngine {
   async requestConfirmation(result: ApprovalResult): Promise<boolean> {
     const separator = icons.separator.repeat(40);
     console.log('');
-    console.log(colors.warning(`${icons.warning} [Smart Mode] Detected potentially risky operation`));
+    console.log(
+      colors.warning(`${icons.warning} [Smart Mode] Detected potentially risky operation`)
+    );
     console.log(colors.border(separator));
     console.log('');
     console.log(colors.textMuted(`📊 Risk Level: ${this.getRiskLevelDisplay(result.riskLevel)}`));
-    console.log(colors.textMuted(`🔍 Detection Method: ${this.getDetectionMethodDisplay(result.detectionMethod)}`));
+    console.log(
+      colors.textMuted(
+        `🔍 Detection Method: ${this.getDetectionMethodDisplay(result.detectionMethod)}`
+      )
+    );
     console.log('');
 
     if (result.aiAnalysis) {
@@ -563,18 +610,16 @@ export class SmartApprovalEngine {
     console.log(colors.warning('Potentially risky operation detected, continue execution?'));
 
     try {
-      const { confirmed } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'confirmed',
-          message: 'Continue execution?',
-          default: false
-        }
-      ]);
+      const confirmed = await confirm({
+        message: 'Continue execution?',
+      });
 
-      return confirmed;
+      return confirmed === true;
     } catch (error) {
-      logger.error('Failed to get user confirmation', error instanceof Error ? error.message : String(error));
+      logger.error(
+        'Failed to get user confirmation',
+        error instanceof Error ? error.message : String(error)
+      );
       return false;
     }
   }
@@ -587,7 +632,7 @@ export class SmartApprovalEngine {
       [RiskLevel.LOW]: colors.success('LOW'),
       [RiskLevel.MEDIUM]: colors.warning('MEDIUM'),
       [RiskLevel.HIGH]: colors.error('HIGH'),
-      [RiskLevel.CRITICAL]: colors.error('CRITICAL')
+      [RiskLevel.CRITICAL]: colors.error('CRITICAL'),
     };
     return displays[riskLevel];
   }
@@ -600,7 +645,7 @@ export class SmartApprovalEngine {
       whitelist: 'Whitelist rules',
       blacklist: 'Blacklist rules',
       ai_review: 'AI intelligent review',
-      manual: 'Manual review'
+      manual: 'Manual review',
     };
     return displays[method as keyof typeof displays] || method;
   }

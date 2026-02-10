@@ -11,6 +11,7 @@ import {
   Button,
   Key,
   Point,
+  centerOf,
   keyboard,
   mouse,
   sleep,
@@ -101,6 +102,7 @@ export class ComputerOperator extends Operator {
       'finished',
       'user_stop',
       'error_env',
+      'call_user',
     ];
   }
 
@@ -154,12 +156,12 @@ export class ComputerOperator extends Operator {
     const { parsedPrediction, screenWidth, screenHeight, scaleFactor } = params;
     const { action_type, action_inputs } = parsedPrediction;
 
-    // Empty or invalid action should return needs_input to let main agent decide
+    // Empty or invalid action should return failed to avoid infinite loop
     if (!action_type || action_type.trim() === '') {
-      this.logger.debug(`[ComputerOperator] Empty action, returning to main agent for decision`);
+      this.logger.warn(`[ComputerOperator] Empty action, skipping step`);
       return {
-        status: 'needs_input',
-        errorMessage: 'Empty or invalid action type - returned to main agent for decision'
+        status: 'failed',
+        errorMessage: 'Empty or invalid action type'
       };
     }
 
@@ -196,8 +198,6 @@ export class ComputerOperator extends Operator {
     context: { startX: number; startY: number; screenWidth: number; screenHeight: number; scaleFactor: number }
   ): Promise<'end' | void> {
     const { startX, startY, screenWidth, screenHeight, scaleFactor } = context;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    void scaleFactor;
 
     const moveStraightTo = async (x: number, y: number) => {
       await mouse.move(straightTo(new Point(x, y)));
@@ -325,8 +325,7 @@ export class ComputerOperator extends Operator {
             await sleep(50);
             await keyboard.releaseKey(Key.LeftControl, Key.V);
             await sleep(50);
-            // Restore clipboard content with retry to handle clipboardy occasional panics on Windows
-            await restoreClipboardWithRetry(originalClipboard, this.logger);
+            await clipboard.setContent(originalClipboard);
           } else {
             await keyboard.type(stripContent);
           }
@@ -454,6 +453,7 @@ export class ComputerOperator extends Operator {
       }
 
       case 'error_env':
+      case 'call_user':
       case 'finished':
       case 'user_stop':
         this.logger.debug(`[ComputerOperator] ${actionType}`);
@@ -496,6 +496,7 @@ export class ComputerOperator extends Operator {
         // System
         `wait() # Sleep 5s and take a screenshot`,
         `finished() # Task completed`,
+        `call_user() # Need user's help`,
       ],
       
       KEY_SPACE: {
@@ -515,27 +516,5 @@ export class ComputerOperator extends Operator {
         'arrow right': 'Right arrow',
       },
     };
-  }
-}
-
-/**
- * Restore clipboard content with retry mechanism.
- * Handles clipboardy occasional panics on Windows gracefully.
- */
-async function restoreClipboardWithRetry(content: string, logger: any): Promise<void> {
-  const maxRetries = 2;
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      await clipboard.setContent(content);
-      return;
-    } catch (restoreError: any) {
-      if (i === maxRetries - 1) {
-        // Last retry failed - log warning and give up
-        logger.warn('[ComputerOperator] Failed to restore clipboard content after retries:', restoreError?.message || restoreError);
-      } else {
-        // Retry after brief delay
-        await sleep(100);
-      }
-    }
   }
 }

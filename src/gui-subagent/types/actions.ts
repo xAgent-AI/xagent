@@ -223,7 +223,8 @@ export type SupportedActionType =
   | 'wait'
   | 'finished'
   | 'user_stop'
-  | 'error_env';
+  | 'error_env'
+  | 'call_user';
 
 export const ACTION_METADATA: Record<SupportedActionType, { category: string; description: string }> = {
   click: { category: 'mouse', description: 'Click on an element' },
@@ -254,6 +255,7 @@ export const ACTION_METADATA: Record<SupportedActionType, { category: string; de
   finished: { category: 'system', description: 'Mark task as finished' },
   user_stop: { category: 'system', description: 'User stopped the task' },
   error_env: { category: 'system', description: 'Environment error' },
+  call_user: { category: 'system', description: 'Call user for assistance' },
 };
 
 export function isSupportedActionType(type: string): type is SupportedActionType {

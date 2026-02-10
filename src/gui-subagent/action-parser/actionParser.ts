@@ -1,9 +1,6 @@
-/**
- * Action Parser for GUI SubAgent
- * Parses UI-TARS model predictions into structured actions
- *
- * Based on UI-TARS architecture by @ui-tars/sdk
- * @see https://github.com/DouyinFE/sabre
+/*
+ * Copyright (c) 2025 Bytedance, Inc. and its affiliates.
+ * SPDX-License-Identifier: Apache-2.0
  */
 import {
   ActionInputs,
@@ -17,9 +14,6 @@ import {
   MAX_PIXELS_V1_5,
 } from './constants.js';
 import isNumber from 'lodash.isnumber';
-import { getLogger } from '../../logger.js';
-
-const logger = getLogger();
 
 function roundByFactor(num: number, factor: number): number {
   return Math.round(num / factor) * factor;
@@ -42,7 +36,7 @@ function smartResizeForV15(
   maxPixels: number = MAX_PIXELS_V1_5,
 ): [number, number] | null {
   if (Math.max(height, width) / Math.min(height, width) > maxRatio) {
-    logger.error(
+    console.error(
       `absolute aspect ratio must be smaller than ${maxRatio}, got ${
         Math.max(height, width) / Math.min(height, width)
       }`,
@@ -302,7 +296,7 @@ function parseAction(actionStr: string) {
           value = `(${value})`;
         }
 
-        //@ts-expect-error - kwargs type mismatch with function signature
+        //@ts-ignore
         kwargs[key.trim()] = value;
       }
     }
@@ -311,8 +305,8 @@ function parseAction(actionStr: string) {
       function: functionName,
       args: kwargs,
     };
-  } catch {
-    logger.debug(`[ActionParser] Skipping invalid action: '${actionStr}'`);
+  } catch (e) {
+    console.warn(`[ActionParser] Skipping invalid action: '${actionStr}'`);
     return null;
   }
 }

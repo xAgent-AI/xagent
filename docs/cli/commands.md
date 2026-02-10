@@ -10,7 +10,6 @@ This document provides a complete reference for all xAgent CLI commands.
 | `xagent auth` | Configure authentication |
 | `xagent agent` | Manage SubAgents |
 | `xagent mcp` | Manage MCP servers |
-| `xagent skill` | Manage skills |
 | `xagent workflow` | Manage workflows |
 | `xagent init` | Initialize project |
 | `xagent gui` | GUI automation |
@@ -29,26 +28,24 @@ xagent start [options]
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `--approval-mode <mode>` | Execution mode (yolo, accept_edits, plan, default, smart) |
+| `--mode <mode>` | Execution mode (yolo, accept_edits, plan, default, smart) |
+| `--project <path>` | Project directory |
+| `--theme <name>` | UI theme |
 
 ### auth
 
 Configure authentication settings.
 
 ```bash
-xagent auth
+xagent auth [command]
 ```
 
-This is an interactive command that guides you through:
-1. Selecting authentication type
-2. Entering API credentials
-3. Fetching default models (for remote authentication)
-
-**Authentication Types:**
-| Type | Description |
-|------|-------------|
-| `oauth-xagent` | xAgent account login (recommended) |
-| `openai_compatible` | Third-party API (DeepSeek, Qwen, Kimi, etc.) |
+**Subcommands:**
+| Command | Description |
+|---------|-------------|
+| `login` | Login with xAgent account |
+| `apikey` | Set API key |
+| `logout` | Clear credentials |
 
 ### version
 
@@ -81,10 +78,8 @@ xagent agent --list
 Add a new SubAgent.
 
 ```bash
-xagent agent --add <name>
+xagent agent --add <name> --type <type> --system-prompt <prompt>
 ```
-
-**Note:** Agent creation wizard is not implemented. Use `/agents install` in interactive mode to add agents.
 
 ### agent remove
 
@@ -109,47 +104,16 @@ xagent mcp --list
 Add a new MCP server.
 
 ```bash
-xagent mcp --add [name] [options]
+xagent mcp --add <name> --command <command> [options]
 ```
 
 **Options:**
-
-| Short | Long | Description |
-|-------|------|-------------|
-| `-t` | `--transport <type>` | Transport type: `stdio` or `http` |
-| `-c` | `--command <cmd>` | Command for stdio transport |
-| | | `--args <args>` | Arguments (comma-separated) |
-| `-u` | `--url <url>` | URL for HTTP transport |
-| `-k` | `--token <token>` | Bearer authentication token |
-| | | `--header <key:value>` | Custom header (can be used multiple times) |
-| `-y` | `--yes` | Skip confirmation |
-
-**Interactive Mode:**
-
-```bash
-xagent mcp --add
-# or with name
-xagent mcp --add my-server
-```
-
-**Non-interactive Examples:**
-
-```bash
-# Stdio transport (GitHub MCP)
-xagent mcp --add github -t stdio -c "npx" --args "-y,@modelcontextprotocol/server-github"
-
-# Filesystem MCP
-xagent mcp --add filesystem -t stdio -c "npx" --args "-y,@modelcontextprotocol/server-filesystem,/path/to/dir"
-
-# HTTP transport
-xagent mcp --add custom -t http -u "https://example.com/mcp"
-
-# HTTP with auth
-xagent mcp --add custom -t http -u "https://example.com/mcp" -k "bearer-token"
-
-# Custom headers
-xagent mcp --add custom -t http -u "https://example.com/mcp" --header "X-Custom-Header:value"
-```
+| Option | Description |
+|--------|-------------|
+| `--command` | Server command |
+| `--args` | Command arguments |
+| `--env` | Environment variables |
+| `--url` | Server URL (for HTTP transport) |
 
 ### mcp remove
 
@@ -158,66 +122,6 @@ Remove an MCP server.
 ```bash
 xagent mcp --remove <name>
 ```
-
-## Skill Management
-
-### skill list
-
-List all installed skills.
-
-```bash
-xagent skill --list
-```
-
-### skill add
-
-Install a skill from local path or remote URL. Auto-detects source type.
-
-```bash
-xagent skill --add <source>
-```
-
-**Supported Source Formats:**
-| Format | Example |
-|--------|---------|
-| Local path | `./my-skill` or `C:\path\to\skill` |
-| GitHub shorthand | `owner/repo` |
-| GitHub URL | `https://github.com/owner/repo` |
-| GitHub with branch | `https://github.com/owner/repo/tree/main` |
-| GitHub with path | `https://github.com/owner/repo/tree/main/path/to/skill` |
-| GitHub shorthand with skill | `owner/repo@skill-name` |
-| Direct SKILL.md URL | `https://example.com/skill.md` |
-
-**Examples:**
-```bash
-# Install from local directory
-xagent skill --add ./my-skill
-
-# Install from GitHub repository
-xagent skill --add vercel-labs/agent-skills
-
-# Install from GitHub URL
-xagent skill --add https://github.com/vercel-labs/agent-skills
-
-# Install from specific path in repo
-xagent skill --add https://github.com/owner/repo/tree/main/skills/my-skill
-
-# Install skill with @ syntax
-xagent skill --add owner/repo@find-skills
-
-# Install from direct SKILL.md URL
-xagent skill --add https://raw.githubusercontent.com/owner/repo/main/skill.md
-```
-
-### skill remove
-
-Remove an installed skill.
-
-```bash
-xagent skill --remove <skill-id>
-```
-
-**Note:** Built-in skills `find-skills` cannot be removed.
 
 ## Workflow Management
 
@@ -276,32 +180,16 @@ GUI subagent uses the following configuration options:
 
 ### GUI Actions
 
-The GUI subagent can perform various computer automation actions. Actions use coordinate-based targeting with bounding boxes.
-
-**Common Action Types:**
-
-| Action | Description |
-|--------|-------------|
-| `click` / `left_click` | Click on an element at coordinates |
-| `double_click` | Double click |
-| `right_click` | Right click |
-| `middle_click` | Middle click |
-| `drag` | Drag from one position to another |
-| `scroll` | Scroll in a direction (up/down/left/right) |
-| `type` | Type text |
-| `press` / `hotkey` | Press keyboard keys |
-| `wait` | Wait for specified time |
-| `open_app` | Open an application |
-| `open_url` | Open a URL |
-| `finished` | Complete the task |
-
-**Action Format Example:**
-```
-click(start_box='[x1, y1, x2, y2]')
-type(content='text to type')
-scroll(start_box='[x1, y1, x2, y2]', direction='down')
-drag(start_box='[x1, y1, x2, y2]', end_box='[x3, y3, x4, y4]')
-```
+Available GUI actions:
+- `click`: Click on an element
+- `double_click`: Double click
+- `right_click`: Right click
+- `drag`: Drag from one position to another
+- `type`: Type text
+- `hotkey`: Press keyboard shortcuts
+- `scroll`: Scroll up/down/left/right
+- `wait`: Wait for specified time
+- `finished`: Complete the task |
 
 ## Global Options
 
@@ -309,6 +197,7 @@ drag(start_box='[x1, y1, x2, y2]', end_box='[x3, y3, x4, y4]')
 |--------|-------------|
 | `--help` | Show help |
 | `--verbose` | Enable verbose logging |
+| `--config <path>` | Config file path |
 
 ## Environment Variables
 

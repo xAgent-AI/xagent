@@ -9,13 +9,11 @@ xAgent CLI supports extensibility through:
 - **Workflow**: Predefined automation sequences
 - **MCP (Model Context Protocol)**: External tool servers
 
----
-
 ## MCP Integration
 
 ### What is MCP?
 
-MCP (Model Context Protocol) is an open standard that enables AI assistants to connect with external tools and data sources. xAgent uses MCP to integrate additional tools beyond its built-in set.
+MCP (Model Context Protocol) is an open standard that enables AI assistants to connect with external tools and data sources.
 
 ### Configuring MCP Servers
 
@@ -26,17 +24,11 @@ Add MCP servers to your settings file (`~/.xagent/settings.json`):
   "mcpServers": {
     "filesystem": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/directory"],
-      "transport": "stdio"
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/directory"]
     },
     "github": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "transport": "stdio"
-    },
-    "custom-server": {
-      "url": "http://localhost:3000/mcp",
-      "transport": "http"
+      "args": ["-y", "@modelcontextprotocol/server-github"]
     }
   }
 }
@@ -47,142 +39,44 @@ Add MCP servers to your settings file (`~/.xagent/settings.json`):
 ```typescript
 interface MCPServerConfig {
   command?: string;           // Command for stdio transport
-  args?: string[];           // Command arguments
+  args?: string[];            // Command arguments
   env?: Record<string, string>;  // Environment variables
-  cwd?: string;              // Working directory
-  url?: string;              // URL for HTTP/SSE transport
+  url?: string;               // URL for HTTP/SSE transport
   transport?: 'stdio' | 'sse' | 'http';
-  authToken?: string;        // Bearer token for authentication
-  headers?: Record<string, string>;  // Custom headers
-  timeout?: number;          // Tool call timeout in ms (default: 30000)
+  authToken?: string;
+  headers?: Record<string, string>;
+  timeout?: number;
 }
 ```
 
-### MCP Tool Naming
+### Supported MCP Servers
 
-MCP tools are automatically registered with the ToolRegistry and available to agents. To distinguish MCP tools from built-in tools, MCP tool names use a prefix pattern:
+| Server | Description |
+|--------|-------------|
+| filesystem | File system operations |
+| github | GitHub API integration |
+| postgres | PostgreSQL database |
+| redis | Redis key-value store |
+| puppeteer | Browser automation |
 
-```
-{serverName}__{toolName}
-```
+### MCP Tool Synchronization
 
-For example:
-- `filesystem__read_file`
-- `github__create_issue`
-
-The prefix is derived from the server name in your configuration (the key in `mcpServers`).
-
-### Adding MCP Servers
-
-#### Interactive Mode (Recommended)
-
-```bash
-xagent start
-# Then use:
-/mcp add
-```
-
-#### CLI Command (Non-interactive)
-
-xAgent CLI supports adding MCP servers via command line without interactive prompts:
-
-```bash
-# Add with stdio transport
-xagent mcp --add <name> -t stdio -c <command> --args <args>
-
-# Add with HTTP transport
-xagent mcp --add <name> -t http -u <url> [-k <token>] [--header <key:value>]
-```
-
-**Options:**
-
-| Short | Long | Description |
-|-------|------|-------------|
-| `-a` | `--add [name]` | Server name (auto-generated if not provided) |
-| `-t` | `--transport <type>` | Transport type: `stdio` or `http` |
-| `-c` | `--command <cmd>` | Command for stdio transport |
-| | | `--args <args>` | Arguments for stdio transport (comma-separated) |
-| `-u` | `--url <url>` | URL for HTTP transport |
-| `-k` | `--token <token>` | Bearer authentication token |
-| | | `--header <key:value>` | Custom header (can be used multiple times) |
-| `-y` | `--yes` | Skip confirmation prompt |
-
-**Examples:**
-
-```bash
-# GitHub MCP server (stdio)
-xagent mcp --add github -t stdio -c "npx" --args "-y,@modelcontextprotocol/server-github"
-
-# Filesystem MCP server (stdio)
-xagent mcp --add filesystem -t stdio -c "npx" --args "-y,@modelcontextprotocol/server-filesystem,/path/to/dir"
-
-# Custom HTTP server with auth
-xagent mcp --add custom -t http -u "https://localhost:3000/mcp" -k "bearer-token"
-
-# Custom headers
-xagent mcp --add custom -t http -u "https://example.com/mcp" --header "X-Custom-Header:value"
-
-# Skip confirmation
-xagent mcp --add github -t stdio -c "npx" --args "-y,@modelcontextprotocol/server-github" -y
-```
-
-**Transport Types:**
-
-- **stdio**: Spawns the MCP server as a subprocess. Used for local servers like `@modelcontextprotocol/server-github`, `@modelcontextprotocol/server-filesystem`.
-- **http**: Streamable HTTP transport. Used for remote MCP servers.
-
-**Complete Interactive Flow Example:**
+MCP tools are automatically registered with the ToolRegistry and available to agents. MCP tool names use a suffix pattern to avoid conflicts:
 
 ```
-> /mcp add
-? Enter MCP server name: github
-? Select transport type: Stdio (stdin/stdout)
-? Enter command (for stdio transport): npx
-? Enter arguments (comma-separated, for stdio transport): -y, @modelcontextprotocol/server-github
-✅ MCP server 'github' added and connected successfully
+{original_name}_mcp{server_number}
 ```
 
-**For HTTP/SSE Transport:**
+For example: `github__create_issue_mcp0`
 
-```
-> /mcp add
-? Enter MCP server name: custom-api
-? Select transport type: HTTP (POST)
-? Enter server URL (for HTTP/SSE/HTTP transport): https://api.example.com/mcp
-? Enter authentication token (optional):
-? Enter custom headers as JSON (optional): {"X-Custom-Header": "value"}
-✅ MCP server 'custom-api' added and connected successfully
-```
+## Remote Mode MCP Sync
 
-#### Manual Configuration
+When using Remote Mode (OAuth authentication), MCP tools are synchronized to the remote server:
 
-Edit `~/.xagent/settings.json`:
-
-```json
-{
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "transport": "stdio"
-    }
-  }
-}
-```
-
-Restart your session after editing.
-
-### Managing MCP Servers
-
-```bash
-# List all configured MCP servers
-xagent mcp --list
-
-# Remove an MCP server
-xagent mcp --remove <name>
-```
-
----
+1. MCP server connects and discovers tools
+2. Tool definitions are sent to remote server
+3. Remote LLM can call MCP tools through the remote client
+4. Tool execution results are synced back
 
 ## Workflow System
 
@@ -223,69 +117,66 @@ xagent workflow --list
 xagent workflow --remove <workflow-id>
 ```
 
----
+## SKILL System
 
-## Skill Integration
+### What are SKILLs?
 
-### What are Skills?
+SKILLs are reusable task modules that can be composed to create complex automation flows. SKILLs are invoked through the `InvokeSkill` tool.
 
-Skills are reusable task modules that extend xAgent's capabilities. Each skill is defined by a `SKILL.md` file and can be invoked during conversations.
+### SKILL Structure
 
-### Installing Skills
-
-xAgent supports installing skills from various sources:
-
-```bash
-# Install from local directory
-xagent skill --add ./my-skill
-
-# Install from GitHub repository
-xagent skill --add owner/repo
-
-# Install from GitHub URL
-xagent skill --add https://github.com/owner/repo
-
-# Install from specific path in repo
-xagent skill --add https://github.com/owner/repo/tree/main/skills/my-skill
-
-# Install skill with @ syntax
-xagent skill --add owner/repo@skill-name
-
-# Install from direct SKILL.md URL
-xagent skill --add https://example.com/skill.md
+```typescript
+interface SkillConfig {
+  id: string;
+  name: string;
+  description: string;
+  parameters: Record<string, SkillParameter>;
+  execute: (input: Record<string, unknown>) => Promise<SkillResult>;
+}
 ```
 
-### Managing Skills
+### Available Skills
 
-```bash
-# List all installed skills
-xagent skill --list
+xAgent includes several built-in skills:
 
-# Remove a user-installed skill
-xagent skill --remove <skill-name>
-```
-
-**Note:** Built-in skills `find-skills` cannot be removed.
+| Skill | Category | Description |
+|-------|----------|-------------|
+| docx | Document Processing | Create and edit Word documents |
+| pptx | Document Processing | Create PowerPoint presentations |
+| xlsx | Document Processing | Create and edit Excel spreadsheets |
+| pdf | Document Processing | PDF processing and manipulation |
+| mcp-builder | Development | Build custom MCP servers |
+| skill-creator | Development | Create new skills |
+| webapp-testing | Testing | Web application testing |
+| frontend-design | Design | Frontend design and implementation |
+| theme-factory | Design | Color theme generation |
+| algorithmic-art | Creative | Generate algorithmic art |
 
 ### Invoking Skills
 
 Skills are invoked using the `InvokeSkill` tool:
 
 ```
-InvokeSkill(skillId="docx", taskDescription="Create a document with title 'Report'")
+InvokeSkill(skillId="docx", taskDescription="Create a document with title 'Report' and content 'Hello World'")
 ```
 
-### Configuring Skill Paths
+## Skill System Files
 
-By default, user skills are stored in `~/.xagent/skills`. You can customize this path in your settings(`~/.xagent/settings.json`):
+Skills are defined in the `skills/` directory with the following structure:
 
-```json
-{
-  "userSkillsPath": "/path/to/your/skills"
-}
 ```
-
----
+skills/
+├── skills/
+│   ├── {skill-name}/
+│   │   ├── SKILL.md          # Skill definition
+│   │   ├── LICENSE.txt
+│   │   └── scripts/          # Implementation scripts
+│   └── ...
+├── spec/
+│   └── agent-skills-spec.md  # Skill specification
+└── template/
+    └── SKILL.md              # Skill template
+```
 
 ## Best Practices
 
@@ -293,8 +184,7 @@ By default, user skills are stored in `~/.xagent/skills`. You can customize this
 2. **Versioning**: Use specific versions for reproducibility
 3. **Testing**: Test workflows and skills in a safe environment first
 4. **Documentation**: Document custom SKILLs and workflows
-
----
+5. **Skill Selection**: Use InvokeSkill tool for specialized tasks
 
 ## Related Documentation
 

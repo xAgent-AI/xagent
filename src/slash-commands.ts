@@ -1,10 +1,8 @@
-import { select, confirm, text } from '@clack/prompts';
+import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
-import fs from 'fs/promises';
-import path from 'path';
-import { ExecutionMode, ChatMessage, InputType, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
-import { fetchDefaultModels } from './ai-client/providers/remote.js';
+import { ExecutionMode, ChatMessage, InputType, ToolCall, Checkpoint, AgentConfig, CompressionConfig, AuthType } from './types.js';
+import { AIClient, Message, detectThinkingKeywords, getThinkingTokens } from './ai-client.js';
 import { getToolRegistry } from './tools.js';
 import { getAgentManager } from './agents.js';
 import { getMemoryManager, MemoryFile } from './memory.js';
@@ -12,15 +10,11 @@ import { getMCPManager, MCPServer } from './mcp.js';
 import { getCheckpointManager } from './checkpoint.js';
 import { getConfigManager, ConfigManager } from './config.js';
 import { getLogger } from './logger.js';
-import {
-  getContextCompressor,
-  ContextCompressor,
-  CompressionResult,
-} from './context-compressor.js';
+import { getContextCompressor, ContextCompressor, CompressionResult } from './context-compressor.js';
 import { getConversationManager, ConversationManager } from './conversation.js';
 import { icons, colors } from './theme.js';
-import { ensureTtySane } from './terminal.js';
-import { AuthService, selectAuthType, ThirdPartyProvider, THIRD_PARTY_PROVIDERS, VLM_PROVIDERS, VLMProviderInfo } from './auth.js';
+import { SystemPromptGenerator } from './system-prompt-generator.js';
+import { AuthService } from './auth.js';
 
 const logger = getLogger();
 
@@ -35,8 +29,6 @@ export class SlashCommandHandler {
   private conversationHistory: ChatMessage[] = [];
   private onClearCallback: (() => void) | null = null;
   private onSystemPromptUpdate: (() => Promise<void>) | null = null;
-  private onConfigUpdate: (() => void) | null = null;
-  private remoteAIClient: any = null; // Reference to InteractiveSession's remoteAIClient
 
   constructor() {
     this.configManager = getConfigManager(process.cwd());
@@ -46,13 +38,6 @@ export class SlashCommandHandler {
     this.checkpointManager = getCheckpointManager(process.cwd());
     this.contextCompressor = getContextCompressor();
     this.conversationManager = getConversationManager();
-  }
-
-  /**
-   * Set remote AI client reference (called from InteractiveSession)
-   */
-  setRemoteAIClient(client: any): void {
-    this.remoteAIClient = client;
   }
 
   /**
@@ -67,13 +52,6 @@ export class SlashCommandHandler {
    */
   setSystemPromptUpdateCallback(callback: () => Promise<void>): void {
     this.onSystemPromptUpdate = callback;
-  }
-
-  /**
-   * Set callback for config update (called after /auth changes config)
-   */
-  setConfigUpdateCallback(callback: () => void): void {
-    this.onConfigUpdate = callback;
   }
 
   /**
@@ -122,11 +100,8 @@ export class SlashCommandHandler {
       case 'mcp':
         await this.handleMcp(args);
         break;
-      case 'skill':
-        await this.handleSkill(args);
-        break;
-      case 'model':
-        await this.handleModel();
+      case 'vlm':
+        await this.handleVlm();
         break;
       case 'memory':
         await this.handleMemory(args);
@@ -152,15 +127,9 @@ export class SlashCommandHandler {
       case 'compress':
         await this.handleCompress(args);
         break;
-      case 'update':
-        await this.handleUpdate();
-        break;
       default:
         logger.warn(`Unknown command: /${command}`, 'Type /help for available commands');
     }
-
-    // Ensure stdin is in raw mode for proper input handling after @clack/prompts usage
-    ensureTtySane();
 
     return true;
   }
@@ -169,29 +138,18 @@ export class SlashCommandHandler {
     const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80));
 
     console.log('');
-    console.log(
-      colors.primaryBright('╔════════════════════════════════════════════════════════════╗')
-    );
+    console.log(colors.primaryBright('╔════════════════════════════════════════════════════════════╗'));
     console.log(colors.primaryBright('║') + ' '.repeat(56) + colors.primaryBright('║'));
-    console.log(
-      ' '.repeat(14) +
-        colors.gradient('📚 XAGENT CLI Help') +
-        ' '.repeat(31) +
-        colors.primaryBright('║')
-    );
+    console.log(' '.repeat(14) + colors.gradient('📚 XAGENT CLI Help') + ' '.repeat(31) + colors.primaryBright('║'));
     console.log(colors.primaryBright('║') + ' '.repeat(56) + colors.primaryBright('║'));
-    console.log(
-      colors.primaryBright('╚════════════════════════════════════════════════════════════╝')
-    );
+    console.log(colors.primaryBright('╚════════════════════════════════════════════════════════════╝'));
     console.log('');
 
     // Shortcuts
     console.log(colors.accent('Shortcuts'));
     console.log(colors.border(separator));
     console.log('');
-    console.log(
-      colors.textDim(`  ${colors.accent('!')}  - ${colors.textMuted('Enter bash mode')}`)
-    );
+    console.log(colors.textDim(`  ${colors.accent('!')}  - ${colors.textMuted('Enter bash mode')}`));
     console.log(colors.textDim(`  ${colors.accent('/')}  - ${colors.textMuted('Commands')}`));
     console.log(colors.textDim(`  ${colors.accent('@')}  - ${colors.textMuted('File paths')}`));
     console.log('');
@@ -202,20 +160,20 @@ export class SlashCommandHandler {
         cmd: '/help [command]',
         desc: 'Show help information',
         detail: 'View all available commands or detailed description of specific command',
-        example: '/help\n/help mode',
+        example: '/help\n/help mode'
       },
       {
         cmd: '/clear',
         desc: 'Clear conversation history',
         detail: 'Clear all conversation records of current session, start new conversation',
-        example: '/clear',
+        example: '/clear'
       },
       {
         cmd: '/exit',
         desc: 'Exit program',
         detail: 'Safely exit XAGENT CLI',
-        example: '/exit',
-      },
+        example: '/exit'
+      }
     ]);
 
     // Project Management
@@ -223,16 +181,15 @@ export class SlashCommandHandler {
       {
         cmd: '/init',
         desc: 'Initialize project context',
-        detail:
-          'Create XAGENT.md file in current directory, used to store project context information',
-        example: '/init',
+        detail: 'Create XAGENT.md file in current directory, used to store project context information',
+        example: '/init'
       },
       {
-        cmd: '/memory [show|clear]',
+        cmd: '/memory [show|add|refresh]',
         desc: 'Manage project memory',
-        detail: 'View or clear memory (global, current, all, or filename)',
-        example: '/memory show\n/memory clear\n/memory clear global\n/memory clear all',
-      },
+        detail: 'View, add or refresh project memory information',
+        example: '/memory show\n/memory add "Project uses TypeScript"'
+      }
     ]);
 
     // Authentication & Configuration
@@ -241,7 +198,7 @@ export class SlashCommandHandler {
         cmd: '/auth',
         desc: 'Configure authentication information',
         detail: 'Change or view current authentication configuration',
-        example: '/auth',
+        example: '/auth'
       },
       {
         cmd: '/mode [mode]',
@@ -253,14 +210,14 @@ export class SlashCommandHandler {
           'accept_edits - Automatically accept edit operations',
           'plan - Plan before executing',
           'default - Safe execution, requires confirmation',
-          'smart - Smart approval (recommended)',
-        ],
+          'smart - Smart approval (recommended)'
+        ]
       },
       {
         cmd: '/think [on|off|display]',
         desc: 'Control thinking mode',
         detail: 'Enable/disable AI thinking process display',
-        example: '/think on\n/think off\n/think display compact',
+        example: '/think on\n/think off\n/think display compact'
       },
       // {
       //   cmd: '/language [zh|en]',
@@ -272,8 +229,8 @@ export class SlashCommandHandler {
         cmd: '/theme',
         desc: 'Switch theme',
         detail: 'Change UI theme style',
-        example: '/theme',
-      },
+        example: '/theme'
+      }
     ]);
 
     // Feature Extensions
@@ -282,19 +239,13 @@ export class SlashCommandHandler {
         cmd: '/agents [list|online|install|remove]',
         desc: 'Manage sub-agents',
         detail: 'View, install or remove specialized AI sub-agents',
-        example: '/agents list\n/agents online\n/agents install explore-agent',
+        example: '/agents list\n/agents online\n/agents install explore-agent'
       },
       {
         cmd: '/mcp [list|add|remove|refresh]',
         desc: 'Manage MCP servers',
         detail: 'Manage Model Context Protocol servers',
-        example: '/mcp list\n/mcp add server-name',
-      },
-      {
-        cmd: '/skill [list|add|remove]',
-        desc: 'Manage skills',
-        detail: 'Install, list, or remove skills from ~/.xagent/skills',
-        example: '/skill list\n/skill add ./my-skill\n/skill add owner/repo\n/skill remove my-skill'
+        example: '/mcp list\n/mcp add server-name'
       },
       {
         cmd: '/vlm',
@@ -303,17 +254,11 @@ export class SlashCommandHandler {
         example: '/vlm'
       },
       {
-        cmd: '/model',
-        desc: 'Configure LLM/VLM models',
-        detail: 'Configure or switch LLM and VLM models for remote mode',
-        example: '/model',
-      },
-      {
         cmd: '/tools [verbose|simple]',
         desc: 'Manage tool display',
         detail: 'View available tools or switch tool call display mode',
-        example: '/tools\n/tools verbose\n/tools simple',
-      },
+        example: '/tools\n/tools verbose\n/tools simple'
+      }
     ]);
 
     // Advanced Features
@@ -322,33 +267,26 @@ export class SlashCommandHandler {
         cmd: '/restore',
         desc: 'Restore from checkpoint',
         detail: 'Restore conversation state from historical checkpoints',
-        example: '/restore',
+        example: '/restore'
       },
       {
         cmd: '/compress [on|off|max_message|max_token|exec]',
         desc: 'Manage context compression',
         detail: 'Configure compression settings or execute compression manually',
-        example:
-          '/compress\n/compress exec\n/compress on\n/compress max_message 50\n/compress max_token 1500000',
+        example: '/compress\n/compress exec\n/compress on\n/compress max_message 50\n/compress max_token 1500000'
       },
       {
         cmd: '/stats',
         desc: 'Show session statistics',
         detail: 'View statistics information of current session',
-        example: '/stats',
+        example: '/stats'
       },
       {
         cmd: '/about',
         desc: 'Show version information',
         detail: 'View version and related information of XAGENT CLI',
-        example: '/about',
-      },
-      {
-        cmd: '/update',
-        desc: 'Check for updates',
-        detail: 'Check for new versions and update xAgent CLI',
-        example: '/update',
-      },
+        example: '/about'
+      }
     ]);
 
     // Keyboard Shortcuts
@@ -362,16 +300,13 @@ export class SlashCommandHandler {
     console.log('');
   }
 
-  private showHelpCategory(
-    title: string,
-    commands: Array<{
-      cmd: string;
-      desc: string;
-      detail: string;
-      example: string;
-      modes?: string[];
-    }>
-  ): void {
+  private showHelpCategory(title: string, commands: Array<{
+    cmd: string;
+    desc: string;
+    detail: string;
+    example: string;
+    modes?: string[];
+  }>): void {
     const separator = icons.separator.repeat(Math.min(60, process.stdout.columns || 80));
 
     console.log('');
@@ -380,20 +315,20 @@ export class SlashCommandHandler {
     console.log(colors.border(separator));
     console.log('');
 
-    commands.forEach((cmd) => {
+    commands.forEach(cmd => {
       console.log(colors.primaryBright(`  ${cmd.cmd}`));
       console.log(colors.textDim(`    ${cmd.desc}`));
       console.log(colors.textMuted(`    ${cmd.detail}`));
 
       if (cmd.modes) {
         console.log(colors.textDim(`    Available modes:`));
-        cmd.modes.forEach((mode) => {
+        cmd.modes.forEach(mode => {
           console.log(colors.textDim(`      • ${mode}`));
         });
       }
 
       console.log(colors.accent(`    Examples:`));
-      cmd.example.split('\n').forEach((ex) => {
+      cmd.example.split('\n').forEach(ex => {
         console.log(colors.codeText(`      ${ex}`));
       });
       console.log('');
@@ -415,10 +350,10 @@ export class SlashCommandHandler {
     // Clear local conversation history
     this.conversationHistory = [];
 
-    // Clear current conversation in ConversationManager
+    // Clear ConversationManager 中的当前对话
     await this.conversationManager.clearCurrentConversation();
 
-    // Call callback to notify InteractiveSession to clear conversation
+    // Call callback to notify InteractiveSession 清空对话
     if (this.onClearCallback) {
       this.onClearCallback();
     }
@@ -434,146 +369,39 @@ export class SlashCommandHandler {
   private async handleAuth(): Promise<void> {
     logger.section('Authentication Management');
 
-    // Show current authentication configuration
-    const authConfig = this.configManager.getAuthConfig();
-    const isRemote = authConfig.type === AuthType.OAUTH_XAGENT;
-    const currentType = isRemote ? 'xAgent (Remote)' : 'Third-party API (Local)';
-
-    console.log(chalk.cyan('\n📋 Current Authentication Configuration:\n'));
-    console.log(`  ${chalk.yellow('Mode:')} ${currentType}`);
-
-    if (isRemote) {
-      // Remote mode: show remote_llmModelName and remote_vlmModelName
-      const llmModel = authConfig.remote_llmModelName || 'Not set';
-      const vlmModel = authConfig.remote_vlmModelName || 'Not set';
-      console.log(`  ${chalk.yellow('LLM Model:')} ${llmModel}`);
-      console.log(`  ${chalk.yellow('VLM Model:')} ${vlmModel}`);
-    } else {
-      // Local mode: show modelName (LLM) and guiSubagentModel (VLM)
-      const llmModel = authConfig.modelName || 'Not set';
-      const vlmModel = this.configManager.get('guiSubagentModel') || 'Not set';
-      console.log(`  ${chalk.yellow('LLM Model:')} ${llmModel}`);
-      console.log(`  ${chalk.yellow('VLM Model:')} ${vlmModel}`);
-    }
-    console.log('');
-
-    const action = await select({
-      message: 'Select action:',
-      options: [
-        { value: 'switch', label: 'Switch authentication method' },
-        { value: 'back', label: 'Back' },
-      ],
-    });
+    const { action } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'action',
+        message: 'Select action:',
+        choices: [
+          { name: 'Change authentication method', value: 'change' },
+          { name: 'Show current auth config', value: 'show' },
+          { name: 'Back', value: 'back' }
+        ]
+      }
+    ]);
 
     if (action === 'back') {
       return;
     }
 
-    if (action === 'switch') {
-      // Use the same selection UI as initial setup
-      const confirmSwitch = await confirm({
-        message: `Switch from "${currentType}" to another authentication method?`,
-      });
-
-      if (confirmSwitch === false || confirmSwitch === undefined) {
-        return;
-      }
-
-      // Select authentication type (same as initial setup)
-      const authType = await selectAuthType();
-
-      if (authType === AuthType.OAUTH_XAGENT) {
-        // Switch to xAgent (Remote mode)
-        const authService = new AuthService({
-          type: AuthType.OAUTH_XAGENT,
-          apiKey: '',
-          baseUrl: '',
-          xagentApiBaseUrl: authConfig.xagentApiBaseUrl,
-        });
-
-        const success = await authService.authenticate();
-        if (success) {
-          const newAuthConfig = authService.getAuthConfig();
-          this.configManager.setAuthConfig({
-            selectedAuthType: newAuthConfig.type,
-            apiKey: newAuthConfig.apiKey,
-            refreshToken: newAuthConfig.refreshToken,
-            baseUrl: newAuthConfig.baseUrl,
-            modelName: '',
-            xagentApiBaseUrl: newAuthConfig.xagentApiBaseUrl,
-            guiSubagentModel: '',
-            guiSubagentBaseUrl: 'https://www.xagent-colife.net/v3',
-            guiSubagentApiKey: '',
-          });
-          // Set default remote model settings if not already set
-          // Fetch default models from /models/default endpoint
-          const webBaseUrl = newAuthConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-          let defaultLlmName = '';
-          let defaultVlmName = '';
-
-          try {
-            console.log(chalk.cyan('\n📊 Fetching default models from remote server...'));
-            const defaults = await fetchDefaultModels(newAuthConfig.apiKey || '', webBaseUrl);
-
-            if (defaults.llm?.name) {
-              defaultLlmName = defaults.llm.name;
-              console.log(chalk.cyan(`   LLM Model: ${defaults.llm.name}`));
-            }
-            if (defaults.vlm?.name) {
-              defaultVlmName = defaults.vlm.name;
-              console.log(chalk.cyan(`   VLM Model: ${defaults.vlm.name}`));
-            }
-          } catch (error: any) {
-            console.log(chalk.yellow(`   ⚠️  Failed to fetch default models: ${error.message}`));
-            console.log(chalk.yellow('   ⚠️  Use /model command to select models manually.'));
-          }
-
-          console.log('');
-
-          this.configManager.set('remote_llmModelName', defaultLlmName);
-          this.configManager.set('remote_vlmModelName', defaultVlmName);
-          this.configManager.save('global');
-
-          // Notify InteractiveSession to update aiClient config
-          if (this.onConfigUpdate) {
-            this.onConfigUpdate();
-          }
-
-          console.log(chalk.green('\n✅ Authentication switched to xAgent (Remote mode)!'));
-          // Removed: logging partial token for security
+    if (action === 'show') {
+      const authConfig = this.configManager.getAuthConfig();
+      logger.subsection('Current Authentication Configuration');
+      console.log(JSON.stringify(authConfig, null, 2));
+    } else if (action === 'change') {
+      const { selectAuthType } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'selectAuthType',
+          message: 'Do you want to change authentication type?',
+          default: false
         }
-      } else {
-        // Switch to Third-party API (Local mode)
-        const authService = new AuthService({
-          type: AuthType.OPENAI_COMPATIBLE,
-          apiKey: '',
-          baseUrl: '',
-          modelName: '',
-        });
+      ]);
 
-        const success = await authService.authenticate();
-        if (success) {
-          const newAuthConfig = authService.getAuthConfig();
-          this.configManager.setAuthConfig({
-            selectedAuthType: newAuthConfig.type,
-            apiKey: newAuthConfig.apiKey,
-            baseUrl: newAuthConfig.baseUrl,
-            modelName: newAuthConfig.modelName,
-            xagentApiBaseUrl: '',
-            refreshToken: '',
-            guiSubagentModel: '',
-            guiSubagentBaseUrl: '',
-            guiSubagentApiKey: '',
-          });
-          this.configManager.save('global');
-
-          // Notify InteractiveSession to update aiClient config
-          if (this.onConfigUpdate) {
-            this.onConfigUpdate();
-          }
-
-          console.log(chalk.green('\n✅ Authentication switched to Third-party API (Local mode)!'));
-        }
+      if (selectAuthType) {
+        logger.warn('Please restart xAgent CLI and run /auth again', 'Authentication changes require restart');
       }
     }
   }
@@ -586,22 +414,27 @@ export class SlashCommandHandler {
 
     if (currentAuthType !== AuthType.OAUTH_XAGENT) {
       console.log(chalk.yellow('\n⚠️  Current authentication type is not OAuth xAgent.'));
-      const proceed = await confirm({
-        message: 'Do you want to switch to OAuth xAgent authentication?',
-      });
+      const { proceed } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'proceed',
+          message: 'Do you want to switch to OAuth xAgent authentication?',
+          default: false
+        }
+      ]);
 
-      if (proceed === false || proceed === undefined) {
+      if (!proceed) {
         return;
       }
 
       // Switch to OAuth xAgent
-      this.configManager.setAuthConfig({
+      await this.configManager.setAuthConfig({
         selectedAuthType: AuthType.OAUTH_XAGENT,
         apiKey: '',
         refreshToken: '',
-        baseUrl: '',
+        baseUrl: ''
       });
-      this.configManager.save('global');
+      await this.configManager.save('global');
       console.log(chalk.green('✅ Switched to OAuth xAgent authentication.'));
     }
 
@@ -609,20 +442,17 @@ export class SlashCommandHandler {
     console.log(chalk.gray('   A browser will open for you to complete authentication.\n'));
 
     try {
-      // Get xagentApiBaseUrl from config (respects XAGENT_BASE_URL env var)
-      const config = this.configManager.getAuthConfig();
-
       const authService = new AuthService({
         type: AuthType.OAUTH_XAGENT,
         apiKey: '',
         baseUrl: '',
-        refreshToken: '',
-        xagentApiBaseUrl: config.xagentApiBaseUrl,
+        refreshToken: ''
       });
 
       const success = await authService.authenticate();
 
       if (success) {
+        const newConfig = this.configManager.getAuthConfig();
         console.log(chalk.green('\n✅ Login successful!'));
         console.log(chalk.cyan(`   Token saved to: ~/.xagent/settings.json`));
         console.log(chalk.gray('   You can now use xAgent CLI with remote AI services.\n'));
@@ -634,389 +464,94 @@ export class SlashCommandHandler {
     }
   }
 
-  /**
-   * Handle /model command - Configure LLM/VLM models
-   * Supports both remote mode (xAgent) and local mode (third-party API)
-   */
-  private async handleModel(): Promise<void> {
-    const authConfig = this.configManager.getAuthConfig();
+  private async handleVlm(): Promise<void> {
+    logger.section('VLM Configuration for GUI Agent');
 
-    // Determine mode and show appropriate UI
-    if (authConfig.type === AuthType.OAUTH_XAGENT) {
-      // Remote mode - use backend models
-      await this.handleRemoteModel();
-    } else {
-      // Local mode - configure third-party API directly
-      await this.handleLocalModel();
-    }
-  }
-
-  /**
-   * Handle /model command for remote mode - Configure models from backend
-   */
-  private async handleRemoteModel(): Promise<void> {
-    const authConfig = this.configManager.getAuthConfig();
-
-    // Auto-fetch default models if not set
-    let currentLlm = authConfig.remote_llmModelName;
-    let currentVlm = authConfig.remote_vlmModelName;
-
-    if (!currentLlm || !currentVlm) {
-      console.log(chalk.cyan('\n📊 Fetching default models from remote server...'));
-
-      // Try to use RemoteAIClient first, otherwise fetch directly
-      let defaults: { llm?: { name: string; displayName?: string }; vlm?: { name: string; displayName?: string } } | null = null;
-
-      if (this.remoteAIClient) {
-        try {
-          defaults = await this.remoteAIClient.getDefaultModels();
-        } catch (error: any) {
-          console.log(chalk.yellow(`   ⚠️  Failed to get defaults from RemoteAIClient: ${error.message}`));
-        }
-      }
-
-      // If RemoteAIClient failed or not available, fetch directly
-      if (!defaults) {
-        try {
-          const webBaseUrl = authConfig.xagentApiBaseUrl || 'https://www.xagent-colife.net';
-          defaults = await fetchDefaultModels(authConfig.apiKey || '', webBaseUrl);
-        } catch (error: any) {
-          console.log(chalk.yellow(`   ⚠️  Failed to fetch default models: ${error.message}`));
-        }
-      }
-
-      if (defaults) {
-        if (!currentLlm && defaults.llm?.name) {
-          currentLlm = defaults.llm.name;
-          this.configManager.set('remote_llmModelName', currentLlm);
-          console.log(chalk.cyan(`   Default LLM: ${defaults.llm.displayName || currentLlm}`));
-        }
-        if (!currentVlm && defaults.vlm?.name) {
-          currentVlm = defaults.vlm.name;
-          this.configManager.set('remote_vlmModelName', currentVlm);
-          console.log(chalk.cyan(`   Default VLM: ${defaults.vlm.displayName || currentVlm}`));
-        }
-        this.configManager.save('global');
-      } else {
-        console.log(chalk.yellow('   ⚠️  Use /auth to configure remote mode first.'));
-        return;
-      }
-    }
-
-    // Get RemoteAIClient instance (from InteractiveSession) for model selection
-    const remoteClient = this.remoteAIClient;
-
-    // Display current configuration
-    console.log(chalk.cyan('\n📊 Current Model Configuration:\n'));
-    console.log(`  ${chalk.yellow('LLM Model:')} ${currentLlm || 'Not set'}`);
-    console.log(`  ${chalk.yellow('VLM Model:')} ${currentVlm || 'Not set'}`);
-    console.log('');
-
-    // Main menu
-    const action = await select({
-      message: 'Select action:',
-      options: [
-        { value: 'llm', label: 'Change LLM model' },
-        { value: 'vlm', label: 'Change VLM model' },
-        { value: 'back', label: 'Back' },
-      ],
-    }) as string | symbol;
-
-    if (action === 'back' || typeof action === 'symbol') {
-      return;
-    }
-
-    // Restore stdin raw mode after @clack/prompts interaction
-    ensureTtySane();
-
-    // Get and display provider list
-    try {
-      const models = await remoteClient.getRemoteModels();
-      const modelList = action === 'llm' ? models.llm : models.vlm;
-
-      if (modelList.length === 0) {
-        console.log(chalk.yellow('\n⚠️  No models available.'));
-        return;
-      }
-
-      // Build choice list
-      const choices = modelList.map((m: any) => ({
-        name: `${m.displayName} (${m.name})`,
-        value: m.name
-      }));
-
-      const selectedModel = await select({
-        message: action === 'llm' ? 'Select LLM Model:' : 'Select VLM Model:',
-        options: choices
-      });
-
-      if (typeof selectedModel !== 'string') {
-        return;
-      }
-
-      const configKey = action === 'llm' ? 'remote_llmModelName' : 'remote_vlmModelName';
-      this.configManager.set(configKey, selectedModel);
-      this.configManager.save('global');
-
-      // Clear conversation history to avoid tool call ID conflicts between providers
-      if (this.onClearCallback) {
-        this.onClearCallback();
-        console.log(
-          chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between models.')
-        );
-      }
-
-      // Notify InteractiveSession to update aiClient config
-      if (this.onConfigUpdate) {
-        this.onConfigUpdate();
-      }
-
-      console.log(chalk.green('\n✅ Model updated successfully!'));
-      console.log(`   ${action === 'llm' ? 'LLM' : 'VLM'}: ${selectedModel}`);
-    } catch (error: any) {
-      console.log(chalk.red(`\n❌ Failed to get models: ${error.message}`));
-    }
-  }
-
-  /**
-   * Handle /model command for local mode - Configure third-party API directly
-   * Reuses code from initial setup flow (authenticateWithOpenAICompatible and configureAndValidateVLM)
-   */
-  private async handleLocalModel(): Promise<void> {
-    // Display current configuration
-    const currentLlmModel = this.configManager.get('modelName') || this.configManager.getAuthConfig().modelName;
-    const currentVlmModel = this.configManager.get('guiSubagentModel');
-
-    console.log(chalk.cyan('\n📊 Current Local Model Configuration:\n'));
-    console.log(`  ${chalk.yellow('LLM Model:')} ${currentLlmModel || 'Not set'}`);
-    console.log(`  ${chalk.yellow('VLM Model:')} ${currentVlmModel || 'Not set'}`);
-    console.log('');
-
-    // Main menu - choose to configure LLM or VLM
-    const action = await select({
-      message: 'Select action:',
-      options: [
-        { value: 'llm', label: 'Change LLM (select provider and API)' },
-        { value: 'vlm', label: 'Change VLM (for GUI automation)' },
-        { value: 'back', label: 'Back' },
-      ],
-    }) as string | symbol;
-
-    if (action === 'back' || typeof action === 'symbol') {
-      return;
-    }
-
-    if (action === 'llm') {
-      await this.configureLocalLLM();
-    } else if (action === 'vlm') {
-      await this.configureLocalVLM();
-    }
-  }
-
-  /**
-   * Configure LLM for local mode - Reuses authenticateWithOpenAICompatible logic
-   */
-  private async configureLocalLLM(): Promise<void> {
-    // THIRD_PARTY_PROVIDERS already imported at top level
-    const provider = await select({
-      message: 'Select third-party model provider:',
-      options: THIRD_PARTY_PROVIDERS.map((p) => ({
-        value: p,
-        label: `${p.name} - ${p.description}`,
-      })),
-    }) as ThirdPartyProvider | symbol;
-
-    if (typeof provider === 'symbol') {
-      return;
-    }
-
-    const selectedProvider = provider;
-
-    let baseUrl = selectedProvider.baseUrl;
-    let modelName = selectedProvider.defaultModel;
-
-    if (selectedProvider.name === 'Custom') {
-      baseUrl = (await import('@clack/prompts').then(m =>
-        m.text({
-          message: 'Enter API Base URL:',
-          defaultValue: 'https://api.openai.com/v1',
-          validate: (value: string | undefined) => {
-            if (!value || value.trim().length === 0) {
-              return 'Base URL cannot be empty';
-            }
-            return undefined;
-          },
-        })
-      )) as string;
-
-      modelName = (await import('@clack/prompts').then(m =>
-        m.text({
-          message: 'Enter model name:',
-          defaultValue: 'gpt-4',
-          validate: (value: string | undefined) => {
-            if (!value || value.trim().length === 0) {
-              return 'Model name cannot be empty';
-            }
-            return undefined;
-          },
-        })
-      )) as string;
-
-      baseUrl = baseUrl.trim();
-      modelName = modelName.trim();
-    } else {
-      console.log(chalk.cyan(`\nSelected: ${selectedProvider.name}`));
-      console.log(chalk.cyan(`API URL: ${baseUrl}`));
-
-      if (selectedProvider.models && selectedProvider.models.length > 0) {
-        console.log(chalk.cyan(`Available models: ${selectedProvider.models.join(', ')}`));
-
-        const selectedModel = await select({
-          message: 'Select model:',
-          options: selectedProvider.models.map((model) => ({
-            value: model,
-            label: model === selectedProvider.defaultModel ? `${model} (default)` : model,
-          })),
-        }) as string | symbol;
-
-        if (typeof selectedModel === 'symbol') {
-          return;
-        }
-
-        modelName = selectedModel as string;
-      } else {
-        console.log(chalk.cyan(`Default model: ${modelName}`));
-
-        const confirmModel = (await import('@clack/prompts').then(m =>
-          m.text({
-            message: `Enter model name (press Enter to use default value ${modelName}):`,
-            defaultValue: modelName,
-            validate: (value: string | undefined) => {
-              if (!value || value.trim().length === 0) {
-                return 'Model name cannot be empty';
-              }
-              return undefined;
-            },
-          })
-        )) as string;
-
-        modelName = confirmModel.trim();
-      }
-    }
-
-    const apiKey = (await import('@clack/prompts').then(m =>
-      m.password({
-      message: `Enter ${selectedProvider.name} API Key:`,
-      validate: (value: string | undefined) => {
-        if (!value || value.trim().length === 0) {
-          return 'API Key cannot be empty';
-        }
-        return undefined;
-      },
-      })
-    )) as string;
-
-    // Update config
-    this.configManager.set('baseUrl', baseUrl);
-    this.configManager.set('apiKey', apiKey.trim());
-    this.configManager.set('modelName', modelName);
-    this.configManager.save('global');
-
-    console.log(chalk.green('\n✅ LLM configuration updated successfully!'));
-    console.log(chalk.cyan(`   Provider: ${selectedProvider.name}`));
-    console.log(chalk.cyan(`   Model: ${modelName}`));
-    console.log(chalk.cyan(`   API URL: ${baseUrl}`));
-
-    // Clear conversation and notify config update
-    if (this.onClearCallback) {
-      this.onClearCallback();
-    }
-    if (this.onConfigUpdate) {
-      this.onConfigUpdate();
-    }
-  }
-
-  /**
-   * Configure VLM for local mode - Select provider and modelName (baseUrl from VLM_PROVIDERS)
-   */
-  private async configureLocalVLM(): Promise<void> {
-    // Get current VLM config
-    const currentModel = this.configManager.get('guiSubagentModel');
-    const currentBaseUrl = this.configManager.get('guiSubagentBaseUrl');
+    // Show current VLM config
+    const currentVlmConfig = {
+      model: this.configManager.get('guiSubagentModel'),
+      baseUrl: this.configManager.get('guiSubagentBaseUrl'),
+      apiKey: this.configManager.get('guiSubagentApiKey') ? '***' : ''
+    };
 
     console.log(chalk.cyan('\n📊 Current VLM Configuration:\n'));
-    console.log(`  ${chalk.yellow('Model:')} ${currentModel || 'Not set'}`);
-    console.log(`  ${chalk.yellow('Base URL:')} ${currentBaseUrl || 'Not set'}`);
-    console.log('');
+    console.log(`  Model: ${chalk.yellow(currentVlmConfig.model || 'Not configured')}`);
+    console.log(`  Base URL: ${chalk.yellow(currentVlmConfig.baseUrl || 'Not configured')}`);
+    console.log(`  API Key: ${chalk.yellow(currentVlmConfig.apiKey || 'Not configured')}`);
+    console.log();
 
-    // Step 1: Select VLM provider
-    const provider = await select({
-      message: 'Select VLM provider:',
-      options: VLM_PROVIDERS.map((p) => ({
-        value: p,
-        label: `${p.name} - ${p.defaultModel}`,
-      })),
-    }) as VLMProviderInfo | symbol;
+    const { action } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'action',
+        message: 'Select action:',
+        choices: [
+          { name: 'Configure VLM', value: 'configure' },
+          { name: 'Remove VLM configuration', value: 'remove' },
+          { name: 'Back', value: 'back' }
+        ]
+      }
+    ]);
 
-    // User cancelled
-    if (typeof provider === 'symbol') {
+    if (action === 'back') {
       return;
     }
 
-    const selectedProvider = provider;
-
-    // Step 2: Select model from provider's models list
-    const model = await select({
-      message: 'Select VLM Model:',
-      options: selectedProvider.models.map((m) => ({
-        value: m,
-        label: m,
-      })),
-    }) as string | symbol;
-
-    // User cancelled
-    if (typeof model === 'symbol') {
-      return;
-    }
-
-    // Step 3: Get API Key
-    const apiKey = (await text({
-      message: `Enter ${selectedProvider.name} API Key:`,
-      validate: (value: string | undefined) => {
-        if (!value || value.trim().length === 0) {
-          return 'API Key cannot be empty';
+    if (action === 'remove') {
+      const { confirm } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'confirm',
+          message: 'Are you sure you want to remove VLM configuration?',
+          default: false
         }
-        return undefined;
-      },
-    })) as string;
+      ]);
 
-    // Save configuration
-    this.configManager.set('guiSubagentModel', model);
-    this.configManager.set('guiSubagentBaseUrl', selectedProvider.baseUrl);
-    this.configManager.set('guiSubagentApiKey', apiKey);
-    this.configManager.save('global');
+      if (confirm) {
+        await this.configManager.set('guiSubagentModel', '');
+        await this.configManager.set('guiSubagentBaseUrl', '');
+        await this.configManager.set('guiSubagentApiKey', '');
+        await this.configManager.save('global');
+        console.log(chalk.green('✅ VLM configuration removed successfully!'));
+      }
+      return;
+    }
 
-    console.log(chalk.green('\n✅ VLM configuration updated successfully!'));
-    console.log(chalk.cyan(`   Provider: ${selectedProvider.name}`));
-    console.log(chalk.cyan(`   Model: ${model}`));
-    console.log(chalk.cyan(`   Base URL: ${selectedProvider.baseUrl}`));
+    if (action === 'configure') {
+      // Use AuthService to configure VLM
+      const authService = new AuthService({
+        type: 'openai_compatible' as any,
+        apiKey: '',
+        baseUrl: '',
+        modelName: ''
+      });
 
-    // Notify config update
-    if (this.onConfigUpdate) {
-      this.onConfigUpdate();
+      const vlmConfig = await authService.configureAndValidateVLM();
+
+      if (vlmConfig) {
+        // Save VLM configuration
+        await this.configManager.set('guiSubagentModel', vlmConfig.model);
+        await this.configManager.set('guiSubagentBaseUrl', vlmConfig.baseUrl);
+        await this.configManager.set('guiSubagentApiKey', vlmConfig.apiKey);
+        await this.configManager.save('global');
+        console.log(chalk.green('✅ VLM configuration saved successfully!'));
+        console.log(chalk.cyan(`   Model: ${vlmConfig.model}`));
+        console.log(chalk.cyan(`   Base URL: ${vlmConfig.baseUrl}`));
+      } else {
+        console.log(chalk.red('❌ VLM configuration failed or cancelled'));
+      }
     }
   }
 
   private async handleMode(args: string[]): Promise<void> {
     const modes = Object.values(ExecutionMode);
-    const currentMode =
-      this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
+    const currentMode = this.configManager.getApprovalMode() || this.configManager.getExecutionMode();
 
     if (args.length > 0) {
       const newMode = args[0].toLowerCase();
       if (modes.includes(newMode as ExecutionMode)) {
         this.configManager.setApprovalMode(newMode as ExecutionMode);
-        this.configManager.save('global');
+        await this.configManager.save('global');
         console.log(chalk.green(`✅ Approval mode changed to: ${newMode}`));
       } else {
         console.log(chalk.red(`❌ Invalid mode: ${newMode}`));
@@ -1031,7 +566,7 @@ export class SlashCommandHandler {
         { mode: 'accept_edits', desc: 'Accept all edits automatically' },
         { mode: 'plan', desc: 'Plan before executing' },
         { mode: 'default', desc: 'Safe execution with confirmations' },
-        { mode: 'smart', desc: 'Smart approval with intelligent security checks' },
+        { mode: 'smart', desc: 'Smart approval with intelligent security checks' }
       ];
 
       descriptions.forEach(({ mode, desc }) => {
@@ -1053,12 +588,12 @@ export class SlashCommandHandler {
       if (action === 'on' || action === 'true' || action === '1') {
         thinkingConfig.enabled = true;
         this.configManager.setThinkingConfig(thinkingConfig);
-        this.configManager.save('global');
+        await this.configManager.save('global');
         console.log(chalk.green('✅ Thinking mode enabled'));
       } else if (action === 'off' || action === 'false' || action === '0') {
         thinkingConfig.enabled = false;
         this.configManager.setThinkingConfig(thinkingConfig);
-        this.configManager.save('global');
+        await this.configManager.save('global');
         console.log(chalk.green('✅ Thinking mode disabled'));
       } else if (action === 'display' && args[1]) {
         const displayMode = args[1].toLowerCase();
@@ -1066,9 +601,9 @@ export class SlashCommandHandler {
 
         if (validModes.includes(displayMode)) {
           thinkingConfig.displayMode = displayMode as 'full' | 'compact' | 'indicator';
-          thinkingConfig.enabled = true;
+          thinkingConfig.enabled = true; // Auto-enable when setting display mode
           this.configManager.setThinkingConfig(thinkingConfig);
-          this.configManager.save('global');
+          await this.configManager.save('global');
           console.log(chalk.green(`✅ Thinking display mode set to: ${displayMode}`));
         } else {
           console.log(chalk.red(`❌ Invalid display mode: ${displayMode}`));
@@ -1080,9 +615,7 @@ export class SlashCommandHandler {
       }
     } else {
       console.log(chalk.cyan('\n🧠 Thinking Mode:\n'));
-      console.log(
-        `  Status: ${thinkingConfig.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`
-      );
+      console.log(`  Status: ${thinkingConfig.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`);
       console.log(`  Mode: ${chalk.yellow(thinkingConfig.mode)}`);
       console.log(`  Display: ${chalk.yellow(thinkingConfig.displayMode)}\n`);
 
@@ -1107,19 +640,13 @@ export class SlashCommandHandler {
         logger.warn('Online marketplace not implemented yet', 'Check back later for updates');
         break;
       case 'install':
-        logger.warn(
-          'Agent installation wizard not implemented yet',
-          'Use /agents install in interactive mode'
-        );
+        logger.warn('Agent installation wizard not implemented yet', 'Use /agents install in interactive mode');
         break;
       case 'remove':
         logger.warn('Agent removal not implemented yet', 'Use /agents remove in interactive mode');
         break;
       default:
-        logger.warn(
-          `Unknown agents action: ${action}`,
-          'Use /agents list to see available actions'
-        );
+        logger.warn(`Unknown agents action: ${action}`, 'Use /agents list to see available actions');
     }
   }
 
@@ -1186,122 +713,99 @@ export class SlashCommandHandler {
 
     logger.section('MCP Servers');
 
-    serverConfigs.forEach(
-      ({ name: serverName, config: serverConfig }: { name: string; config: any }) => {
-        const server = this.mcpManager.getServer(serverName);
-        const isConnected = server?.isServerConnected() || false;
-        const status = isConnected ? chalk.green('✓ Connected') : chalk.red('✗ Disconnected');
-        const tools = server?.getToolNames() || [];
-        const transport = serverConfig?.transport || serverConfig?.type || 'unknown';
-        const command = serverConfig?.command
-          ? `${serverConfig.command} ${(serverConfig.args || []).join(' ')}`
-          : serverConfig?.url || 'N/A';
+    serverConfigs.forEach(({ name: serverName, config: serverConfig }: { name: string; config: any }) => {
+      const server = this.mcpManager.getServer(serverName);
+      const isConnected = server?.isServerConnected() || false;
+      const status = isConnected ? chalk.green('✓ Connected') : chalk.red('✗ Disconnected');
+      const tools = server?.getToolNames() || [];
+      const transport = serverConfig?.transport || serverConfig?.type || 'unknown';
+      const command = serverConfig?.command ? `${serverConfig.command} ${(serverConfig.args || []).join(' ')}` : serverConfig?.url || 'N/A';
 
-        console.log('');
-        console.log(`  ${chalk.cyan(serverName)} ${status}`);
-        console.log(`    Transport: ${transport}`);
-        console.log(`    Command: ${command}`);
-        console.log(
-          `    Tools: ${isConnected ? tools.length : 'N/A'} (${isConnected ? tools.join(', ') : 'wait for connection'})`
-        );
-      }
-    );
+      console.log('');
+      console.log(`  ${chalk.cyan(serverName)} ${status}`);
+      console.log(`    Transport: ${transport}`);
+      console.log(`    Command: ${command}`);
+      console.log(`    Tools: ${isConnected ? tools.length : 'N/A'} (${isConnected ? tools.join(', ') : 'wait for connection'})`);
+    });
 
     console.log('');
     logger.info(`Total: ${serverConfigs.length} server(s)`);
   }
 
   private async addMcpServerInteractive(serverName?: string): Promise<void> {
-    const name = (await text({
-      message: 'Enter MCP server name:',
-      defaultValue: serverName,
-      validate: (value: string | undefined) => {
-        if (!value || !value.trim()) {
-          return 'Server name is required';
+    const { name, command, args: serverArgs, transport, url, authToken, headers } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'name',
+        message: 'Enter MCP server name:',
+        default: serverName,
+        validate: (input: string) => {
+          if (!input.trim()) {
+            return 'Server name is required';
+          }
+          const servers = this.mcpManager.getAllServers();
+          if (servers.some((s: MCPServer) => (s as any).config?.name === input)) {
+            return 'Server with this name already exists';
+          }
+          return true;
         }
-        if (!/^[a-zA-Z0-9_-]+$/.test(value)) {
-          return 'Server name must contain only alphanumeric characters, hyphens, and underscores';
-        }
-        const servers = this.mcpManager.getAllServers();
-        if (servers.some((s: MCPServer) => (s as any).config?.name === value)) {
-          return 'Server with this name already exists';
-        }
-        return undefined;
       },
-    })) as string;
-
-    const transport = await select({
-      message: 'Select transport type:',
-      options: [
-        { value: 'stdio', label: 'Stdio (stdin/stdout)' },
-        { value: 'sse', label: 'HTTP/SSE' },
-        { value: 'http', label: 'HTTP (POST)' },
-      ],
-    }) as string | symbol;
-
-    if (typeof transport === 'symbol') {
-      return;
-    }
-
-    let command = '';
-    let serverArgs: string[] = [];
-    let url = '';
-    let authToken = '';
-    let headers: Record<string, string> | string | undefined;
-
-    if (transport === 'stdio') {
-      command = (await text({
+      {
+        type: 'list',
+        name: 'transport',
+        message: 'Select transport type:',
+        choices: [
+          { name: 'Stdio (stdin/stdout)', value: 'stdio' },
+          { name: 'HTTP/SSE', value: 'sse' },
+          { name: 'HTTP (POST)', value: 'http' }
+        ],
+        default: 'stdio'
+      },
+      {
+        type: 'input',
+        name: 'command',
         message: 'Enter command (for stdio transport):',
-        validate: (value: string | undefined) =>
-          value && value.trim() ? undefined : 'Command is required',
-      })) as string;
-
-      const argsInput = (await text({
+        when: (answers: any) => answers.transport === 'stdio',
+        validate: (input: string) => input.trim() ? true : 'Command is required'
+      },
+      {
+        type: 'input',
+        name: 'args',
         message: 'Enter arguments (comma-separated, for stdio transport):',
-        defaultValue: '',
-      })) as string;
-
-      if (argsInput.trim()) {
-        serverArgs = argsInput.split(',').map((a: string) => a.trim());
-      }
-    } else {
-      url = (await text({
+        when: (answers: any) => answers.transport === 'stdio',
+        filter: (input: string) => input ? input.split(',').map((a: string) => a.trim()) : []
+      },
+      {
+        type: 'input',
+        name: 'url',
         message: 'Enter server URL (for HTTP/SSE/HTTP transport):',
-        validate: (value: string | undefined) => {
-          if (!value || !value.trim()) {
-            return 'URL is required';
-          }
-          try {
-            new URL(value);
-            return undefined;
-          } catch {
-            return 'Invalid URL format (e.g., https://example.com)';
-          }
-        },
-      })) as string;
-
-      authToken = (await text({
+        when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http',
+        validate: (input: string) => input.trim() ? true : 'URL is required'
+      },
+      {
+        type: 'password',
+        name: 'authToken',
         message: 'Enter authentication token (optional):',
-        defaultValue: '',
-      })) as string;
-
-      const headersInput = (await text({
-        message:
-          'Enter custom headers as JSON (optional, e.g., {"Authorization": "Bearer token"}):',
-        defaultValue: '',
-      })) as string;
-
-      if (headersInput.trim()) {
-        try {
-          headers = JSON.parse(headersInput);
-        } catch {
-          headers = undefined;
+        when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http'
+      },
+      {
+        type: 'input',
+        name: 'headers',
+        message: 'Enter custom headers as JSON (optional, e.g., {"Authorization": "Bearer token"}):',
+        when: (answers: any) => answers.transport === 'sse' || answers.transport === 'http',
+        filter: (input: string) => {
+          if (!input.trim()) return undefined;
+          try {
+            return JSON.parse(input);
+          } catch {
+            return undefined;
+          }
         }
       }
-    }
+    ]);
 
     const config: any = {
-      transport: transport as 'stdio' | 'sse' | 'http',
+      transport: transport as 'stdio' | 'sse' | 'http'
     };
 
     if (transport === 'stdio') {
@@ -1311,42 +815,32 @@ export class SlashCommandHandler {
       }
     } else {
       config.url = url;
-
-      // Handle user input that mistakenly puts Bearer token in headers field
-      // Detect pattern: headers looks like "Bearer xxx.yyy.zzz" (JWT token)
-      let resolvedAuthToken = authToken;
-      let resolvedHeaders = headers;
-
-      if (headers && typeof headers === 'string' && !authToken) {
-        const trimmedHeaders = headers.trim();
-        if (trimmedHeaders.startsWith('Bearer ') && trimmedHeaders.split('.').length === 3) {
-          // User mistakenly put token in headers field - extract it
-          resolvedAuthToken = trimmedHeaders;
-          resolvedHeaders = undefined;
-          console.log('[MCP] Note: Detected Bearer token in headers field, moved to authToken');
-        }
+      if (authToken) {
+        config.authToken = authToken;
       }
-
-      if (resolvedAuthToken) {
-        config.authToken = resolvedAuthToken;
-      }
-      if (resolvedHeaders) {
-        config.headers = resolvedHeaders;
+      if (headers) {
+        config.headers = headers;
       }
     }
 
     try {
+      // Save to config file
       this.configManager.addMcpServer(name, config);
-      this.configManager.save('global');
+      await this.configManager.save('global');
 
+      // Register to MCP Manager
       this.mcpManager.registerServer(name, config);
 
+      // Connect to server (with error handling)
+      let connected = false;
       try {
         await this.mcpManager.connectServer(name);
+        connected = true;
       } catch (error: any) {
+        // Connection failed - cleanup
         this.mcpManager.disconnectServer(name);
         this.configManager.removeMcpServer(name);
-        this.configManager.save('global');
+        await this.configManager.save('global');
         throw new Error(`Connection failed: ${error.message}`);
       }
 
@@ -1374,29 +868,34 @@ export class SlashCommandHandler {
       return;
     }
 
-    const serverOptions = servers.map((s: MCPServer) => {
+    const serverNames = servers.map((s: MCPServer) => {
       const tools = s.getToolNames();
       const status = s.isServerConnected() ? '✓' : '✗';
       return {
-        value: (s as any).config?.name,
-        label: `${status} ${(s as any).config?.name || 'unknown'} (${tools.length} tools)`,
+        name: `${status} ${(s as any).config?.name || 'unknown'} (${tools.length} tools)`,
+        value: (s as any).config?.name
       };
     });
 
-    const serverName = (await select({
-      message: 'Select MCP server to remove:',
-      options: serverOptions,
-    })) as string | symbol;
-
-    if (typeof serverName === 'symbol') {
-      return;
-    }
+    const { serverName } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'serverName',
+        message: 'Select MCP server to remove:',
+        choices: serverNames
+      }
+    ]);
 
     await this.removeMcpServer(serverName);
   }
 
   private async removeMcpServer(serverName: string): Promise<void> {
     try {
+      // Get server info before disconnecting to notify LLM
+      const server = this.mcpManager.getServer(serverName);
+      const removedTools = server ? server.getToolNames() : [];
+      const removedToolNames = removedTools.map((t: string) => `${serverName}__${t}`).join(', ');
+
       // Disconnect
       this.mcpManager.disconnectServer(serverName);
 
@@ -1406,7 +905,7 @@ export class SlashCommandHandler {
 
       // Remove from config
       this.configManager.removeMcpServer(serverName);
-      this.configManager.save('global');
+      await this.configManager.save('global');
 
       // Update system prompt to reflect removed MCP tools
       if (this.onSystemPromptUpdate) {
@@ -1430,7 +929,7 @@ export class SlashCommandHandler {
       await this.mcpManager.connectAllServers();
 
       spinner.succeed('MCP servers refreshed successfully');
-
+      
       // Show current server status
       await this.listMcpServers();
     } catch (error: any) {
@@ -1441,116 +940,18 @@ export class SlashCommandHandler {
   private async handleMemory(args: string[]): Promise<void> {
     const action = args[0] || 'show';
 
-    // Load memory files before showing
-    try {
-      await this.memoryManager.loadMemory();
-    } catch (error) {
-      logger.error(
-        'Failed to load memory files',
-        error instanceof Error ? error.message : String(error)
-      );
-      return;
-    }
-
     switch (action) {
       case 'show':
         await this.showMemory();
         break;
-      case 'clear':
-        await this.clearMemory(args[1]);
+      case 'add':
+        logger.warn('Memory addition not implemented yet', 'Use /memory add in interactive mode');
+        break;
+      case 'refresh':
+        logger.warn('Memory refresh not implemented yet', 'Check back later for updates');
         break;
       default:
-        logger.warn(
-          `Unknown memory action: ${action}`,
-          'Use /memory show to see available actions'
-        );
-    }
-  }
-
-  private async clearMemory(target?: string): Promise<void> {
-    const memoryFiles = this.memoryManager.getMemoryFiles();
-
-    // Handle different clear targets
-    if (!target || target === '.' || target === 'current') {
-      // Clear current project's memory
-      const currentProjectMemory = memoryFiles.find((m: MemoryFile) => m.level === 'project');
-      if (currentProjectMemory) {
-        await fs.unlink(currentProjectMemory.path);
-        logger.success('Project memory cleared');
-        logger.info('Use /init to initialize if needed');
-      } else {
-        logger.warn('No project memory found for current directory');
-      }
-      return;
-    }
-
-    if (target === 'all') {
-      // Clear all memories including global
-      let cleared = 0;
-      for (const file of memoryFiles) {
-        await fs.unlink(file.path);
-        cleared++;
-      }
-      logger.success(`Cleared ${cleared} memory file(s)`);
-
-      // Recreate global memory
-      await this.memoryManager.saveMemory(
-        '# Global Context\n\nGlobal preferences and settings will be added here.',
-        'global'
-      );
-      logger.info('Recreated global memory');
-      logger.info('Use /init to initialize project memory if needed');
-      return;
-    }
-
-    if (target === 'global') {
-      // Clear global memory
-      const globalMemory = memoryFiles.find((m: MemoryFile) => m.level === 'global');
-      if (globalMemory) {
-        await fs.unlink(globalMemory.path);
-        logger.success('Global memory cleared');
-
-        // Recreate global memory
-        await this.memoryManager.saveMemory(
-          '# Global Context\n\nGlobal preferences and settings will be added here.',
-          'global'
-        );
-        logger.info('Recreated with default content');
-      } else {
-        logger.warn('No global memory found');
-      }
-      return;
-    }
-
-    // Clear specific file by filename or path
-    const targetMemory = memoryFiles.find(
-      (m: MemoryFile) => path.basename(m.path) === target || m.path === target
-    );
-
-    if (targetMemory) {
-      try {
-        await fs.unlink(targetMemory.path);
-        const levelLabel = targetMemory.level === 'global' ? 'Global' : 'Project';
-        logger.success(`${levelLabel} memory cleared: ${path.basename(targetMemory.path)}`);
-
-        // Recreate global memory, not project memory
-        if (targetMemory.level === 'global') {
-          await this.memoryManager.saveMemory(
-            '# Global Context\n\nGlobal preferences and settings will be added here.',
-            'global'
-          );
-          logger.info('Recreated with default content');
-        } else {
-          logger.info('Use /init to initialize if needed');
-        }
-      } catch (error) {
-        logger.error(
-          'Failed to clear memory',
-          error instanceof Error ? error.message : String(error)
-        );
-      }
-    } else {
-      logger.warn(`Memory file not found: ${target}`, 'Use /memory show to see available files');
+        logger.warn(`Unknown memory action: ${action}`, 'Use /memory show to see available actions');
     }
   }
 
@@ -1562,29 +963,24 @@ export class SlashCommandHandler {
       return;
     }
 
-    const memoriesDir = this.memoryManager.getMemoriesDir();
     logger.section('Memory Files');
-    logger.info(`Directory: ${memoriesDir}`);
-    console.log('');
 
     memoryFiles.forEach((file: MemoryFile) => {
-      const level =
-        file.level === 'global'
-          ? chalk.blue('[global]')
-          : file.level === 'project'
-            ? chalk.green('[project]')
-            : chalk.yellow('[subdirectory]');
-      logger.info(`  ${level} ${path.basename(file.path)}`);
+      const level = file.level === 'global' ? chalk.blue('[global]') :
+                     file.level === 'project' ? chalk.green('[project]') :
+                     chalk.yellow('[subdirectory]');
+      logger.info(`  ${level} ${file.path}`);
     });
-
-    console.log('');
-    // logger.info('Usage: /memory clear [global|current|all|<filename>]');
   }
 
   private async addMemory(): Promise<void> {
-    const entry = (await text({
-      message: 'Enter memory entry (opens editor):',
-    })) as string;
+    const { entry } = await inquirer.prompt([
+      {
+        type: 'editor',
+        name: 'entry',
+        message: 'Enter memory entry (opens editor):'
+      }
+    ]);
 
     if (entry && entry.trim()) {
       await this.memoryManager.addMemoryEntry(entry.trim());
@@ -1625,19 +1021,19 @@ export class SlashCommandHandler {
         logger.error(error.message, 'Check if checkpoint ID is valid');
       }
     } else {
-      const checkpointOptions = checkpoints.map((cp: Checkpoint) => ({
-        value: cp.id,
-        label: `${new Date(cp.timestamp).toLocaleString()} - ${cp.description}`,
+      const choices = checkpoints.map((cp: Checkpoint) => ({
+        name: `${new Date(cp.timestamp).toLocaleString()} - ${cp.description}`,
+        value: cp.id
       }));
 
-      const checkpointId = await select({
-        message: 'Select checkpoint to restore:',
-        options: checkpointOptions,
-      }) as string | symbol;
-
-      if (typeof checkpointId === 'symbol') {
-        return;
-      }
+      const { checkpointId } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'checkpointId',
+          message: 'Select checkpoint to restore:',
+          choices
+        }
+      ]);
 
       try {
         await this.checkpointManager.restoreCheckpoint(checkpointId);
@@ -1654,7 +1050,7 @@ export class SlashCommandHandler {
 
     logger.section('Available Tools');
 
-    tools.forEach((tool) => {
+    tools.forEach(tool => {
       logger.info(`  ${tool.name}`);
       logger.info(`    ${tool.description}`);
     });
@@ -1677,18 +1073,12 @@ export class SlashCommandHandler {
 
     if (mode === 'verbose' || mode === 'detail' || mode === 'true' || mode === 'on') {
       this.configManager.set('showToolDetails', true);
-      this.configManager.save('global');
-      logger.success(
-        'Tool display mode switched to verbose mode',
-        'Will show complete tool call information'
-      );
+      await this.configManager.save('global');
+      logger.success('Tool display mode switched to verbose mode', 'Will show complete tool call information');
     } else if (mode === 'simple' || mode === 'concise' || mode === 'false' || mode === 'off') {
       this.configManager.set('showToolDetails', false);
-      this.configManager.save('global');
-      logger.success(
-        'Tool display mode switched to simple mode',
-        'Only show tool execution status'
-      );
+      await this.configManager.save('global');
+      logger.success('Tool display mode switched to simple mode', 'Only show tool execution status');
     } else {
       logger.warn('Invalid mode', 'Use verbose or simple');
     }
@@ -1696,8 +1086,6 @@ export class SlashCommandHandler {
 
   private async handleStats(): Promise<void> {
     logger.section('Session Statistics');
-    const authConfig = this.configManager.getAuthConfig();
-    logger.info(`  Base URL: ${authConfig.baseUrl}`);
     logger.info(`  Execution Mode: ${this.configManager.getExecutionMode()}`);
     logger.info(`  Language: ${this.configManager.getLanguage()}`);
     logger.info(`  Checkpointing: ${this.checkpointManager.isEnabled() ? 'Enabled' : 'Disabled'}`);
@@ -1710,23 +1098,20 @@ export class SlashCommandHandler {
   }
 
   private async handleLanguage(): Promise<void> {
-    const language = (await select({
-      message: 'Select language:',
-      options: [
-        { value: 'zh', label: 'Chinese' },
-        { value: 'en', label: 'English' },
-      ],
-    })) as 'zh' | 'en' | symbol;
-
-    if (typeof language === 'symbol') {
-      return;
-    }
+    const { language } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'language',
+        message: 'Select language:',
+        choices: [
+          { name: 'Chinese', value: 'zh' },
+          { name: 'English', value: 'en' }
+        ]
+      }
+    ]);
 
     this.configManager.setLanguage(language);
-    logger.success(
-      `Language changed to: ${language === 'zh' ? 'Chinese' : 'English'}`,
-      'Restart CLI to apply changes'
-    );
+    logger.success(`Language changed to: ${language === 'zh' ? 'Chinese' : 'English'}`, 'Restart CLI to apply changes');
   }
 
   private async handleAbout(): Promise<void> {
@@ -1738,63 +1123,18 @@ export class SlashCommandHandler {
     logger.link('GitHub', 'https://github.com/xagent-ai/xagent-cli');
   }
 
-  private async handleUpdate(): Promise<void> {
-    const separator = icons.separator.repeat(Math.min(40, process.stdout.columns || 80));
-
-    console.log('');
-    console.log(colors.primaryBright(`${icons.rocket} Update Check`));
-    console.log(colors.border(separator));
-    console.log('');
-
-    try {
-      const { getUpdateManager } = await import('./update.js');
-      const updateManager = getUpdateManager();
-      const versionInfo = await updateManager.checkForUpdates();
-
-      console.log(`  ${icons.info}  ${colors.textMuted('Current version:')} ${colors.primaryBright(versionInfo.currentVersion)}`);
-      console.log(`  ${icons.code} ${colors.textMuted('Latest version:')} ${colors.primaryBright(versionInfo.latestVersion)}`);
-      console.log('');
-
-      if (versionInfo.updateAvailable) {
-        console.log(colors.success(`  📦 A new version is available!`));
-        console.log('');
-
-        if (versionInfo.releaseNotes) {
-          console.log(colors.textMuted('  Release Notes:'));
-          console.log(colors.textDim(`  ${versionInfo.releaseNotes}`));
-          console.log('');
-        }
-
-        const shouldUpdate = await confirm({
-          message: 'Do you want to update now?',
-        });
-
-        if (shouldUpdate === true) {
-          console.log('');
-          await updateManager.autoUpdate();
-        }
-      } else {
-        console.log(colors.success(`  ✅ You are using the latest version`));
-        console.log('');
-      }
-    } catch (error: any) {
-      console.log(colors.error(`  ❌ Failed to check for updates: ${error.message}`));
-      console.log('');
-    }
-  }
-
   private async handleCompress(args: string[]): Promise<void> {
     const config = this.configManager.getContextCompressionConfig();
 
     // If there are arguments, process config or execute
     if (args.length > 0) {
       const action = args[0].toLowerCase();
-
+      
       if (action === 'exec' || action === 'run' || action === 'now') {
         await this.executeCompression(config);
         return;
       }
-
+      
       await this.setCompressConfig(args);
       return;
     }
@@ -1803,12 +1143,16 @@ export class SlashCommandHandler {
     console.log(chalk.cyan('\n📦 Context Compression:\n'));
 
     console.log(`  Status: ${config.enabled ? chalk.green('Enabled') : chalk.red('Disabled')}`);
+    console.log(`  Max Messages: ${chalk.yellow(config.maxMessages.toString())}`);
+    console.log(`  Max Tokens: ${chalk.yellow(config.maxContextSize.toString())}`);
 
     console.log('');
     console.log(chalk.gray('Usage:'));
     console.log(chalk.gray('  /compress                 - Show current configuration'));
     console.log(chalk.gray('  /compress exec            - Execute compression now'));
     console.log(chalk.gray('  /compress on|off          - Enable/disable compression'));
+    console.log(chalk.gray('  /compress max_message <n> - Set max messages before compression'));
+    console.log(chalk.gray('  /compress max_token <n>   - Set max tokens before compression'));
     console.log('');
   }
 
@@ -1820,7 +1164,10 @@ export class SlashCommandHandler {
       return;
     }
 
-    const { needsCompression, reason } = this.contextCompressor.needsCompression(messages, config);
+    const { needsCompression, reason } = this.contextCompressor.needsCompression(
+      messages,
+      config
+    );
 
     if (!needsCompression) {
       console.log(chalk.green('✅ No compression needed'));
@@ -1833,7 +1180,7 @@ export class SlashCommandHandler {
     const spinner = ora({
       text: 'Compressing context...',
       spinner: 'dots',
-      color: 'cyan',
+      color: 'cyan'
     }).start();
 
     try {
@@ -1846,23 +1193,13 @@ export class SlashCommandHandler {
       spinner.succeed(chalk.green('✅ Compression complete'));
 
       console.log('');
-      console.log(
-        `  ${chalk.cyan('Original:')} ${chalk.yellow(result.originalMessageCount.toString())} messages (${result.originalSize} chars)`
-      );
-      console.log(
-        `  ${chalk.cyan('Compressed:')} ${chalk.yellow(result.compressedMessageCount.toString())} messages (${result.compressedSize} chars)`
-      );
-      console.log(
-        `  ${chalk.cyan('Reduction:')} ${chalk.green(Math.round((1 - result.compressedSize / result.originalSize) * 100) + '%')}`
-      );
+      console.log(`  ${chalk.cyan('Original:')} ${chalk.yellow(result.originalMessageCount.toString())} messages (${result.originalSize} chars)`);
+      console.log(`  ${chalk.cyan('Compressed:')} ${chalk.yellow(result.compressedMessageCount.toString())} messages (${result.compressedSize} chars)`);
+      console.log(`  ${chalk.cyan('Reduction:')} ${chalk.green(Math.round((1 - result.compressedSize / result.originalSize) * 100) + '%')}`);
       console.log(`  ${chalk.cyan('Method:')} ${chalk.yellow(result.compressionMethod)}`);
 
       console.log('');
-      console.log(
-        chalk.gray(
-          'Use /clear to start a new conversation, or continue chatting to see the compressed summary.'
-        )
-      );
+      console.log(chalk.gray('Use /clear to start a new conversation, or continue chatting to see the compressed summary.'));
       console.log('');
     } catch (error: any) {
       spinner.fail(chalk.red('Compression failed'));
@@ -1878,258 +1215,52 @@ export class SlashCommandHandler {
       case 'on':
         config.enabled = true;
         this.configManager.setContextCompressionConfig(config);
-        this.configManager.save('global');
+        await this.configManager.save('global');
         console.log(chalk.green('✅ Context compression enabled'));
         break;
 
       case 'off':
         config.enabled = false;
         this.configManager.setContextCompressionConfig(config);
-        this.configManager.save('global');
+        await this.configManager.save('global');
         console.log(chalk.green('✅ Context compression disabled'));
+        break;
+
+      case 'max_message':
+        if (args[1]) {
+          const maxMessages = parseInt(args[1], 10);
+          if (isNaN(maxMessages) || maxMessages < 1) {
+            console.log(chalk.red('❌ Invalid value for max_message. Must be a positive number.'));
+            return;
+          }
+          config.maxMessages = maxMessages;
+          this.configManager.setContextCompressionConfig(config);
+          await this.configManager.save('global');
+          console.log(chalk.green(`✅ Max messages set to: ${maxMessages}`));
+        } else {
+          console.log(chalk.gray('Usage: /compress max_message <number>'));
+        }
+        break;
+
+      case 'max_token':
+        if (args[1]) {
+          const maxContextSize = parseInt(args[1], 10);
+          if (isNaN(maxContextSize) || maxContextSize < 1000) {
+            console.log(chalk.red('❌ Invalid value for max_token. Must be at least 1000.'));
+            return;
+          }
+          config.maxContextSize = maxContextSize;
+          this.configManager.setContextCompressionConfig(config);
+          await this.configManager.save('global');
+          console.log(chalk.green(`✅ Max tokens set to: ${maxContextSize}`));
+        } else {
+          console.log(chalk.gray('Usage: /compress max_token <number>'));
+        }
         break;
 
       default:
         console.log(chalk.red(`❌ Unknown action: ${action}`));
-        console.log(chalk.gray('Available actions: on, off, exec'));
-    }
-  }
-
-  private async handleSkill(args: string[]): Promise<void> {
-    const os = await import('os');
-    const path = await import('path');
-    const { promises: fs } = await import('fs');
-
-    const action = args[0] || 'list';
-    const userSkillsPath = this.configManager.getUserSkillsPath() || path.join(os.homedir(), '.xagent', 'skills');
-
-    switch (action) {
-      case 'list':
-        await this.listUserSkills(userSkillsPath, fs, path);
-        break;
-      case 'add':
-        await this.addSkill(args[1], userSkillsPath, fs, path);
-        break;
-      case 'remove':
-        await this.removeSkill(args[1], userSkillsPath, fs, path);
-        break;
-      default:
-        console.log(chalk.cyan('\n🔧 Skills:\n'));
-        console.log(`  Skills directory: ${chalk.yellow(userSkillsPath)}\n`);
-        console.log(chalk.gray('Available commands:'));
-        console.log(chalk.gray('  /skill list                   - List installed skills'));
-        console.log(chalk.gray('  /skill add <source>           - Add a skill (local path or remote URL)'));
-        console.log(chalk.gray('  /skill remove <name>          - Remove a user-installed skill'));
-        console.log();
-        console.log(chalk.gray('Examples:'));
-        console.log(chalk.gray('  /skill add ./my-skill                    - Local path'));
-        console.log(chalk.gray('  /skill add owner/repo                     - GitHub shorthand'));
-        console.log(chalk.gray('  /skill add https://github.com/owner/repo  - GitHub URL'));
-        console.log();
-    }
-  }
-
-  private async listUserSkills(userSkillsPath: string, fs: any, path: any): Promise<void> {
-    console.log(chalk.cyan('\n🔧 Skills:\n'));
-
-    try {
-      const entries = await fs.readdir(userSkillsPath, { withFileTypes: true });
-      const skills = entries.filter((e: any) => e.isDirectory());
-
-      if (skills.length === 0) {
-        console.log(chalk.gray('  No skills installed'));
-        console.log(chalk.cyan('\n  To add a skill, use:'));
-        console.log(chalk.cyan('    /skill add <path-to-skill>\n'));
-        return;
-      }
-
-      for (const skill of skills) {
-        const skillPath = path.join(userSkillsPath, skill.name as string);
-        const skillMdPath = path.join(skillPath, 'SKILL.md');
-
-        try {
-          const content = await fs.readFile(skillMdPath, 'utf-8');
-          const nameMatch = content.match(/^name:\s*(.+)$/m);
-          const descMatch = content.match(/^description:\s*(.+)$/m);
-          const name = nameMatch ? nameMatch[1].trim() : skill.name;
-          const description = descMatch ? descMatch[1].trim() : 'No description';
-
-          console.log(`  ${chalk.cyan('•')} ${chalk.yellow(name)}`);
-          console.log(`    ${chalk.gray(description)}`);
-          console.log();
-        } catch {
-          console.log(`  ${chalk.cyan('•')} ${chalk.yellow(skill.name)}`);
-          console.log(`    ${chalk.gray('(Missing SKILL.md)')}`);
-          console.log();
-        }
-      }
-
-      console.log(chalk.gray(`  Skills directory: ${userSkillsPath}`));
-      console.log();
-    } catch (error: any) {
-      if (error.code === 'ENOENT') {
-        console.log(chalk.gray('  No skills installed'));
-        console.log(chalk.cyan('\n  To add a skill, use:'));
-        console.log(chalk.cyan('    /skill add <path-to-skill>\n'));
-      } else {
-        console.log(chalk.red(`  Error: ${error.message}`));
-      }
-    }
-  }
-
-  private async addSkill(source: string, userSkillsPath: string, fs: any, path: any): Promise<void> {
-    if (!source) {
-      console.log(chalk.yellow('\n⚠️  Please specify a skill source'));
-      console.log(chalk.cyan('  Usage: /skill add <source>\n'));
-      console.log(chalk.gray('  Examples:'));
-      console.log(chalk.gray('    /skill add ./my-skill           - Local path'));
-      console.log(chalk.gray('    /skill add owner/repo            - GitHub shorthand'));
-      console.log(chalk.gray('    /skill add https://github.com/owner/repo'));
-      console.log();
-      return;
-    }
-
-    const { parseSource, installSkill } = await import('./skill-installer.js');
-    const parsed = parseSource(source.trim());
-    const isLocal = parsed.type === 'local';
-
-    if (isLocal) {
-      // Local installation
-      const resolvedPath = path.resolve(source);
-      const skillName = path.basename(resolvedPath);
-      const destPath = path.join(userSkillsPath, skillName);
-
-      try {
-        // Check if source exists
-        await fs.access(resolvedPath);
-
-        // Check if SKILL.md exists
-        const skillMdPath = path.join(resolvedPath, 'SKILL.md');
-        try {
-          await fs.access(skillMdPath);
-        } catch {
-          console.log(chalk.red(`\n❌ SKILL.md not found in ${resolvedPath}`));
-          console.log(chalk.gray('  Each skill must have a SKILL.md file\n'));
-          return;
-        }
-
-        // Check if skill already exists
-        try {
-          await fs.access(destPath);
-          console.log(chalk.yellow(`\n⚠️  Skill "${skillName}" already installed`));
-          console.log(chalk.cyan(`  Use: /skill remove ${skillName} to remove it first\n`));
-          return;
-        } catch {
-          // Doesn't exist, proceed
-        }
-
-        // Ensure skills directory exists
-        await fs.mkdir(userSkillsPath, { recursive: true });
-
-        // Copy the skill
-        await this.copyDirectory(resolvedPath, destPath);
-
-        console.log(chalk.green('\n✅ Skill installed successfully'));
-        console.log(chalk.gray(`  Name: ${skillName}`));
-        console.log(chalk.gray(`  Location: ${destPath}`));
-        console.log(chalk.gray(`  Type: Local`));
-        console.log();
-
-        // Trigger system prompt update
-        this.onSystemPromptUpdate?.();
-      } catch (error: any) {
-        if (error.code === 'ENOENT') {
-          console.log(chalk.red(`\n❌ Skill not found: ${source}\n`));
-        } else {
-          console.log(chalk.red(`\n❌ Error installing skill: ${error.message}\n`));
-        }
-      }
-    } else {
-      // Remote installation
-      console.log(chalk.cyan('\n📦 Installing skill from remote source...\n'));
-      console.log(chalk.gray(`  Source: ${source}`));
-      console.log(chalk.gray(`  Type: Remote`));
-      console.log();
-
-      try {
-        const result = await installSkill(source);
-
-        if (result.success) {
-          console.log(chalk.green('✅ Skill installed successfully'));
-          console.log(chalk.gray(`  Name: ${result.skillName}`));
-          console.log(chalk.gray(`  Location: ${result.skillPath}`));
-          console.log(chalk.gray('  Type: Remote'));
-          console.log();
-
-          // Trigger system prompt update - skill is immediately available
-          this.onSystemPromptUpdate?.();
-        } else {
-          console.log(chalk.red(`\n❌ Failed to install skill: ${result.error}\n`));
-        }
-      } catch (error: any) {
-        console.log(chalk.red(`\n❌ Error installing skill: ${error.message}\n`));
-      }
-    }
-  }
-
-  private async removeSkill(skillName: string, userSkillsPath: string, fs: any, path: any): Promise<void> {
-    if (!skillName) {
-      console.log(chalk.yellow('\n⚠️  Please specify a skill name'));
-      console.log(chalk.cyan('  Usage: /skill remove <skill-name>\n'));
-      return;
-    }
-
-    // Protect find-skills from deletion
-    if (skillName === 'find-skills') {
-      console.log(chalk.red('\n❌ Cannot remove protected skill: find-skills'));
-      console.log(chalk.gray('  find-skills is a built-in skill that helps you discover and install other skills.\n'));
-      return;
-    }
-
-    const skillPath = path.join(userSkillsPath, skillName);
-
-    try {
-      await fs.access(skillPath);
-
-      // Verify it's in skills path
-      if (!skillPath.startsWith(userSkillsPath)) {
-        console.log(chalk.red(`\n❌ Cannot remove skill outside user directory\n`));
-        return;
-      }
-
-      // Remove the skill directory
-      await fs.rm(skillPath, { recursive: true, force: true });
-
-      console.log(chalk.green('\n✅ Skill removed successfully'));
-      console.log();
-
-      // Trigger system prompt update
-      this.onSystemPromptUpdate?.();
-    } catch (error: any) {
-      if (error.code === 'ENOENT' || error.code === 'ENOENT') {
-        console.log(chalk.yellow(`\n⚠️  Skill not found: ${skillName}\n`));
-      } else {
-        console.log(chalk.red(`\n❌ Error removing skill: ${error.message}\n`));
-      }
-    }
-  }
-
-  private async copyDirectory(src: string, dest: string): Promise<void> {
-    const entries = await fs.readdir(src, { withFileTypes: true });
-    await fs.mkdir(dest, { recursive: true });
-
-    for (const entry of entries) {
-      // Skip node_modules to keep dependencies isolated
-      // if (entry.name === 'node_modules') continue;
-
-      const srcPath = path.join(src, entry.name);
-      const destPath = path.join(dest, entry.name);
-
-      if (entry.isDirectory()) {
-        await this.copyDirectory(srcPath, destPath);
-      } else if (entry.isFile()) {
-        await fs.copyFile(srcPath, destPath);
-      }
+        console.log(chalk.gray('Available actions: on, off, max_message, max_token, exec'));
     }
   }
 }

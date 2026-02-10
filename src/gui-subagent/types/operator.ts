@@ -49,7 +49,7 @@ export interface ExecuteParams {
 }
 
 export interface ExecuteOutput {
-  status: 'success' | 'failed' | 'end' | 'needs_input';
+  status: 'success' | 'failed' | 'end';
   errorMessage?: string;
 }
 

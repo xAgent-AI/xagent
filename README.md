@@ -14,7 +14,7 @@
 
 ![xAgent CLI Screenshot](./assets/xagent-cli.png)
 
-**[Official Website](http://www.xagent-colife.net)** | **[English](README.md)** | **[中文](README_CN.md)**
+**[English](README.md)** | **[中文](README_CN.md)**
 
 </div>
 
@@ -230,52 +230,6 @@ Customize xAgent by editing `~/.xagent/settings.json`:
   "type": "openai_compatible"
 }
 ```
-
----
-
-## ⌨️ Slash Commands
-
-Use slash commands in interactive mode (`xagent start`) to manage xAgent features:
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show help information |
-| `/init` | Initialize project context |
-| `/clear` | Clear conversation history |
-| `/exit` | Exit program |
-| `/auth` | Configure authentication |
-| `/mode [mode]` | Switch approval mode |
-| `/agents [list\|online\|install\|remove]` | Manage SubAgents |
-| `/mcp [list\|add\|remove\|refresh]` | Manage MCP servers |
-| `/skill [list\|add\|remove]` | Manage skills |
-| `/model` | Configure LLM/VLM models |
-| `/memory [show\|clear]` | Manage project memory |
-| `/restore` | Restore from checkpoint |
-| `/tools [verbose\|simple]` | Manage tool display |
-| `/stats` | Show session statistics |
-| `/theme` | Switch UI theme |
-| `/about` | Show version info |
-| `/update` | Check for updates |
-
-### MCP Management
-
-```bash
-/mcp list              # List all MCP servers
-/mcp add               # Add MCP server (interactive)
-/mcp remove <name>     # Remove an MCP server
-/mcp refresh           # Refresh MCP connections
-```
-
-### Skill Management
-
-```bash
-/skill list            # List installed skills
-/skill add ./my-skill  # Install from local path
-/skill add owner/repo  # Install from GitHub
-/skill remove <name>   # Remove a skill
-```
-
-> 💡 **Tip:** All features are also available via CLI commands. Run `xagent --help` for details.
 
 ---
 

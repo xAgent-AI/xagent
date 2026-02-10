@@ -67,14 +67,14 @@ export class InputProcessor {
           }
         });
       } catch (error) {
-        console.warn(`[input-processor] Failed to process image #${imageId}: ${error instanceof Error ? error.message : String(error)}`);
+        console.warn(`Failed to process image #${imageId}:`, error);
       }
     }
 
     return imageInputs;
   }
 
-  private async getImageFromClipboard(_imageId: string): Promise<string> {
+  private async getImageFromClipboard(imageId: string): Promise<string> {
     try {
       const clipboardContent = await clipboardy.read();
       
@@ -84,7 +84,7 @@ export class InputProcessor {
 
       const imageData = await this.readImageFile(clipboardContent);
       return imageData;
-    } catch {
+    } catch (error) {
       throw new Error('Failed to read image from clipboard');
     }
   }
@@ -101,8 +101,7 @@ export class InputProcessor {
       
       return `data:${mimeType};base64,${base64}`;
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to read image file ${filePath}: ${errorMsg}`);
+      throw new Error(`Failed to read image file: ${filePath}`);
     }
   }
 
@@ -205,7 +204,6 @@ export class InputProcessor {
         content: clipboardContent
       }];
     } catch (error) {
-      console.warn(`[input-processor] Failed to read clipboard: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
   }
@@ -253,8 +251,7 @@ export class InputProcessor {
       
       return `data:${mimeType};base64,${base64}`;
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to convert image to base64 ${filePath}: ${errorMsg}`);
+      throw new Error(`Failed to convert image to base64: ${filePath}`);
     }
   }
 

@@ -13,10 +13,8 @@ coverage
 # 测试相关
 test-*.ts
 test-*.js
-test-*.mjs
 *.test.ts
 *.test.js
-*.test.mjs
 test-output/
 test-reports/
 
@@ -80,13 +78,3 @@ UI-TARS-desktop-main/
 
 xagent-web/*
 *.png
-*.docx
-*.xlsx
-*.pptx
-*.doc
-*.xls
-*.ppt
-*.jpg
-*.jpeg
-*.gif
-*.svg

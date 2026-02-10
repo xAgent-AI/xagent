@@ -1,9 +1,10 @@
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
 import axios from 'axios';
 import { AgentConfig, MCPServerConfig } from './types.js';
-import { getSkillLoader } from './skill-loader.js';
+import { SkillLoader, getSkillLoader } from './skill-loader.js';
 import { getConfigManager } from './config.js';
 
 export interface WorkflowConfig {
@@ -42,26 +43,46 @@ export class WorkflowManager {
     await this.loadSkills();
   }
 
+  private async findSkillsPath(): Promise<string | null> {
+    // First, try to get from config
+    const configManager = getConfigManager();
+    const configuredPath = configManager.getSkillsPath();
+
+    if (configuredPath) {
+      return configuredPath;
+    }
+
+    // Fallback: auto-detect relative to script location
+    const scriptDir = path.dirname(process.argv[1]);
+    const possiblePaths = [
+      path.join(scriptDir, '..', 'skills', 'skills'),
+      path.join(scriptDir, '..', '..', 'skills', 'skills'),
+      path.join(scriptDir, 'skills', 'skills'),
+      path.join(scriptDir, '..', '..', '..', 'skills', 'skills'),
+      path.join(process.cwd(), 'skills', 'skills')
+    ];
+
+    for (const p of possiblePaths) {
+      try {
+        const resolvedPath = path.resolve(p);
+        const stat = await fs.stat(resolvedPath);
+        if (stat.isDirectory()) {
+          return resolvedPath;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
   async loadSkills(): Promise<void> {
     try {
-      // All skills are loaded from user directory (~/.xagent/skills)
-      // Built-in skills are copied to user directory during initialization (see session.ts)
-      const configManager = getConfigManager();
-      const skillsPath = configManager.getUserSkillsPath();
+      const skillsPath = await this.findSkillsPath();
+      if (!skillsPath) return;
 
-      if (!skillsPath) {
-        return;
-      }
-
-      // Verify the path exists before loading
-      try {
-        await fs.access(skillsPath);
-      } catch {
-        // User skills directory doesn't exist yet (first run)
-        return;
-      }
-
-      const skillLoader = getSkillLoader({ userSkillsRootPath: skillsPath });
+      const skillLoader = getSkillLoader({ skillsRootPath: skillsPath });
       await skillLoader.loadAllSkills();
 
       const workflows = await skillLoader.convertAllToWorkflows();
@@ -73,11 +94,11 @@ export class WorkflowManager {
         console.log(`✅ Loaded ${workflows.length} skills from skills folder`);
       }
     } catch (error) {
-      console.warn(`[workflow] Failed to load skills: ${error instanceof Error ? error.message : String(error)}`);
+      // Skills folder is optional, so we silently ignore errors
     }
   }
 
-  private async loadWorkflowsFromDirectory(dirPath: string, _scope: 'global' | 'project'): Promise<void> {
+  private async loadWorkflowsFromDirectory(dirPath: string, scope: 'global' | 'project'): Promise<void> {
     try {
       const files = await fs.readdir(dirPath);
       
@@ -92,31 +113,12 @@ export class WorkflowManager {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error(`[workflow] Failed to load workflows from ${dirPath}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`Failed to load workflows from ${dirPath}:`, error);
       }
     }
   }
 
-  /**
-   * Validate workflow ID format - only allow alphanumeric, hyphens, and underscores
-   * @returns validation error message, or null if valid
-   */
-  private validateWorkflowId(workflowId: string): string | null {
-    if (!workflowId || typeof workflowId !== 'string' || !workflowId.trim()) {
-      return 'Workflow ID is required';
-    }
-    if (!/^[a-zA-Z0-9_-]+$/.test(workflowId)) {
-      return 'Workflow ID must contain only alphanumeric characters, hyphens, and underscores';
-    }
-    return null;
-  }
-
   async addWorkflow(workflowId: string, scope: 'global' | 'project' = 'project'): Promise<void> {
-    const validationError = this.validateWorkflowId(workflowId);
-    if (validationError) {
-      throw new Error(validationError);
-    }
-
     const workflowsPath = scope === 'global' ? this.globalWorkflowsPath : this.projectWorkflowsPath;
     
     if (!workflowsPath) {
@@ -156,9 +158,8 @@ export class WorkflowManager {
       
       return response.data;
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      console.error(`[workflow] Failed to download workflow ${workflowId}: ${errorMsg}`);
-      throw new Error(`Workflow download failed: ${errorMsg}`);
+      console.error('Failed to download workflow from marketplace');
+      throw new Error('Workflow download failed. Please check your network connection.');
     }
   }
 
@@ -221,16 +222,11 @@ export class WorkflowManager {
       }
     }
 
-    configManager.save(scope);
+    await configManager.save(scope);
     console.log(`✅ Installed ${Object.keys(workflow.mcpServers).length} MCP servers`);
   }
 
   async removeWorkflow(workflowId: string, scope: 'global' | 'project' = 'project'): Promise<void> {
-    const validationError = this.validateWorkflowId(workflowId);
-    if (validationError) {
-      throw new Error(validationError);
-    }
-
     const workflowsPath = scope === 'global' ? this.globalWorkflowsPath : this.projectWorkflowsPath;
     
     if (!workflowsPath) {
@@ -275,7 +271,7 @@ export class WorkflowManager {
       try {
         await fs.unlink(fullPath);
       } catch (error) {
-        console.warn(`[workflow] Failed to remove file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+        console.warn(`Failed to remove file ${filePath}: ${error}`);
       }
     }
   }
@@ -317,7 +313,7 @@ export class WorkflowManager {
       }
     }
 
-    configManager.save(scope);
+    await configManager.save(scope);
   }
 
   listWorkflows(): WorkflowConfig[] {
@@ -326,12 +322,10 @@ export class WorkflowManager {
 
   async listSkills(): Promise<{ id: string; name: string; description: string; category: string }[]> {
     try {
-      // Always use user skills directory - built-in skills are copied there on init
-      const configManager = getConfigManager();
-      const skillsPath = configManager.getUserSkillsPath();
+      const skillsPath = await this.findSkillsPath();
       if (!skillsPath) return [];
 
-      const skillLoader = getSkillLoader();
+      const skillLoader = getSkillLoader({ skillsRootPath: skillsPath });
       const skills = await skillLoader.loadAllSkills();
       
       return skills.map(skill => ({
@@ -341,7 +335,7 @@ export class WorkflowManager {
         category: skill.category
       }));
     } catch (error) {
-      console.error(`[workflow] Failed to list skills: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('Failed to list skills:', error);
       return [];
     }
   }
@@ -352,12 +346,10 @@ export class WorkflowManager {
 
   async getSkillDetails(skillId: string): Promise<{ id: string; name: string; description: string; content: string; category: string } | null> {
     try {
-      // Always use user skills directory - built-in skills are copied there on init
-      const configManager = getConfigManager();
-      const skillsPath = configManager.getUserSkillsPath();
+      const skillsPath = await this.findSkillsPath();
       if (!skillsPath) return null;
 
-      const skillLoader = getSkillLoader();
+      const skillLoader = getSkillLoader({ skillsRootPath: skillsPath });
       
       // Reload skills to ensure we have the latest
       await skillLoader.loadAllSkills();
@@ -373,7 +365,7 @@ export class WorkflowManager {
         category: skill.category
       };
     } catch (error) {
-      console.error(`[workflow] Failed to get skill details for ${skillId}: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`Failed to get skill details for ${skillId}:`, error);
       return null;
     }
   }
@@ -387,7 +379,7 @@ export class WorkflowManager {
       
       return response.data.workflows || [];
     } catch (error) {
-      console.error(`[workflow] Failed to fetch online workflows: ${error instanceof Error ? error.message : String(error)}`);
+      console.error('Failed to fetch online workflows');
       return [];
     }
   }
@@ -405,11 +397,6 @@ export class WorkflowManager {
   }
 
   async executeWorkflow(workflowId: string, input: string): Promise<void> {
-    const validationError = this.validateWorkflowId(workflowId);
-    if (validationError) {
-      throw new Error(validationError);
-    }
-
     const workflow = this.getWorkflow(workflowId);
     
     if (!workflow) {
@@ -448,6 +435,7 @@ export class WorkflowManager {
   }
 
   async createWorkflowPackage(projectRoot: string): Promise<Buffer> {
+    const workflowId = path.basename(projectRoot);
     const workflowConfigPath = path.join(projectRoot, '.xagent', 'workflow.json');
     
     let workflowConfig: WorkflowConfig;
@@ -456,8 +444,7 @@ export class WorkflowManager {
       const content = await fs.readFile(workflowConfigPath, 'utf-8');
       workflowConfig = JSON.parse(content);
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to read workflow.json: ${errorMsg}. Please ensure the file exists and is valid JSON.`);
+      throw new Error('workflow.json not found. Please create it first.');
     }
 
     const { getAgentManager } = await import('./agents.js');

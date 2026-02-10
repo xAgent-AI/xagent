@@ -38,7 +38,7 @@ export class ConversationManager {
     }
   }
 
-  async createConversation(_title?: string): Promise<Conversation> {
+  async createConversation(title?: string): Promise<Conversation> {
     const conversationId = `conv_${Date.now()}`;
     const now = Date.now();
 

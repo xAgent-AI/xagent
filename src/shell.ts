@@ -1,5 +1,6 @@
 import { existsSync } from 'fs';
 import { spawn, spawnSync } from 'child_process';
+import { output as logOutput } from './output-util.js';
 
 // Unified output function that automatically chooses SDK or console based on mode
 type OutputType = 'info' | 'error' | 'success' | 'warning';
@@ -169,7 +170,7 @@ export function killProcessTree(pid: number): void {
 				detached: true,
 			});
 		} catch (error) {
-			await output('warning', `[shell] Failed to kill process tree (PID ${pid})`, { error: error instanceof Error ? error.message : String(error) });
+			await logOutput('warning', `[shell] Failed to kill process tree (PID ${pid})`, { error: error instanceof Error ? error.message : String(error) });
 		}
 	} else {
 		// Use SIGKILL on Unix/Linux/Mac
@@ -180,8 +181,9 @@ export function killProcessTree(pid: number): void {
 			try {
 				process.kill(pid, 'SIGKILL');
 			} catch (fallbackError) {
-				await output('warning', `[shell] Failed to kill process (PID ${pid})`, { error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError) });
+				await logOutput('warning', `[shell] Failed to kill process (PID ${pid})`, { error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError) });
 			}
 		}
 	}
 }
+

@@ -5,50 +5,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import crypto from 'crypto';
 import { Checkpoint, ChatMessage, ToolCall } from './types.js';
-
-const execAsync = promisify(exec);
-
-// Unified output function that automatically chooses SDK or console based on mode
-type OutputType = 'info' | 'error' | 'success' | 'warning';
-
-let _sdkAdapter: any = null;
-let _isSdkMode: boolean = false;
-
-// Initialize SDK mode (call this when session is available)
-export function initOutputMode(isSdkMode: boolean, adapter?: any): void {
-  _isSdkMode = isSdkMode;
-  _sdkAdapter = adapter;
-}
-
-// Unified output function
-async function output(type: OutputType, message: string, context?: Record<string, any>): Promise<void> {
-  // Try to use SDK adapter if available and in SDK mode
-  if (_isSdkMode && _sdkAdapter) {
-    try {
-      switch (type) {
-        case 'info':
-          _sdkAdapter.outputInfo(message);
-          break;
-        case 'error':
-          _sdkAdapter.outputError(message, context);
-          break;
-        case 'warning':
-          _sdkAdapter.outputWarning(message);
-          break;
-        case 'success':
-          _sdkAdapter.outputSuccess(message);
-          break;
-      }
-      return; // SDK output successful, don't use console
-    } catch {
-      // Fall through to console on error
-    }
-  }
-
-  // Console output
-  switch (type) {
-    case 'info':
-      console.log(message);
+import { output as logOutput } from './output-util.js';
       break;
     case 'error':
       console.error(message, context?.error || '');
@@ -101,7 +58,7 @@ export class CheckpointManager {
       await fs.access(gitDir);
     } catch {
       console.log('Initializing shadow Git repository for checkpoints...');
-      await output('info', 'Initializing shadow Git repository for checkpoints...');
+      await logOutput('info', 'Initializing shadow Git repository for checkpoints...');
       await execAsync('git init', { cwd: this.snapshotsDir });
       await execAsync('git config user.email "xagent@checkpoint.local"', { cwd: this.snapshotsDir });
       await execAsync('git config user.name "xAgent Checkpoint"', { cwd: this.snapshotsDir });
@@ -122,7 +79,7 @@ export class CheckpointManager {
       }
     } catch (error) {
       console.error('Failed to load existing checkpoints:', error);
-      await output('error', 'Failed to load existing checkpoints', { error: (error as Error).message });
+      await logOutput('error', 'Failed to load existing checkpoints', { error: (error as Error).message });
     }
   }
 
@@ -148,8 +105,8 @@ export class CheckpointManager {
     this.checkpoints.set(checkpointId, checkpoint);
     await this.cleanupOldCheckpoints();
 
-    console.log(`âœ?Checkpoint created: ${checkpointId}`);
-    await output('success', `Checkpoint created: ${checkpointId}`);
+    console.log(`ï¿?Checkpoint created: ${checkpointId}`);
+    await logOutput('success', `Checkpoint created: ${checkpointId}`);
     return checkpoint;
   }
 
@@ -160,7 +117,7 @@ export class CheckpointManager {
       await execAsync(`git tag ${checkpointId}`, { cwd: this.snapshotsDir });
     } catch (error) {
       console.error('Failed to create Git snapshot:', error);
-      await output('error', 'Failed to create Git snapshot', { error: (error as Error).message });
+      await logOutput('error', 'Failed to create Git snapshot', { error: (error as Error).message });
     }
   }
 
@@ -179,12 +136,12 @@ export class CheckpointManager {
     console.log(`Restoring checkpoint: ${checkpointId}`);
     console.log(`Description: ${checkpoint.description}`);
     console.log(`Created: ${new Date(checkpoint.timestamp).toLocaleString()}`);
-    await output('info', `Restoring checkpoint: ${checkpointId}`, { description: checkpoint.description, timestamp: checkpoint.timestamp });
+    await logOutput('info', `Restoring checkpoint: ${checkpointId}`, { description: checkpoint.description, timestamp: checkpoint.timestamp });
 
     await this.restoreGitSnapshot(checkpointId);
 
-    console.log('âœ?Checkpoint restored successfully');
-    await output('success', `Checkpoint restored successfully: ${checkpointId}`);
+    console.log('ï¿?Checkpoint restored successfully');
+    await logOutput('success', `Checkpoint restored successfully: ${checkpointId}`);
   }
 
   private async restoreGitSnapshot(checkpointId: string): Promise<void> {
@@ -192,7 +149,7 @@ export class CheckpointManager {
       await execAsync(`git checkout ${checkpointId}`, { cwd: this.snapshotsDir });
     } catch (error) {
       console.error('Failed to restore Git snapshot:', error);
-      await output('error', 'Failed to restore Git snapshot', { error: (error as Error).message });
+      await logOutput('error', 'Failed to restore Git snapshot', { error: (error as Error).message });
       throw new Error(`Failed to restore checkpoint: ${error}`);
     }
   }
@@ -221,15 +178,15 @@ export class CheckpointManager {
         await execAsync(`git tag -d ${checkpointId}`, { cwd: this.snapshotsDir });
       } catch (error) {
         console.warn('Failed to delete Git tag:', error);
-        await output('warning', `Failed to delete Git tag: ${checkpointId}`);
+        await logOutput('warning', `Failed to delete Git tag: ${checkpointId}`);
       }
 
       this.checkpoints.delete(checkpointId);
-      console.log(`âœ?Checkpoint deleted: ${checkpointId}`);
-      await output('success', `Checkpoint deleted: ${checkpointId}`);
+      console.log(`ï¿?Checkpoint deleted: ${checkpointId}`);
+      await logOutput('success', `Checkpoint deleted: ${checkpointId}`);
     } catch (error) {
       console.error('Failed to delete checkpoint:', error);
-      await output('error', 'Failed to delete checkpoint', { error: (error as Error).message });
+      await logOutput('error', 'Failed to delete checkpoint', { error: (error as Error).message });
       throw error;
     }
   }
@@ -248,7 +205,7 @@ export class CheckpointManager {
         await this.deleteCheckpoint(checkpoint.id);
       } catch (error) {
         console.error(`Failed to delete old checkpoint ${checkpoint.id}:`, error);
-        await output('error', `Failed to delete old checkpoint ${checkpoint.id}`, { error: (error as Error).message });
+        await logOutput('error', `Failed to delete old checkpoint ${checkpoint.id}`, { error: (error as Error).message });
       }
     }
   }
@@ -268,11 +225,11 @@ export class CheckpointManager {
         this.checkpoints.delete(checkpoint.id);
       }
 
-      console.log('âœ?Checkpoint data cleaned up');
-      await output('success', 'Checkpoint data cleaned up');
+      console.log('ï¿?Checkpoint data cleaned up');
+      await logOutput('success', 'Checkpoint data cleaned up');
     } catch (error) {
       console.error('Failed to cleanup checkpoint data:', error);
-      await output('error', 'Failed to cleanup checkpoint data', { error: (error as Error).message });
+      await logOutput('error', 'Failed to cleanup checkpoint data', { error: (error as Error).message });
     }
   }
 
@@ -289,7 +246,7 @@ export class CheckpointManager {
       await fs.rm(this.snapshotsDir, { recursive: true, force: true });
       await fs.rm(this.checkpointsDir, { recursive: true, force: true });
       this.checkpoints.clear();
-      console.log('âœ?Checkpoint data cleaned up');
+      console.log('ï¿?Checkpoint data cleaned up');
     } catch (error) {
       console.error('Failed to cleanup checkpoint data:', error);
     }
@@ -305,3 +262,4 @@ export function getCheckpointManager(projectRoot?: string, enabled?: boolean, ma
   }
   return checkpointManagerInstance!;
 }
+

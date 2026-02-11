@@ -1,60 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { MCPServerConfig } from './types.js';
 import { getSingletonSession } from './session.js';
-
-// Unified output function that automatically chooses SDK or console based on mode
-type OutputType = 'info' | 'error' | 'success' | 'warning';
-
-let _sdkAdapter: any = null;
-let _isSdkMode: boolean = false;
-
-// Initialize SDK mode (call this when session is available)
-export function initOutputMode(isSdkMode: boolean, adapter?: any): void {
-  _isSdkMode = isSdkMode;
-  _sdkAdapter = adapter;
-}
-
-// Unified output function
-async function output(type: OutputType, message: string, context?: Record<string, any>): Promise<void> {
-  // Try to use SDK adapter if available and in SDK mode
-  if (_isSdkMode && _sdkAdapter) {
-    try {
-      switch (type) {
-        case 'info':
-          _sdkAdapter.outputInfo(message);
-          break;
-        case 'error':
-          _sdkAdapter.outputError(message, context);
-          break;
-        case 'warning':
-          _sdkAdapter.outputWarning(message);
-          break;
-        case 'success':
-          _sdkAdapter.outputSuccess(message);
-          break;
-      }
-      return; // SDK output successful, don't use console
-    } catch {
-      // Fall through to console on error
-    }
-  }
-
-  // Console output
-  switch (type) {
-    case 'info':
-      console.log(message);
-      break;
-    case 'error':
-      console.error(message, context?.error || '');
-      break;
-    case 'warning':
-      console.warn(message);
-      break;
-    case 'success':
-      console.log(message);
-      break;
-  }
-}
+import { output as logOutput } from './output-util.js';
 
 export interface MCPTool {
   name: string;
@@ -103,10 +50,10 @@ export class MCPServer {
       if (session?.getIsSdkMode()) {
         // SDK 模式下不输出
       } else {
-        await output('success', `✅ MCP Server connected`);
+        await logOutput('success', `�?MCP Server connected`);
       }
     } catch (error) {
-      await output('error', `❌ [mcp] Failed to connect MCP Server`, { error: error instanceof Error ? error.message : String(error) });
+      await logOutput('error', `�?[mcp] Failed to connect MCP Server`, { error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   }
@@ -130,7 +77,7 @@ export class MCPServer {
           resolve();
         } else if (Date.now() - startTime > timeoutMs) {
           clearInterval(checkInterval);
-          await output('warning', `[MCP] Timeout waiting for tools (${timeoutMs}ms), proceeding anyway`);
+          await logOutput('warning', `[MCP] Timeout waiting for tools (${timeoutMs}ms), proceeding anyway`);
           resolve();  // Don't reject, just proceed without tools
         } else {
           // Continue checking
@@ -255,7 +202,7 @@ export class MCPServer {
         await this.loadTools(headers);
       } catch (error: any) {
         const errorMsg = `HTTP connection failed: ${error.message}`;
-        await output('error', errorMsg, { error: error.message });
+        await logOutput('error', errorMsg, { error: error.message });
         if (error.response) {
           console.error(`Response status: ${error.response.status}`);
           if (error.response.data?.message) {
@@ -336,11 +283,11 @@ export class MCPServer {
       clearTimeout(timeoutId);
       const serverInfo = this.config.url || this.config.command || 'MCP server';
       if (error.name === 'AbortError') {
-        console.error(`\n❌ SSE connection timed out`);
+        console.error(`\n�?SSE connection timed out`);
         console.error(`   Server: ${serverInfo}`);
         console.error(`   The server is not responding. Please try again later.`);
       } else {
-        console.error(`\n❌ SSE connection failed`);
+        console.error(`\n�?SSE connection failed`);
         console.error(`   Server: ${serverInfo}`);
         console.error(`   ${error.message}`);
       }
@@ -457,12 +404,12 @@ export class MCPServer {
       } else if (resultData?.tools) {
         this.handleToolsList(resultData);
       } else if (resultData?.error) {
-        console.error(`\n❌ MCP server returned an error`);
+        console.error(`\n�?MCP server returned an error`);
         console.error(`   ${resultData.error.message || 'Unknown error'}`);
       }
     } catch (error: any) {
       const serverInfo = this.config.url || this.config.command || 'MCP server';
-      console.error(`\n❌ Failed to load MCP tools`);
+      console.error(`\n�?Failed to load MCP tools`);
       console.error(`   Server: ${serverInfo}`);
       console.error(`   ${error.message}`);
     }
@@ -798,3 +745,4 @@ export function getMCPManager(): MCPManager {
   }
   return mcpManagerInstance;
 }
+

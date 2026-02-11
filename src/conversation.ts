@@ -2,60 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { ChatMessage, Conversation } from './types.js';
-
-// Unified output function that automatically chooses SDK or console based on mode
-type OutputType = 'info' | 'error' | 'success' | 'warning';
-
-let _sdkAdapter: any = null;
-let _isSdkMode: boolean = false;
-
-// Initialize SDK mode (call this when session is available)
-export function initOutputMode(isSdkMode: boolean, adapter?: any): void {
-  _isSdkMode = isSdkMode;
-  _sdkAdapter = adapter;
-}
-
-// Unified output function
-async function output(type: OutputType, message: string, context?: Record<string, any>): Promise<void> {
-  // Try to use SDK adapter if available and in SDK mode
-  if (_isSdkMode && _sdkAdapter) {
-    try {
-      switch (type) {
-        case 'info':
-          _sdkAdapter.outputInfo(message);
-          break;
-        case 'error':
-          _sdkAdapter.outputError(message, context);
-          break;
-        case 'warning':
-          _sdkAdapter.outputWarning(message);
-          break;
-        case 'success':
-          _sdkAdapter.outputSuccess(message);
-          break;
-      }
-      return; // SDK output successful, don't use console
-    } catch {
-      // Fall through to console on error
-    }
-  }
-
-  // Console output
-  switch (type) {
-    case 'info':
-      console.log(message);
-      break;
-    case 'error':
-      console.error(message, context?.error || '');
-      break;
-    case 'warning':
-      console.warn(message);
-      break;
-    case 'success':
-      console.log(message);
-      break;
-  }
-}
+import { output as logOutput } from './output-util.js';
 
 export class ConversationManager {
   private conversationsDir: string;
@@ -71,7 +18,7 @@ export class ConversationManager {
       await fs.mkdir(this.conversationsDir, { recursive: true });
       await this.loadConversations();
     } catch (error) {
-      await output('error', 'Failed to initialize conversation manager', { error: (error as Error).message });
+      await logOutput('error', 'Failed to initialize conversation manager', { error: (error as Error).message });
     }
   }
 
@@ -88,7 +35,7 @@ export class ConversationManager {
         }
       }
     } catch (error) {
-      await output('error', 'Failed to load conversations', { error: (error as Error).message });
+      await logOutput('error', 'Failed to load conversations', { error: (error as Error).message });
     }
   }
 
@@ -176,7 +123,7 @@ export class ConversationManager {
     }
 
     this.currentConversationId = conversationId;
-    await output('success', `âœ… Switched to conversation: ${conversationId}`);
+    await logOutput('success', `âœ?Switched to conversation: ${conversationId}`);
   }
 
   listConversations(): Conversation[] {
@@ -200,7 +147,7 @@ export class ConversationManager {
       this.currentConversationId = null;
     }
 
-    await output('success', `âœ… Deleted conversation: ${conversationId}`);
+    await logOutput('success', `âœ?Deleted conversation: ${conversationId}`);
   }
 
   async clearCurrentConversation(): Promise<void> {
@@ -231,7 +178,7 @@ export class ConversationManager {
     const markdown = this.conversationToMarkdown(conversation);
     await fs.writeFile(outputPath, markdown, 'utf-8');
 
-    await output('success', `âœ… Exported conversation to: ${outputPath}`);
+    await logOutput('success', `âœ?Exported conversation to: ${outputPath}`);
   }
 
   private conversationToMarkdown(conversation: Conversation): string {
@@ -275,7 +222,7 @@ export class ConversationManager {
     this.conversations.set(conversation.id, conversation);
     await this.saveConversation(conversation);
 
-    await output('success', `âœ… Imported conversation: ${conversation.id}`);
+    await logOutput('success', `âœ?Imported conversation: ${conversation.id}`);
 
     return conversation;
   }
@@ -340,3 +287,4 @@ export function getConversationManager(): ConversationManager {
   }
   return conversationManagerInstance;
 }
+

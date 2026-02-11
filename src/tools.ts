@@ -2396,7 +2396,7 @@ export class TaskTool implements Tool {
       // Process tool calls in parallel (照搬 session 的实现)
       if (toolCalls && toolCalls.length > 0) {
         // Prepare all tool calls with their indices
-        const preparedToolCalls = toolCalls.map((toolCall: any) => {
+        const preparedToolCalls = toolCalls.map((toolCall: any, index: number) => {
           const { name, arguments: params } = toolCall.function;
           let parsedParams: any;
           try {
@@ -2404,7 +2404,7 @@ export class TaskTool implements Tool {
           } catch {
             parsedParams = params;
           }
-          return { name, params: parsedParams, id: toolCall.id };
+          return { name, params: parsedParams, id: toolCall.id, index };
         });
 
         // Display all tool call info first
@@ -2417,7 +2417,7 @@ export class TaskTool implements Tool {
         }
 
         // Execute all tool calls in parallel
-        const executePromises = preparedToolCalls.map(async (tc: { name: string; params: any; id: string }) => {
+        const executePromises = preparedToolCalls.map(async (tc: { name: string; params: any; id: string; index: number }) => {
           try {
             // Check cancellation before tool execution
             checkCancellation();
@@ -2467,11 +2467,30 @@ export class TaskTool implements Tool {
           return cancellationResult;
         }
 
+        // Create a map to store results by tool call index to maintain original order (match session implementation)
+        type ToolResultType = { name: string; params: any; toolResult: any; error?: string; id: string; index: number };
+        const resultsByIndex = new Map<number, ToolResultType>();
+        const usedIndices = new Set<number>();
+
+        for (const result of settledResults as unknown as ToolResultType[]) {
+          // Find the first unused original index that matches the tool name
+          const originalIndex = preparedToolCalls.findIndex((tc: { name: string }, idx: number) =>
+            tc.name === result.name && !usedIndices.has(idx)
+          );
+          if (originalIndex !== -1) {
+            usedIndices.add(originalIndex);
+            resultsByIndex.set(originalIndex, result);
+          }
+        }
+
         // Import render functions for consistent display
         const { renderDiff, renderLines } = await import('./theme.js');
 
-        // Process results in original order
-        for (const result of settledResults) {
+        // Process results in the original tool_calls order
+        for (let i = 0; i < preparedToolCalls.length; i++) {
+          const result = resultsByIndex.get(i);
+          if (!result) continue;
+
           const { name, params: parsedParams, toolResult, error } = result;
 
           // Get showToolDetails config to control result display

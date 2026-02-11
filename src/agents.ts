@@ -52,7 +52,7 @@ export class AgentManager {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        await logOutput('error', `Failed to load agents from ${dirPath}`, { error: (error as Error).message });
+        logOutput('error', `Failed to load agents from ${dirPath}`, { error: (error as Error).message });
       }
     }
   }

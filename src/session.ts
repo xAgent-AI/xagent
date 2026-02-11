@@ -1358,10 +1358,14 @@ export class InteractiveSession {
     const threshold = thresholdMatch ? parseInt(thresholdMatch[1], 10) : 0;
     const contextWindow = contextWindowMatch ? parseInt(contextWindowMatch[1], 10) : 0;
 
-    console.log('');
-    console.log(
-      `${indent}${colors.success(`${icons.sparkles} Compressing context (${currentMessages} msgs, ${tokenCount.toLocaleString()} > ${threshold.toLocaleString()}/${contextWindow.toLocaleString()} tokens, ${Math.round((tokenCount / contextWindow) * 100)}% of context window)...`)}`
-    );
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputContextCompressionTriggered(reason);
+    } else {
+      console.log('');
+      console.log(
+        `${indent}${colors.success(`${icons.sparkles} Compressing context (${currentMessages} msgs, ${tokenCount.toLocaleString()} > ${threshold.toLocaleString()}/${contextWindow.toLocaleString()} tokens, ${Math.round((tokenCount / contextWindow) * 100)}% of context window)...`)}`
+      );
+    }
 
     const toolRegistry = getToolRegistry();
     const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
@@ -1378,9 +1382,20 @@ export class InteractiveSession {
     if (result.wasCompressed) {
       this.conversation = result.compressedMessages;
       const reductionPercent = Math.round((1 - result.compressedSize / result.originalSize) * 100);
-      console.log(
-        `${indent}${colors.success(`${icons.success} Compressed ${result.originalMessageCount} → ${result.compressedMessageCount} messages (${reductionPercent}% smaller)`)}`
-      );
+
+      if (this.isSdkMode && this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputContextCompressionResult(
+          result.originalSize,
+          result.compressedSize,
+          reductionPercent,
+          result.originalMessageCount,
+          result.compressedMessageCount
+        );
+      } else {
+        console.log(
+          `${indent}${colors.success(`${icons.success} Compressed ${result.originalMessageCount} → ${result.compressedMessageCount} messages (${reductionPercent}% smaller)`)}`
+        );
+      }
 
       // Summary is embedded in first user message, look for it
       // The format is: "[Conversation Summary - X messages compressed]\n\n${summary}"
@@ -1409,27 +1424,36 @@ export class InteractiveSession {
           summaryContent = summaryContent.substring(0, maxPreviewLength) + '\n...';
         }
 
-        console.log('');
-        console.log(
-          `${indent}${theme.predefinedStyles.title(`${icons.sparkles} Conversation Summary`)}`
-        );
-        const separator = icons.separator.repeat(
-          Math.min(60, process.stdout.columns || 80) - indent.length * 2
-        );
-        console.log(`${indent}${colors.border(separator)}`);
-        const renderedSummary = renderMarkdown(
-          summaryContent,
-          (process.stdout.columns || 80) - indent.length * 4
-        );
-        console.log(
-          `${indent}${theme.predefinedStyles.dim(renderedSummary).replace(/^/gm, indent)}`
-        );
-        if (isTruncated) {
-          console.log(
-            `${indent}${colors.textMuted(`(... ${summaryMessage.content.length - maxPreviewLength} more chars hidden)`)}`
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputContextCompressionSummary(
+            'Conversation compressed successfully',
+            summaryContent,
+            isTruncated,
+            summaryMessage.content.length
           );
+        } else {
+          console.log('');
+          console.log(
+            `${indent}${theme.predefinedStyles.title(`${icons.sparkles} Conversation Summary`)}`
+          );
+          const separator = icons.separator.repeat(
+            Math.min(60, process.stdout.columns || 80) - indent.length * 2
+          );
+          console.log(`${indent}${colors.border(separator)}`);
+          const renderedSummary = renderMarkdown(
+            summaryContent,
+            (process.stdout.columns || 80) - indent.length * 4
+          );
+          console.log(
+            `${indent}${theme.predefinedStyles.dim(renderedSummary).replace(/^/gm, indent)}`
+          );
+          if (isTruncated) {
+            console.log(
+              `${indent}${colors.textMuted(`(... ${summaryMessage.content.length - maxPreviewLength} more chars hidden)`)}`
+            );
+          }
+          console.log(`${indent}${colors.border(separator)}`);
         }
-        console.log(`${indent}${colors.border(separator)}`);
       }
 
       // Sync compressed conversation history to slashCommandHandler

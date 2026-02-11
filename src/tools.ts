@@ -17,7 +17,6 @@ import { ripgrep, fdFind } from './ripgrep.js';
 import { getShellConfig, killProcessTree, quoteShellCommand } from './shell.js';
 import { truncateTail, buildTruncationNotice } from './truncate.js';
 import { createAIClient } from './ai-client-factory.js';
-import { output as logOutput } from './output-util.js';
 
 //
 // Tool Description Pattern

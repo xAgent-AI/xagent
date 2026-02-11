@@ -7,7 +7,7 @@
  * It converts CLI-style output into JSON format for programmatic consumption.
  */
 
-import { ChatMessage, SessionInput, SessionOutput } from './types.js';
+import { SessionInput, SessionOutput } from './types.js';
 
 // GUI Agent types (re-exported for SDK usage)
 export type GUIAgentStatus = 'init' | 'running' | 'paused' | 'end' | 'error' | 'user_stopped' | 'call_llm';

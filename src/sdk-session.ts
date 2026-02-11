@@ -9,7 +9,6 @@
 
 import { InteractiveSession } from './session.js';
 import { SdkOutputAdapter } from './sdk-output-adapter.js';
-import { getConfigManager } from './config.js';
 import { ExecutionMode } from './types.js';
 
 /**

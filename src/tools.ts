@@ -3665,7 +3665,7 @@ export class ToolRegistry {
     this._isSdkMode = enabled;
     this._sdkOutputAdapter = adapter;
     // Mark all tools as SDK mode enabled
-    for (const [name, tool] of this.tools) {
+    for (const [, tool] of this.tools) {
       (tool as any)._sdkMode = enabled;
       (tool as any)._sdkOutputAdapter = adapter;
     }

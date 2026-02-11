@@ -1068,7 +1068,8 @@ export class InteractiveSession {
         this.sdkRl.on('line', (line) => {
           const cleanLine = line
             .replace(/^\uFEFF/, '')
-            .replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
+            // eslint-disable-next-line no-control-regex
+            .replace(/[\x00-\x1F\x7F-\x9F]/g, '');
 
           if (this.resolveInput) {
             // Immediate handler available, resolve immediately
@@ -1150,19 +1151,21 @@ export class InteractiveSession {
         break;
 
       case 'set_permission_mode':
-        const { ExecutionMode } = await import('./types.js');
-        const modeMap: Record<string, ExecutionMode> = {
-          'default': ExecutionMode.DEFAULT,
-          'acceptEdits': ExecutionMode.ACCEPT_EDITS,
-          'plan': ExecutionMode.PLAN,
-          'bypassPermissions': ExecutionMode.YOLO,
-        };
-        const mode = modeMap[req.mode] || ExecutionMode.SMART;
-        this.executionMode = mode;
-        this.sdkOutputAdapter?.outputSystem('permission_mode_changed', {
-          request_id,
-          mode: req.mode
-        });
+        {
+          const { ExecutionMode } = await import('./types.js');
+          const modeMap: Record<string, ExecutionMode> = {
+            'default': ExecutionMode.DEFAULT,
+            'acceptEdits': ExecutionMode.ACCEPT_EDITS,
+            'plan': ExecutionMode.PLAN,
+            'bypassPermissions': ExecutionMode.YOLO,
+          };
+          const mode = modeMap[req.mode] || ExecutionMode.SMART;
+          this.executionMode = mode;
+          this.sdkOutputAdapter?.outputSystem('permission_mode_changed', {
+            request_id,
+            mode: req.mode
+          });
+        }
         break;
 
       case 'set_model':
@@ -1599,7 +1602,6 @@ export class InteractiveSession {
     // Mark that an operation is in progress
     (this as any)._isOperationInProgress = true;
 
-    const indent = this.getIndent();
     const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
     const icon = colors.primary(icons.brain);
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -2233,8 +2235,6 @@ export class InteractiveSession {
         });
       }
     }
-
-    const errorOccurredInLoop = _hasError;
 
     // Logic: Only skip returning results to main agent when user explicitly cancelled (ESC)
     // For all other cases (success, failure, errors), always return results for further processing

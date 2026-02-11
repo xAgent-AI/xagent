@@ -208,7 +208,7 @@ export class CheckpointManager {
         const metadataPath = path.join(this.checkpointsDir, `${checkpoint.id}.json`);
         try {
           await fs.unlink(metadataPath);
-        } catch (error) {
+        } catch {
           // Ignore if file doesn't exist
         }
         

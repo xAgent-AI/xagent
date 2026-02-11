@@ -2,6 +2,60 @@ import { spawn, ChildProcess } from 'child_process';
 import { MCPServerConfig } from './types.js';
 import { getSingletonSession } from './session.js';
 
+// Unified output function that automatically chooses SDK or console based on mode
+type OutputType = 'info' | 'error' | 'success' | 'warning';
+
+let _sdkAdapter: any = null;
+let _isSdkMode: boolean = false;
+
+// Initialize SDK mode (call this when session is available)
+export function initOutputMode(isSdkMode: boolean, adapter?: any): void {
+  _isSdkMode = isSdkMode;
+  _sdkAdapter = adapter;
+}
+
+// Unified output function
+async function output(type: OutputType, message: string, context?: Record<string, any>): Promise<void> {
+  // Try to use SDK adapter if available and in SDK mode
+  if (_isSdkMode && _sdkAdapter) {
+    try {
+      switch (type) {
+        case 'info':
+          _sdkAdapter.outputInfo(message);
+          break;
+        case 'error':
+          _sdkAdapter.outputError(message, context);
+          break;
+        case 'warning':
+          _sdkAdapter.outputWarning(message);
+          break;
+        case 'success':
+          _sdkAdapter.outputSuccess(message);
+          break;
+      }
+      return; // SDK output successful, don't use console
+    } catch {
+      // Fall through to console on error
+    }
+  }
+
+  // Console output
+  switch (type) {
+    case 'info':
+      console.log(message);
+      break;
+    case 'error':
+      console.error(message, context?.error || '');
+      break;
+    case 'warning':
+      console.warn(message);
+      break;
+    case 'success':
+      console.log(message);
+      break;
+  }
+}
+
 export interface MCPTool {
   name: string;
   description: string;
@@ -49,10 +103,10 @@ export class MCPServer {
       if (session?.getIsSdkMode()) {
         // SDK 模式下不输出
       } else {
-        console.log(`✅ MCP Server connected`);
+        await output('success', `✅ MCP Server connected`);
       }
     } catch (error) {
-      console.error(`❌ [mcp] Failed to connect MCP Server: ${error instanceof Error ? error.message : String(error)}`);
+      await output('error', `❌ [mcp] Failed to connect MCP Server`, { error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   }
@@ -76,7 +130,7 @@ export class MCPServer {
           resolve();
         } else if (Date.now() - startTime > timeoutMs) {
           clearInterval(checkInterval);
-          console.warn(`[MCP] Timeout waiting for tools (${timeoutMs}ms), proceeding anyway`);
+          await output('warning', `[MCP] Timeout waiting for tools (${timeoutMs}ms), proceeding anyway`);
           resolve();  // Don't reject, just proceed without tools
         } else {
           // Continue checking
@@ -102,12 +156,12 @@ export class MCPServer {
       });
 
       this.process.on('error', (error) => {
-        console.error('MCP Server error:', error);
+        output('error', 'MCP Server error', { error: error.message });
         reject(error);
       });
 
       this.process.on('exit', (code, signal) => {
-        console.log(`MCP Server exited with code ${code}, signal ${signal}`);
+        output('info', `MCP Server exited with code ${code}, signal ${signal}`);
         this.isConnected = false;
       });
 
@@ -119,7 +173,7 @@ export class MCPServer {
 
       if (this.process.stderr) {
         this.process.stderr.on('data', (data) => {
-          console.error('MCP Server stderr:', data.toString());
+          output('error', 'MCP Server stderr', { error: data.toString() });
         });
       }
 
@@ -200,7 +254,8 @@ export class MCPServer {
         // which handles both regular JSON and SSE format responses
         await this.loadTools(headers);
       } catch (error: any) {
-        console.error(`HTTP connection failed: ${error.message}`);
+        const errorMsg = `HTTP connection failed: ${error.message}`;
+        await output('error', errorMsg, { error: error.message });
         if (error.response) {
           console.error(`Response status: ${error.response.status}`);
           if (error.response.data?.message) {

@@ -3536,6 +3536,7 @@ export class ToolRegistry {
   private backgroundTasks: Map<string, { process: any; startTime: number; output: string[] }> =
     new Map();
   private _isSdkMode: boolean = false;
+  private _sdkOutputAdapter: any = null;
 
   constructor() {
     this.todoWriteTool = new TodoWriteTool();
@@ -3662,6 +3663,7 @@ export class ToolRegistry {
    */
   async setSdkMode(enabled: boolean, adapter: any): Promise<void> {
     this._isSdkMode = enabled;
+    this._sdkOutputAdapter = adapter;
     // Mark all tools as SDK mode enabled
     for (const [name, tool] of this.tools) {
       (tool as any)._sdkMode = enabled;
@@ -4321,19 +4323,8 @@ export class ToolRegistry {
       throw new Error(`Tool ${toolName} is not allowed in ${executionMode} mode`);
     }
 
-    // Get SDK adapter from session for SDK mode output
-    let sdkOutputAdapter: any = null;
-    let isSdkMode = false;
-    try {
-      const { getSingletonSession } = await import('./session.js');
-      const session = getSingletonSession();
-      if (session) {
-        isSdkMode = (session as any).isSdkMode;
-        sdkOutputAdapter = (session as any).sdkOutputAdapter;
-      }
-    } catch {
-      // Session not available
-    }
+    const isSdkMode = this._isSdkMode;
+    const sdkOutputAdapter = this._sdkOutputAdapter;
 
     // Smart approval mode
     if (executionMode === ExecutionMode.SMART) {
@@ -4484,19 +4475,8 @@ export class ToolRegistry {
     const server = mcpManager.getServer(serverName);
     const _serverTools = server?.getToolNames() || [];
 
-    // Get SDK adapter from session for SDK mode output
-    let sdkOutputAdapter: any = null;
-    let isSdkMode = false;
-    try {
-      const { getSingletonSession } = await import('./session.js');
-      const session = getSingletonSession();
-      if (session) {
-        isSdkMode = (session as any).isSdkMode;
-        sdkOutputAdapter = (session as any).sdkOutputAdapter;
-      }
-    } catch {
-      // Session not available
-    }
+    const isSdkMode = this._isSdkMode;
+    const sdkOutputAdapter = this._sdkOutputAdapter;
 
     // Display tool call info
     if (!isSdkMode || !sdkOutputAdapter) {

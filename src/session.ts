@@ -93,6 +93,10 @@ export class InteractiveSession {
   private heartbeatTimeoutMs: number = 300000; // 5 minutes timeout for long AI responses
   private lastActivityTime: number = Date.now();
 
+  // SDK response handling for approvals and questions
+  private approvalPromises: Map<string, { resolve: (approved: boolean) => void; reject: (err: Error) => void }> = new Map();
+  private questionPromises: Map<string, { resolve: (answers: string[]) => void; reject: (err: Error) => void }> = new Map();
+
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -186,15 +190,29 @@ export class InteractiveSession {
   setSdkMode(adapter: SdkOutputAdapter): void {
     this.isSdkMode = true;
     this.sdkOutputAdapter = adapter;
-    
+
     // Initialize SDK mode for other modules using centralized output util
     const { initOutputMode } = require('./output-util.js');
     initOutputMode(true, adapter);
-    
+
+    // Initialize SmartApprovalEngine in SDK mode
+    this.initSmartApprovalSdkMode(adapter).catch(() => {
+      // Silently ignore errors - not critical
+    });
+
     // Initialize tool registry in SDK mode (fire and forget, doesn't need to await)
     this.initToolRegistrySdkMode(adapter).catch(() => {
       // Silently ignore errors - tool registry init is not critical
     });
+  }
+
+  /**
+   * Initialize SmartApprovalEngine in SDK mode.
+   */
+  private async initSmartApprovalSdkMode(adapter: SdkOutputAdapter): Promise<void> {
+    const { getSmartApprovalEngine } = await import('./smart-approval.js');
+    const approvalEngine = getSmartApprovalEngine();
+    approvalEngine.setSdkMode(true, adapter);
   }
 
   /**
@@ -995,6 +1013,14 @@ export class InteractiveSession {
             // Handle user message from SDK
             await this.processUserMessage(sdkMessage.content);
             return;
+          } else if (sdkMessage.type === 'approval_response') {
+            // Handle approval response
+            await this.handleApprovalResponse(sdkMessage);
+            return;
+          } else if (sdkMessage.type === 'question_response') {
+            // Handle question response
+            await this.handleQuestionResponse(sdkMessage);
+            return;
           }
         }
       } else {
@@ -1050,10 +1076,56 @@ export class InteractiveSession {
   }
 
   private sdkRl: readline.Interface | null = null;
+  private sdkInputProcessing: boolean = false;
+
+  /**
+   * Check if a line is an SDK control message (approval_response, question_response)
+   */
+  private isSdkControlMessage(line: string): boolean {
+    try {
+      const parsed = JSON.parse(line);
+      return parsed.type === 'approval_response' || parsed.type === 'question_response';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Process an SDK input line (returns true if processed)
+   */
+  private async processSdkInputLine(line: string): Promise<boolean> {
+    const { isSdkMessage, parseSdkMessage } = await import('./types.js');
+
+    if (isSdkMessage(line)) {
+      const sdkMessage = parseSdkMessage(line);
+
+      if (sdkMessage) {
+        if (sdkMessage.type === 'ping') {
+          await this.handlePing(sdkMessage);
+          return true;
+        } else if (sdkMessage.type === 'control_request') {
+          await this.handleControlRequest(sdkMessage);
+          return true;
+        } else if (sdkMessage.type === 'user') {
+          this._currentRequestId = sdkMessage.request_id || null;
+          await this.processUserMessage(sdkMessage.content);
+          return true;
+        } else if (sdkMessage.type === 'approval_response') {
+          await this.handleApprovalResponse(sdkMessage);
+          return true;
+        } else if (sdkMessage.type === 'question_response') {
+          await this.handleQuestionResponse(sdkMessage);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
 
   /**
    * Read a line of input from stdin (SDK mode)
    * Uses readline 'line' event for reliable stdin reading
+   * SDK control messages (approval_response, question_response) bypass the main loop
    */
   private readSdkInput(): Promise<string | null> {
     return new Promise((resolve) => {
@@ -1064,13 +1136,32 @@ export class InteractiveSession {
           crlfDelay: Infinity,
         });
 
-        // Handle line events
-        this.sdkRl.on('line', (line) => {
+        // Handle line events - SDK control messages bypass normal flow
+        this.sdkRl.on('line', async (line) => {
           const cleanLine = line
             .replace(/^\uFEFF/, '')
             // eslint-disable-next-line no-control-regex
             .replace(/[\x00-\x1F\x7F-\x9F]/g, '');
 
+          // Check if this is an SDK control message
+          if (this.isSdkControlMessage(cleanLine)) {
+            // Process immediately, don't wait for main loop
+            // We need to set a flag to prevent re-entrancy issues
+            if (this.sdkInputProcessing) {
+              // Already processing, queue it
+              this.sdkInputBuffer.push(cleanLine);
+            } else {
+              this.sdkInputProcessing = true;
+              try {
+                await this.processSdkInputLine(cleanLine);
+              } finally {
+                this.sdkInputProcessing = false;
+              }
+            }
+            return;
+          }
+
+          // Regular input
           if (this.resolveInput) {
             // Immediate handler available, resolve immediately
             this.resolveInput(cleanLine);
@@ -1098,7 +1189,16 @@ export class InteractiveSession {
         });
       }
 
-      // Check if there's already input in buffer
+      // Check for SDK control messages in buffer first
+      for (let i = 0; i < this.sdkInputBuffer.length; i++) {
+        const line = this.sdkInputBuffer[i];
+        if (this.isSdkControlMessage(line)) {
+          this.sdkInputBuffer.splice(i, 1);
+          resolve(line);
+          return;
+        }
+      }
+
       if (this.sdkInputBuffer.length > 0) {
         const line = this.sdkInputBuffer.shift()!;
         resolve(line);
@@ -1178,6 +1278,96 @@ export class InteractiveSession {
       default:
         this.sdkOutputAdapter?.outputWarning(`Unknown control request: ${req.subtype}`);
     }
+  }
+
+  /**
+   * Handle SDK approval responses
+   */
+  private async handleApprovalResponse(response: {
+    request_id: string;
+    approved: boolean;
+  }): Promise<void> {
+    const { request_id, approved } = response;
+
+    const pending = this.approvalPromises.get(request_id);
+    if (pending) {
+      pending.resolve(approved);
+      this.approvalPromises.delete(request_id);
+    } else {
+      this.sdkOutputAdapter?.outputWarning(`Unknown approval request ID: ${request_id}`);
+    }
+  }
+
+  /**
+   * Handle SDK question responses
+   */
+  private async handleQuestionResponse(response: {
+    request_id: string;
+    answers: string[];
+  }): Promise<void> {
+    const { request_id, answers } = response;
+
+    const pending = this.questionPromises.get(request_id);
+    if (pending) {
+      pending.resolve(answers);
+      this.questionPromises.delete(request_id);
+    } else {
+      this.sdkOutputAdapter?.outputWarning(`Unknown question request ID: ${request_id}`);
+    }
+  }
+
+  /**
+   * Wait for SDK approval response
+   */
+  async waitForApprovalResponse(requestId: string, timeoutMs: number = 300000): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const pending = this.approvalPromises.get(requestId);
+        if (pending) {
+          pending.reject(new Error('Approval request timeout'));
+          this.approvalPromises.delete(requestId);
+        }
+        resolve(false);
+      }, timeoutMs);
+
+      this.approvalPromises.set(requestId, {
+        resolve: (approved: boolean) => {
+          clearTimeout(timeout);
+          resolve(approved);
+        },
+        reject: (err: Error) => {
+          clearTimeout(timeout);
+          reject(err);
+        }
+      });
+    });
+  }
+
+  /**
+   * Wait for SDK question response
+   */
+  async waitForQuestionResponse(requestId: string, timeoutMs: number = 300000): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const pending = this.questionPromises.get(requestId);
+        if (pending) {
+          pending.reject(new Error('Question request timeout'));
+          this.questionPromises.delete(requestId);
+        }
+        resolve([]);  // Return empty array on timeout instead of rejecting
+      }, timeoutMs);
+
+      this.questionPromises.set(requestId, {
+        resolve: (answers: string[]) => {
+          clearTimeout(timeout);
+          resolve(answers);
+        },
+        reject: (err: Error) => {
+          clearTimeout(timeout);
+          reject(err);
+        }
+      });
+    });
   }
 
   private async handleSubAgentCommand(input: string): Promise<void> {

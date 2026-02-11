@@ -504,6 +504,92 @@ export class SdkOutputAdapter {
     });
   }
 
+  // ==================== SDK Approval Request ====================
+
+  /**
+   * Format and output approval request (for SDK mode).
+   * This is sent when a potentially risky operation needs user confirmation.
+   */
+  outputApprovalRequest(params: {
+    requestId: string;
+    toolName: string;
+    params: Record<string, unknown>;
+    riskLevel: string;
+    description: string;
+    aiAnalysis?: string;
+  }): void {
+    this.output({
+      type: 'system',
+      subtype: 'approval_request',
+      timestamp: Date.now(),
+      data: {
+        requestId: params.requestId,
+        toolName: params.toolName,
+        params: params.params,
+        riskLevel: params.riskLevel,
+        description: params.description,
+        aiAnalysis: params.aiAnalysis,
+        approved: false  // Default to not approved, client must respond
+      }
+    });
+  }
+
+  /**
+   * Format and output approval response received (for SDK mode logging).
+   */
+  outputApprovalResponse(requestId: string, approved: boolean): void {
+    this.output({
+      type: 'system',
+      subtype: 'approval_response',
+      timestamp: Date.now(),
+      data: {
+        requestId,
+        approved
+      }
+    });
+  }
+
+  // ==================== SDK Question Request ====================
+
+  /**
+   * Format and output question request (for SDK mode).
+   * This is sent when the agent needs to ask the user questions.
+   */
+  outputQuestionRequest(params: {
+    requestId: string;
+    questions: Array<{
+      question: string;
+      header?: string;
+      options?: string[];
+      multiSelect?: boolean;
+    }>;
+  }): void {
+    this.output({
+      type: 'system',
+      subtype: 'question_request',
+      timestamp: Date.now(),
+      data: {
+        requestId: params.requestId,
+        questions: params.questions
+      }
+    });
+  }
+
+  /**
+   * Format and output question response received (for SDK mode logging).
+   */
+  outputQuestionResponse(requestId: string, answers: string[]): void {
+    this.output({
+      type: 'system',
+      subtype: 'question_response',
+      timestamp: Date.now(),
+      data: {
+        requestId,
+        answers
+      }
+    });
+  }
+
   // ==================== GUI Agent Output Methods ====================
 
   /**

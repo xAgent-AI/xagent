@@ -34,6 +34,9 @@ export async function startSdkSession(): Promise<void> {
   // Set up stdin handler for SDK mode
   process.stdin.setEncoding('utf8');
   
+  // Resume stdin to allow reading from terminal
+  process.stdin.resume();
+  
   // Handle Ctrl+C
   process.on('SIGINT', () => {
     if ((session as any)._isShuttingDown) {

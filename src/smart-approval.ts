@@ -6,6 +6,7 @@ import { AuthType } from './types.js';
 import { getLogger } from './logger.js';
 import { colors, icons } from './theme.js';
 import { getCancellationManager } from './cancellation.js';
+import { SdkOutputAdapter } from './sdk-output-adapter.js';
 
 const logger = getLogger();
 
@@ -494,12 +495,36 @@ export class SmartApprovalEngine {
   private blacklistChecker: BlacklistChecker;
   private aiChecker: AIApprovalChecker;
   private debugMode: boolean;
+  private sdkAdapter: SdkOutputAdapter | null = null;
+  private isSdkMode: boolean = false;
 
   constructor(debugMode: boolean = false) {
     this.whitelistChecker = new WhitelistChecker();
     this.blacklistChecker = new BlacklistChecker();
     this.aiChecker = new AIApprovalChecker();
     this.debugMode = debugMode;
+  }
+
+  /**
+   * Set SDK mode and output adapter for SDK mode support
+   */
+  setSdkMode(enabled: boolean, adapter: SdkOutputAdapter | null): void {
+    this.isSdkMode = enabled;
+    this.sdkAdapter = adapter;
+  }
+
+  /**
+   * Check if in SDK mode
+   */
+  getIsSdkMode(): boolean {
+    return this.isSdkMode;
+  }
+
+  /**
+   * Get SDK adapter
+   */
+  getSdkAdapter(): SdkOutputAdapter | null {
+    return this.sdkAdapter;
   }
 
   /**
@@ -583,7 +608,17 @@ export class SmartApprovalEngine {
   /**
    * Request user confirmation
    */
-  async requestConfirmation(result: ApprovalResult): Promise<boolean> {
+  async requestConfirmation(
+    result: ApprovalResult,
+    toolName?: string,
+    toolParams?: Record<string, unknown>
+  ): Promise<boolean> {
+    // Check if in SDK mode with adapter
+    if (this.isSdkMode && this.sdkAdapter) {
+      return this.requestConfirmationSdk(result, toolName, toolParams);
+    }
+
+    // Regular TUI mode
     const separator = icons.separator.repeat(40);
     console.log('');
     console.log(
@@ -618,6 +653,46 @@ export class SmartApprovalEngine {
     } catch (error) {
       logger.error(
         'Failed to get user confirmation',
+        error instanceof Error ? error.message : String(error)
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Request user confirmation in SDK mode
+   */
+  private async requestConfirmationSdk(
+    result: ApprovalResult,
+    toolName?: string,
+    toolParams?: Record<string, unknown>
+  ): Promise<boolean> {
+    const requestId = `approval_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Output approval request through SDK adapter
+    this.sdkAdapter!.outputApprovalRequest({
+      requestId,
+      toolName: toolName || 'unknown',
+      params: toolParams || {},
+      riskLevel: result.riskLevel,
+      description: result.description,
+      aiAnalysis: result.aiAnalysis
+    });
+
+    // Wait for SDK response using session
+    try {
+      const { getSingletonSession } = await import('./session.js');
+      const session = getSingletonSession();
+      if (!session) {
+        logger.error('SDK session not available');
+        return false;
+      }
+      const approved = await session.waitForApprovalResponse(requestId);
+      this.sdkAdapter!.outputApprovalResponse(requestId, approved);
+      return approved;
+    } catch (error) {
+      logger.error(
+        'Failed to get SDK approval response',
         error instanceof Error ? error.message : String(error)
       );
       return false;

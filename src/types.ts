@@ -255,9 +255,27 @@ export interface SdkPingMessage {
 }
 
 /**
+ * SDK approval response message (for responding to approval requests in SDK mode)
+ */
+export interface SdkApprovalResponse {
+  type: 'approval_response';
+  request_id: string;
+  approved: boolean;
+}
+
+/**
+ * SDK question response message (for responding to ask_user_question in SDK mode)
+ */
+export interface SdkQuestionResponse {
+  type: 'question_response';
+  request_id: string;
+  answers: string[];
+}
+
+/**
  * SDK input message union type
  */
-export type SdkInputMessageType = SdkInputMessage | SdkControlRequest | SdkPingMessage;
+export type SdkInputMessageType = SdkInputMessage | SdkControlRequest | SdkPingMessage | SdkApprovalResponse | SdkQuestionResponse;
 
 /**
  * Check if a string is a JSON SDK message
@@ -274,7 +292,9 @@ export function isSdkMessage(input: string): boolean {
     return (
       parsed.type === 'user' ||
       parsed.type === 'control_request' ||
-      parsed.type === 'ping'
+      parsed.type === 'ping' ||
+      parsed.type === 'approval_response' ||
+      parsed.type === 'question_response'
     );
   } catch {
     return false;
@@ -300,6 +320,14 @@ export function parseSdkMessage(input: string): SdkInputMessageType | null {
 
     if (parsed.type === 'ping') {
       return parsed as SdkPingMessage;
+    }
+
+    if (parsed.type === 'approval_response') {
+      return parsed as SdkApprovalResponse;
+    }
+
+    if (parsed.type === 'question_response') {
+      return parsed as SdkQuestionResponse;
     }
 
     return null;

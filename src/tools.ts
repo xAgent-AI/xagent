@@ -3008,6 +3008,31 @@ export class AskUserQuestionTool implements Tool {
   }): Promise<{ answers: string[] }> {
     const { questions } = params;
 
+    // Check if in SDK mode
+    const sdkMode = (this as any)._sdkMode;
+    const sdkAdapter = (this as any)._sdkOutputAdapter;
+
+    if (sdkMode && sdkAdapter) {
+      return this.executeSdk(params, sdkAdapter);
+    }
+
+    // Regular TUI mode
+    return this.executeTui(params);
+  }
+
+  /**
+   * Execute in TUI mode using @clack/prompts
+   */
+  private async executeTui(params: {
+    questions: Array<{
+      question: string;
+      header?: string;
+      options?: string[];
+      multiSelect?: boolean;
+    }>;
+  }): Promise<{ answers: string[] }> {
+    const { questions } = params;
+
     try {
       if (questions.length === 0 || questions.length > 4) {
         throw new Error('Must provide 1-4 questions');
@@ -3036,6 +3061,54 @@ export class AskUserQuestionTool implements Tool {
       return { answers };
     } catch (error: any) {
       throw new Error(`Failed to ask user questions: ${error.message}`);
+    }
+  }
+
+  /**
+   * Execute in SDK mode - output question request and wait for response
+   */
+  private async executeSdk(
+    params: {
+      questions: Array<{
+        question: string;
+        header?: string;
+        options?: string[];
+        multiSelect?: boolean;
+      }>;
+    },
+    sdkAdapter: any
+  ): Promise<{ answers: string[] }> {
+    const { questions } = params;
+
+    if (questions.length === 0 || questions.length > 4) {
+      throw new Error('Must provide 1-4 questions');
+    }
+
+    const requestId = `question_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Output question request through SDK adapter
+    sdkAdapter.outputQuestionRequest({
+      requestId,
+      questions
+    });
+
+    // Wait for SDK question response
+    // The response will be handled by session.ts which has access to the SDK input
+    // For now, we use a polling mechanism or wait for a specific event
+
+    try {
+      // Import the session to get response handling
+      const { getSingletonSession } = await import('./session.js');
+      const session = getSingletonSession();
+      if (!session) {
+        throw new Error('SDK session not available');
+      }
+      const answers = await session.waitForQuestionResponse(requestId);
+
+      sdkAdapter.outputQuestionResponse(requestId, answers);
+      return { answers };
+    } catch (error: any) {
+      throw new Error(`Failed to get SDK question response: ${error.message}`);
     }
   }
 }
@@ -4440,6 +4513,11 @@ export class ToolRegistry {
 
       const approvalEngine = getSmartApprovalEngine(debugMode);
 
+      // Set SDK mode for approval engine if in SDK mode
+      if (isSdkMode && sdkOutputAdapter) {
+        approvalEngine.setSdkMode(true, sdkOutputAdapter);
+      }
+
       // Evaluate tool call
       const result = await approvalEngine.evaluate({
         toolName,
@@ -4470,7 +4548,7 @@ export class ToolRegistry {
         );
       } else if (result.decision === 'requires_confirmation') {
         // Requires user confirmation
-        const confirmed = await approvalEngine.requestConfirmation(result);
+        const confirmed = await approvalEngine.requestConfirmation(result, toolName, params);
 
         if (confirmed) {
           if (isSdkMode && sdkOutputAdapter) {
@@ -4575,6 +4653,11 @@ export class ToolRegistry {
       } else {
         const approvalEngine = getSmartApprovalEngine(debugMode);
 
+        // Set SDK mode for approval engine if in SDK mode
+        if (isSdkMode && sdkOutputAdapter) {
+          approvalEngine.setSdkMode(true, sdkOutputAdapter);
+        }
+
         // Evaluate MCP tool call
         const result = await approvalEngine.evaluate({
           toolName: `MCP[${serverName}]::${actualToolName}`,
@@ -4595,7 +4678,11 @@ export class ToolRegistry {
             );
           }
         } else if (result.decision === 'requires_confirmation') {
-          const confirmed = await approvalEngine.requestConfirmation(result);
+          const confirmed = await approvalEngine.requestConfirmation(
+            result,
+            `MCP[${serverName}]::${actualToolName}`,
+            params
+          );
           if (!confirmed) {
             if (isSdkMode && sdkOutputAdapter) {
               sdkOutputAdapter.outputWarning(`[Smart Mode] User cancelled MCP tool execution`);

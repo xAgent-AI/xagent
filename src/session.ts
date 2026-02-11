@@ -1702,6 +1702,13 @@ export class InteractiveSession {
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
 
+      // Signal request completion to SDK
+      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
+        const status = error.message === 'Operation cancelled by user' ? 'cancelled' : 'error';
+        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, status);
+        this._currentRequestId = null;
+      }
+
       if (error.message === 'Operation cancelled by user') {
         // Notify backend to cancel the task
         if (this.remoteAIClient && this.currentTaskId) {

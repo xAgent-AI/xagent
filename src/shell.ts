@@ -1,3 +1,4 @@
+import { existsSync } from 'fs';
 import { spawn, spawnSync } from 'child_process';
 import { output as logOutput } from './output-util.js';
 

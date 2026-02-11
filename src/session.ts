@@ -186,6 +186,36 @@ export class InteractiveSession {
   setSdkMode(adapter: SdkOutputAdapter): void {
     this.isSdkMode = true;
     this.sdkOutputAdapter = adapter;
+    
+    // Initialize SDK mode for other modules
+    try {
+      const { initOutputMode: initAgentsOutput } = require('./agents.js');
+      initAgentsOutput(true, adapter);
+    } catch {
+      // Ignore if agents module not available
+    }
+    
+    try {
+      const { initOutputMode: initCheckpointOutput } = require('./checkpoint.js');
+      initCheckpointOutput(true, adapter);
+    } catch {
+      // Ignore if checkpoint module not available
+    }
+    
+    try {
+      const { initOutputMode: initConversationOutput } = require('./conversation.js');
+      initConversationOutput(true, adapter);
+    } catch {
+      // Ignore if conversation module not available
+    }
+    
+    try {
+      const { initOutputMode: initCompressorOutput } = require('./context-compressor.js');
+      initCompressorOutput(true, adapter);
+    } catch {
+      // Ignore if compressor module not available
+    }
+    
     // Initialize tool registry in SDK mode (fire and forget, doesn't need to await)
     this.initToolRegistrySdkMode(adapter).catch(() => {
       // Silently ignore errors - tool registry init is not critical

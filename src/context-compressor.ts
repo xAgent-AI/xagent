@@ -1,8 +1,64 @@
 import { ChatMessage, CompressionConfig } from './types.js';
+
+import { ChatMessage, CompressionConfig } from './types.js';
 import type { Message } from './ai-client/types.js';
 import { AuthConfig } from './types.js';
 import { getCancellationManager } from './cancellation.js';
 import { createAIClient, AIClientInterface } from './ai-client-factory.js';
+
+// Unified output function that automatically chooses SDK or console based on mode
+type OutputType = 'info' | 'error' | 'success' | 'warning';
+
+let _sdkAdapter: any = null;
+let _isSdkMode: boolean = false;
+
+// Initialize SDK mode (call this when session is available)
+export function initOutputMode(isSdkMode: boolean, adapter?: any): void {
+  _isSdkMode = isSdkMode;
+  _sdkAdapter = adapter;
+}
+
+// Unified output function
+async function output(type: OutputType, message: string, context?: Record<string, any>): Promise<void> {
+  // Try to use SDK adapter if available and in SDK mode
+  if (_isSdkMode && _sdkAdapter) {
+    try {
+      switch (type) {
+        case 'info':
+          _sdkAdapter.outputInfo(message);
+          break;
+        case 'error':
+          _sdkAdapter.outputError(message, context);
+          break;
+        case 'warning':
+          _sdkAdapter.outputWarning(message);
+          break;
+        case 'success':
+          _sdkAdapter.outputSuccess(message);
+          break;
+      }
+      return; // SDK output successful, don't use console
+    } catch {
+      // Fall through to console on error
+    }
+  }
+
+  // Console output
+  switch (type) {
+    case 'info':
+      console.log(message);
+      break;
+    case 'error':
+      console.error(message, context?.error || '');
+      break;
+    case 'warning':
+      console.warn(message);
+      break;
+    case 'success':
+      console.log(message);
+      break;
+  }
+}
 
 /**
  * Model context window sizes (in tokens)
@@ -713,6 +769,7 @@ export class ContextCompressor {
         throw error;
       }
       console.error('Failed to generate summary:', error);
+      await output('Failed to generate summary', error);
       const userCount = messages.filter(m => m.role === 'user').length;
       const toolCount = messages.filter(m => m.role === 'tool').length;
       return `[Summary of ${messages.length} messages: ${userCount} user exchanges, ${toolCount} tool calls. Key topics discussed but details unavailable due to summarization error.]`;
@@ -765,6 +822,7 @@ export class ContextCompressor {
         throw error;
       }
       console.error('Failed to generate turn prefix summary:', error);
+      await output('Failed to generate turn prefix summary', error);
       return '[Turn prefix summary unavailable]';
     }
   }
@@ -894,7 +952,7 @@ export class ContextCompressor {
       } else {
         // No user message in kept messages (rare case)
         // Insert summary as a user message, then add all kept messages
-        // This ensures valid message order: user → assistant → tool → tool...
+        // This ensures valid message order: user �?assistant �?tool �?tool...
         compressedMessages.push({
           role: 'user',
           content: `[Conversation Summary - ${messagesToSummarize.length} messages compressed]\n\n${summary}`,

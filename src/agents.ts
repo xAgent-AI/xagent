@@ -4,6 +4,60 @@ import os from 'os';
 import { AgentConfig, ExecutionMode } from './types.js';
 import { getToolRegistry } from './tools.js';
 
+// Unified output function that automatically chooses SDK or console based on mode
+type OutputType = 'info' | 'error' | 'success' | 'warning';
+
+let _sdkAdapter: any = null;
+let _isSdkMode: boolean = false;
+
+// Initialize SDK mode (call this when session is available)
+export function initOutputMode(isSdkMode: boolean, adapter?: any): void {
+  _isSdkMode = isSdkMode;
+  _sdkAdapter = adapter;
+}
+
+// Unified output function
+async function output(type: OutputType, message: string, context?: Record<string, any>): Promise<void> {
+  // Try to use SDK adapter if available and in SDK mode
+  if (_isSdkMode && _sdkAdapter) {
+    try {
+      switch (type) {
+        case 'info':
+          _sdkAdapter.outputInfo(message);
+          break;
+        case 'error':
+          _sdkAdapter.outputError(message, context);
+          break;
+        case 'warning':
+          _sdkAdapter.outputWarning(message);
+          break;
+        case 'success':
+          _sdkAdapter.outputSuccess(message);
+          break;
+      }
+      return; // SDK output successful, don't use console
+    } catch {
+      // Fall through to console on error
+    }
+  }
+
+  // Console output
+  switch (type) {
+    case 'info':
+      console.log(message);
+      break;
+    case 'error':
+      console.error(message, context?.error || '');
+      break;
+    case 'warning':
+      console.warn(message);
+      break;
+    case 'success':
+      console.log(message);
+      break;
+  }
+}
+
 export class AgentManager {
   private agents: Map<string, AgentConfig> = new Map();
   private globalAgentsPath: string;
@@ -51,7 +105,7 @@ export class AgentManager {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error(`Failed to load agents from ${dirPath}:`, error);
+        await output('error', `Failed to load agents from ${dirPath}`, { error: (error as Error).message });
       }
     }
   }
@@ -77,7 +131,7 @@ export class AgentManager {
          }
        }
      } catch (error) {
-       console.error('Failed to apply JSON agent config:', error);
+       await output('error', 'Failed to apply JSON agent config', { error: (error as Error).message });
      }
    }
 
@@ -122,7 +176,7 @@ export class AgentManager {
         description: config.description
       };
     } catch (error) {
-      console.error('Failed to parse agent config:', error);
+      await output('error', 'Failed to parse agent config', { error: (error as Error).message });
       return null;
     }
   }

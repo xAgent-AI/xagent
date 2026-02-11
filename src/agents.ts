@@ -78,7 +78,7 @@ export class AgentManager {
          }
        }
      } catch (error) {
-       await logOutput('error', 'Failed to apply JSON agent config', { error: (error as Error).message });
+       logOutput('error', 'Failed to apply JSON agent config', { error: (error as Error).message });
      }
    }
 
@@ -123,7 +123,7 @@ export class AgentManager {
         description: config.description
       };
     } catch (error) {
-      await logOutput('error', 'Failed to parse agent config', { error: (error as Error).message });
+      logOutput('error', 'Failed to parse agent config', { error: (error as Error).message });
       return null;
     }
   }

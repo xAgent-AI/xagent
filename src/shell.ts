@@ -167,23 +167,22 @@ export function killProcessTree(pid: number): void {
 		try {
 			spawn('taskkill', ['/F', '/T', '/PID', String(pid)], {
 				stdio: 'ignore',
-				detached: true,
-			});
-		} catch (error) {
-			await logOutput('warning', `[shell] Failed to kill process tree (PID ${pid})`, { error: error instanceof Error ? error.message : String(error) });
-		}
-	} else {
-		// Use SIGKILL on Unix/Linux/Mac
-		try {
-			process.kill(-pid, 'SIGKILL');
-		} catch {
-			// Fallback to killing just the child if process group kill fails
-			try {
-				process.kill(pid, 'SIGKILL');
-			} catch (fallbackError) {
-				await logOutput('warning', `[shell] Failed to kill process (PID ${pid})`, { error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError) });
-			}
-		}
-	}
-}
+							detached: true,
+						});
+					} catch (error) {
+						logOutput('warning', `[shell] Failed to kill process tree (PID ${pid})`, { error: error instanceof Error ? error.message : String(error) });
+					}
+				} else {
+					// Use SIGKILL on Unix/Linux/Mac
+					try {
+						process.kill(-pid, 'SIGKILL');
+					} catch {
+						// Fallback to killing just the child if process group kill fails
+						try {
+							process.kill(pid, 'SIGKILL');
+						} catch (fallbackError) {
+							logOutput('warning', `[shell] Failed to kill process (PID ${pid})`, { error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError) });
+						}
+					}
+				}}
 

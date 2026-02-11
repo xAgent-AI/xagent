@@ -6,18 +6,8 @@ import { promisify } from 'util';
 import crypto from 'crypto';
 import { Checkpoint, ChatMessage, ToolCall } from './types.js';
 import { output as logOutput } from './output-util.js';
-      break;
-    case 'error':
-      console.error(message, context?.error || '');
-      break;
-    case 'warning':
-      console.warn(message);
-      break;
-    case 'success':
-      console.log(message);
-      break;
-  }
-}
+
+const execAsync = promisify(exec);
 
 export class CheckpointManager {
   private snapshotsDir: string;
@@ -105,7 +95,7 @@ export class CheckpointManager {
     this.checkpoints.set(checkpointId, checkpoint);
     await this.cleanupOldCheckpoints();
 
-    console.log(`ï¿?Checkpoint created: ${checkpointId}`);
+    console.log(`ï¿½?Checkpoint created: ${checkpointId}`);
     await logOutput('success', `Checkpoint created: ${checkpointId}`);
     return checkpoint;
   }
@@ -140,7 +130,7 @@ export class CheckpointManager {
 
     await this.restoreGitSnapshot(checkpointId);
 
-    console.log('ï¿?Checkpoint restored successfully');
+    console.log('ï¿½?Checkpoint restored successfully');
     await logOutput('success', `Checkpoint restored successfully: ${checkpointId}`);
   }
 
@@ -182,7 +172,7 @@ export class CheckpointManager {
       }
 
       this.checkpoints.delete(checkpointId);
-      console.log(`ï¿?Checkpoint deleted: ${checkpointId}`);
+      console.log(`ï¿½?Checkpoint deleted: ${checkpointId}`);
       await logOutput('success', `Checkpoint deleted: ${checkpointId}`);
     } catch (error) {
       console.error('Failed to delete checkpoint:', error);
@@ -225,7 +215,7 @@ export class CheckpointManager {
         this.checkpoints.delete(checkpoint.id);
       }
 
-      console.log('ï¿?Checkpoint data cleaned up');
+      console.log('ï¿½?Checkpoint data cleaned up');
       await logOutput('success', 'Checkpoint data cleaned up');
     } catch (error) {
       console.error('Failed to cleanup checkpoint data:', error);
@@ -246,7 +236,7 @@ export class CheckpointManager {
       await fs.rm(this.snapshotsDir, { recursive: true, force: true });
       await fs.rm(this.checkpointsDir, { recursive: true, force: true });
       this.checkpoints.clear();
-      console.log('ï¿?Checkpoint data cleaned up');
+      console.log('ï¿½?Checkpoint data cleaned up');
     } catch (error) {
       console.error('Failed to cleanup checkpoint data:', error);
     }

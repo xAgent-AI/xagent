@@ -1,11 +1,7 @@
-import { ChatMessage, CompressionConfig } from './types.js';
-
-import { ChatMessage, CompressionConfig } from './types.js';
+import { ChatMessage, CompressionConfig, AuthConfig } from './types.js';
 import type { Message } from './ai-client/types.js';
-import { AuthConfig } from './types.js';
 import { getCancellationManager } from './cancellation.js';
 import { createAIClient, AIClientInterface } from './ai-client-factory.js';
-
 import { output as logOutput } from './output-util.js';
 
 /**
@@ -717,7 +713,7 @@ export class ContextCompressor {
         throw error;
       }
       console.error('Failed to generate summary:', error);
-      await logOutput('Failed to generate summary', error);
+      await logOutput('error', 'Failed to generate summary', { error: error.message });
       const userCount = messages.filter(m => m.role === 'user').length;
       const toolCount = messages.filter(m => m.role === 'tool').length;
       return `[Summary of ${messages.length} messages: ${userCount} user exchanges, ${toolCount} tool calls. Key topics discussed but details unavailable due to summarization error.]`;
@@ -770,7 +766,7 @@ export class ContextCompressor {
         throw error;
       }
       console.error('Failed to generate turn prefix summary:', error);
-      await logOutput('Failed to generate turn prefix summary', error);
+      await logOutput('error', 'Failed to generate turn prefix summary', { error: error.message });
       return '[Turn prefix summary unavailable]';
     }
   }
@@ -900,7 +896,7 @@ export class ContextCompressor {
       } else {
         // No user message in kept messages (rare case)
         // Insert summary as a user message, then add all kept messages
-        // This ensures valid message order: user ï¿?assistant ï¿?tool ï¿?tool...
+        // This ensures valid message order: user ï¿½?assistant ï¿½?tool ï¿½?tool...
         compressedMessages.push({
           role: 'user',
           content: `[Conversation Summary - ${messagesToSummarize.length} messages compressed]\n\n${summary}`,

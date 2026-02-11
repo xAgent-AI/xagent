@@ -50,10 +50,10 @@ export class MCPServer {
       if (session?.getIsSdkMode()) {
         // SDK Ê®°Âºè‰∏ã‰∏çËæìÂá∫
       } else {
-        await logOutput('success', `‚ú?MCP Server connected`);
+        await logOutput('success', `ÔøΩ?MCP Server connected`);
       }
     } catch (error) {
-      await logOutput('error', `‚ù?[mcp] Failed to connect MCP Server`, { error: error instanceof Error ? error.message : String(error) });
+      await logOutput('error', `ÔøΩ?[mcp] Failed to connect MCP Server`, { error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   }
@@ -77,7 +77,7 @@ export class MCPServer {
           resolve();
         } else if (Date.now() - startTime > timeoutMs) {
           clearInterval(checkInterval);
-          await logOutput('warning', `[MCP] Timeout waiting for tools (${timeoutMs}ms), proceeding anyway`);
+          logOutput('warning', `[MCP] Timeout waiting for tools (${timeoutMs}ms), proceeding anyway`);
           resolve();  // Don't reject, just proceed without tools
         } else {
           // Continue checking
@@ -103,12 +103,12 @@ export class MCPServer {
       });
 
       this.process.on('error', (error) => {
-        output('error', 'MCP Server error', { error: error.message });
+        logOutput('error', 'MCP Server error', { error: error.message });
         reject(error);
       });
 
       this.process.on('exit', (code, signal) => {
-        output('info', `MCP Server exited with code ${code}, signal ${signal}`);
+        logOutput('info', `MCP Server exited with code ${code}, signal ${signal}`);
         this.isConnected = false;
       });
 
@@ -120,7 +120,7 @@ export class MCPServer {
 
       if (this.process.stderr) {
         this.process.stderr.on('data', (data) => {
-          output('error', 'MCP Server stderr', { error: data.toString() });
+          logOutput('error', 'MCP Server stderr', { error: data.toString() });
         });
       }
 
@@ -283,11 +283,11 @@ export class MCPServer {
       clearTimeout(timeoutId);
       const serverInfo = this.config.url || this.config.command || 'MCP server';
       if (error.name === 'AbortError') {
-        console.error(`\n‚ù?SSE connection timed out`);
+        console.error(`\nÔøΩ?SSE connection timed out`);
         console.error(`   Server: ${serverInfo}`);
         console.error(`   The server is not responding. Please try again later.`);
       } else {
-        console.error(`\n‚ù?SSE connection failed`);
+        console.error(`\nÔøΩ?SSE connection failed`);
         console.error(`   Server: ${serverInfo}`);
         console.error(`   ${error.message}`);
       }
@@ -404,12 +404,12 @@ export class MCPServer {
       } else if (resultData?.tools) {
         this.handleToolsList(resultData);
       } else if (resultData?.error) {
-        console.error(`\n‚ù?MCP server returned an error`);
+        console.error(`\nÔøΩ?MCP server returned an error`);
         console.error(`   ${resultData.error.message || 'Unknown error'}`);
       }
     } catch (error: any) {
       const serverInfo = this.config.url || this.config.command || 'MCP server';
-      console.error(`\n‚ù?Failed to load MCP tools`);
+      console.error(`\nÔøΩ?Failed to load MCP tools`);
       console.error(`   Server: ${serverInfo}`);
       console.error(`   ${error.message}`);
     }

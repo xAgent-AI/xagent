@@ -17,6 +17,7 @@ import { ripgrep, fdFind } from './ripgrep.js';
 import { getShellConfig, killProcessTree, quoteShellCommand } from './shell.js';
 import { truncateTail, buildTruncationNotice } from './truncate.js';
 import { createAIClient } from './ai-client-factory.js';
+import { output as logOutput } from './output-util.js';
 
 //
 // Tool Description Pattern
@@ -2404,7 +2405,8 @@ export class TaskTool implements Tool {
             parsedParams = params;
           }
 
-          console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${name}`)}`);
+          // Display tool call info
+          logOutput('info', `Tool: ${name}`);
 
           try {
             // Check cancellation before tool execution
@@ -2499,11 +2501,16 @@ export class TaskTool implements Tool {
                 `${indent}${colors.error(`${icons.cross} ${toolResult.message || 'Failed'}`)}\n`
               );
             } else if (toolResult) {
-              // Show brief preview by default
-              const indentedPreview = indentMultiline(truncatedPreview, indent);
-              console.log(
-                `${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`
-              );
+              // Show brief preview by default (SDK mode uses outputToolResult via session)
+              if (!isSdkMode) {
+                const indentedPreview = indentMultiline(truncatedPreview, indent);
+                console.log(
+                  `${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`
+                );
+              } else if (sdkOutputAdapter) {
+                // SDK mode: output tool result via adapter
+                sdkOutputAdapter.outputToolResult(name, toolResult);
+              }
             } else {
               console.log(`${indent}${colors.textDim('(no result)')}\n`);
             }

@@ -2393,44 +2393,120 @@ export class TaskTool implements Tool {
         }
       }
 
-      // Process tool calls with proper indentation
+      // Process tool calls in parallel (照搬 session 的实现)
       if (toolCalls && toolCalls.length > 0) {
-        for (const toolCall of toolCalls) {
+        // Prepare all tool calls with their indices
+        const preparedToolCalls = toolCalls.map((toolCall: any) => {
           const { name, arguments: params } = toolCall.function;
-
           let parsedParams: any;
           try {
             parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
           } catch {
             parsedParams = params;
           }
+          return { name, params: parsedParams, id: toolCall.id };
+        });
 
-          // Display tool call info - use SDK adapter in SDK mode
+        // Display all tool call info first
+        for (const tc of preparedToolCalls as Array<{ name: string; params: any; id: string }>) {
           if (isSdkMode && sdkOutputAdapter) {
-            sdkOutputAdapter.outputToolStart(name, parsedParams);
+            sdkOutputAdapter.outputToolStart(tc.name, tc.params);
           } else {
-            console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${name}`)}`);
+            console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${tc.name}`)}`);
           }
+        }
 
+        // Execute all tool calls in parallel
+        const executePromises = preparedToolCalls.map(async (tc: { name: string; params: any; id: string }) => {
           try {
             // Check cancellation before tool execution
             checkCancellation();
 
             const toolResult: any = await cancellationManager.withCancellation(
-              toolRegistry.execute(name, parsedParams, mode, indent),
-              `subagent-${subagent_type}-${name}-${iteration}`
+              toolRegistry.execute(tc.name, tc.params, mode, indent),
+              `subagent-${subagent_type}-${tc.name}-${iteration}`
             );
+            return { ...tc, toolResult, error: undefined };
+          } catch (error: any) {
+            if (error.message === 'Operation cancelled by user') {
+              if (!isSdkMode || !sdkOutputAdapter) {
+                console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
+              }
+              cancellationManager.off('cancelled', cancelHandler);
+              cleanupStdinPolling();
+              const summaryPreview =
+                contentStr.length > 300 ? contentStr.substring(0, 300) + '...' : contentStr;
+              return {
+                success: false,
+                message: `Task "${description}" cancelled by user`,
+                result: {
+                  summary: summaryPreview,
+                  executionHistory: {
+                    totalIterations: iteration,
+                    toolsExecuted: executionHistory.length,
+                    successfulTools: executionHistory.filter((t) => t.status === 'success').length,
+                    failedTools: executionHistory.filter((t) => t.status === 'error').length,
+                    history: executionHistory,
+                    cancelled: true,
+                  },
+                },
+              };
+            }
+            return { ...tc, toolResult: undefined, error: error.message };
+          }
+        });
 
-            // Get showToolDetails config to control result display
-            const showToolDetails = config.get('showToolDetails') || false;
+        const settledResults = await Promise.all(executePromises);
 
-            // Prepare result preview for history
-            const resultPreview =
-              typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
-            const truncatedPreview =
-              resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
+        // Check for cancellation in results
+        const cancellationResult = settledResults.find(
+          (r): r is { success: boolean; message: string; result: any } =>
+            'success' in r && r.success === false
+        );
+        if (cancellationResult) {
+          return cancellationResult;
+        }
 
-            
+        // Import render functions for consistent display
+        const { renderDiff, renderLines } = await import('./theme.js');
+
+        // Process results in original order
+        for (const result of settledResults) {
+          const { name, params: parsedParams, toolResult, error } = result;
+
+          // Get showToolDetails config to control result display
+          const showToolDetails = config.get('showToolDetails') || false;
+
+          // Prepare result preview for history
+          const resultPreview =
+            typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
+          const truncatedPreview =
+            resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
+
+          if (error) {
+            // Handle error case
+            if (isSdkMode && sdkOutputAdapter) {
+              sdkOutputAdapter.outputToolError(name, error);
+            } else {
+              console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error}\n`);
+            }
+
+            // Record failed tool execution in history
+            executionHistory.push({
+              tool: name,
+              status: 'error',
+              params: parsedParams,
+              error,
+              timestamp: new Date().toISOString(),
+            });
+
+            messages.push({
+              role: 'tool',
+              content: JSON.stringify({ error }),
+              tool_call_id: result.id,
+            });
+          } else {
+            // Handle success case - display result
             // SDK mode: output tool result via adapter
             if (isSdkMode && sdkOutputAdapter) {
               sdkOutputAdapter.outputToolResult(name, toolResult);
@@ -2445,9 +2521,6 @@ export class TaskTool implements Tool {
               const hasDiff = isEditTool && toolResult?.diff;
               const hasFilePreview = isWriteTool && toolResult?.preview;
               const hasDeleteInfo = isDeleteTool && toolResult?.filePath;
-
-              // Import render functions for consistent display
-              const { renderDiff, renderLines } = await import('./theme.js');
 
               if (isTodoTool) {
                 // Display todo list
@@ -2521,7 +2594,6 @@ export class TaskTool implements Tool {
                 console.log(`${indent}${colors.textDim('(no result)')}\n`);
               }
             }
-            // SDK mode: output tool result via adapter (already done via outputToolStart above)
 
             // Record successful tool execution in history (use truncated preview to save memory)
             executionHistory.push({
@@ -2535,52 +2607,7 @@ export class TaskTool implements Tool {
             messages.push({
               role: 'tool',
               content: JSON.stringify(toolResult),
-              tool_call_id: toolCall.id,
-            });
-          } catch (error: any) {
-            if (error.message === 'Operation cancelled by user') {
-              if (!isSdkMode || !sdkOutputAdapter) {
-                console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
-              }
-              cancellationManager.off('cancelled', cancelHandler);
-              cleanupStdinPolling();
-              const summaryPreview =
-                contentStr.length > 300 ? contentStr.substring(0, 300) + '...' : contentStr;
-              return {
-                success: false,
-                message: `Task "${description}" cancelled by user`,
-                result: {
-                  summary: summaryPreview,
-                  executionHistory: {
-                    totalIterations: iteration,
-                    toolsExecuted: executionHistory.length,
-                    successfulTools: executionHistory.filter((t) => t.status === 'success').length,
-                    failedTools: executionHistory.filter((t) => t.status === 'error').length,
-                    history: executionHistory,
-                    cancelled: true,
-                  },
-                },
-              };
-            }
-            if (isSdkMode && sdkOutputAdapter) {
-              sdkOutputAdapter.outputToolError(name, error.message);
-            } else {
-              console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error.message}\n`);
-            }
-
-            // Record failed tool execution in history
-            executionHistory.push({
-              tool: name,
-              status: 'error',
-              params: parsedParams,
-              error: error.message,
-              timestamp: new Date().toISOString(),
-            });
-
-            messages.push({
-              role: 'tool',
-              content: JSON.stringify({ error: error.message }),
-              tool_call_id: toolCall.id,
+              tool_call_id: result.id,
             });
           }
         }

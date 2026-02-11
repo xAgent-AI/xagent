@@ -1,6 +1,60 @@
 import { existsSync } from 'fs';
 import { spawn, spawnSync } from 'child_process';
 
+// Unified output function that automatically chooses SDK or console based on mode
+type OutputType = 'info' | 'error' | 'success' | 'warning';
+
+let _sdkAdapter: any = null;
+let _isSdkMode: boolean = false;
+
+// Initialize SDK mode (call this when session is available)
+export function initOutputMode(isSdkMode: boolean, adapter?: any): void {
+  _isSdkMode = isSdkMode;
+  _sdkAdapter = adapter;
+}
+
+// Unified output function
+async function output(type: OutputType, message: string, context?: Record<string, any>): Promise<void> {
+  // Try to use SDK adapter if available and in SDK mode
+  if (_isSdkMode && _sdkAdapter) {
+    try {
+      switch (type) {
+        case 'info':
+          _sdkAdapter.outputInfo(message);
+          break;
+        case 'error':
+          _sdkAdapter.outputError(message, context);
+          break;
+        case 'warning':
+          _sdkAdapter.outputWarning(message);
+          break;
+        case 'success':
+          _sdkAdapter.outputSuccess(message);
+          break;
+      }
+      return; // SDK output successful, don't use console
+    } catch {
+      // Fall through to console on error
+    }
+  }
+
+  // Console output
+  switch (type) {
+    case 'info':
+      console.log(message);
+      break;
+    case 'error':
+      console.error(message, context?.error || '');
+      break;
+    case 'warning':
+      console.warn(message);
+      break;
+    case 'success':
+      console.log(message);
+      break;
+  }
+}
+
 /**
  * Find bash executable on PATH (Windows).
  */
@@ -115,7 +169,7 @@ export function killProcessTree(pid: number): void {
 				detached: true,
 			});
 		} catch (error) {
-			console.warn(`[shell] Failed to kill process tree (PID ${pid}): ${error instanceof Error ? error.message : String(error)}`);
+			await output('warning', `[shell] Failed to kill process tree (PID ${pid})`, { error: error instanceof Error ? error.message : String(error) });
 		}
 	} else {
 		// Use SIGKILL on Unix/Linux/Mac
@@ -126,7 +180,7 @@ export function killProcessTree(pid: number): void {
 			try {
 				process.kill(pid, 'SIGKILL');
 			} catch (fallbackError) {
-				console.warn(`[shell] Failed to kill process (PID ${pid}): ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+				await output('warning', `[shell] Failed to kill process (PID ${pid})`, { error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError) });
 			}
 		}
 	}

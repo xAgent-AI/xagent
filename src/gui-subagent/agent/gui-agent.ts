@@ -254,18 +254,30 @@ export class GUIAgent<T extends Operator> {
 
     switch (status) {
       case GUIAgentStatus.RUNNING:
-        console.log(`${indent}${colors.info(`${icons.loading} Step ${iteration}: Running...`)}`);
+        if (!this.sdkOutputAdapter) {
+          console.log(`${indent}${colors.info(`${icons.loading} Step ${iteration}: Running...`)}`);
+        } else {
+          this.sdkOutputAdapter.outputInfo(`Step ${iteration}: Running...`);
+        }
         break;
       case GUIAgentStatus.END:
         // Handled by caller
         break;
       case GUIAgentStatus.ERROR:
         if (data.error) {
-          console.log(`${indent}${colors.error(`${icons.cross} ${data.error}`)}`);
+          if (!this.sdkOutputAdapter) {
+            console.log(`${indent}${colors.error(`${icons.cross} ${data.error}`)}`);
+          } else {
+            this.sdkOutputAdapter.outputError(data.error);
+          }
         }
         break;
       case GUIAgentStatus.USER_STOPPED:
-        console.log(`${indent}${colors.warning(`${icons.warning} Stopped`)}`);
+        if (!this.sdkOutputAdapter) {
+          console.log(`${indent}${colors.warning(`${icons.warning} Stopped`)}`);
+        } else {
+          this.sdkOutputAdapter.outputWarning('Stopped');
+        }
         break;
       default:
         break;
@@ -819,7 +831,11 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
       // Output error immediately if task failed
       if (finalStatus === GUIAgentStatus.ERROR && finalError) {
-        console.log(`\n${indent}${colors.error('✖')} ${finalError}\n`);
+        if (!this.sdkOutputAdapter) {
+          console.log(`\n${indent}${colors.error('✖')} ${finalError}\n`);
+        } else {
+          this.sdkOutputAdapter.outputError(finalError);
+        }
       }
 
       // Call onData callback if set

@@ -216,6 +216,20 @@ export class InteractiveSession {
       // Ignore if compressor module not available
     }
     
+    try {
+      const { initOutputMode: initMcpOutput } = require('./mcp.js');
+      initMcpOutput(true, adapter);
+    } catch {
+      // Ignore if mcp module not available
+    }
+    
+    try {
+      const { initOutputMode: initShellOutput } = require('./shell.js');
+      initShellOutput(true, adapter);
+    } catch {
+      // Ignore if shell module not available
+    }
+    
     // Initialize tool registry in SDK mode (fire and forget, doesn't need to await)
     this.initToolRegistrySdkMode(adapter).catch(() => {
       // Silently ignore errors - tool registry init is not critical

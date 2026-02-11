@@ -2405,8 +2405,12 @@ export class TaskTool implements Tool {
             parsedParams = params;
           }
 
-          // Display tool call info
-          logOutput('info', `Tool: ${name}`);
+          // Display tool call info - use SDK adapter in SDK mode
+          if (isSdkMode && sdkOutputAdapter) {
+            sdkOutputAdapter.outputToolStart(name, parsedParams);
+          } else {
+            console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${name}`)}`);
+          }
 
           try {
             // Check cancellation before tool execution
@@ -2426,94 +2430,98 @@ export class TaskTool implements Tool {
             const truncatedPreview =
               resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
 
-            // Special handling for different tools (consistent with session.ts display logic)
-            const isTodoTool = name === 'todo_write' || name === 'todo_read';
-            const isEditTool = name === 'Edit';
-            const isWriteTool = name === 'Write';
-            const isDeleteTool = name === 'DeleteFile';
-            const hasDiff = isEditTool && toolResult?.diff;
-            const hasFilePreview = isWriteTool && toolResult?.preview;
-            const hasDeleteInfo = isDeleteTool && toolResult?.filePath;
+            
+            // SDK mode: output tool result via adapter
+            if (isSdkMode && sdkOutputAdapter) {
+              sdkOutputAdapter.outputToolResult(name, toolResult);
+            }
+            // Normal mode: console output (SDK mode already output via adapter above)
+            if (!isSdkMode || !sdkOutputAdapter) {
+              // Special handling for different tools (consistent with session.ts display logic)
+              const isTodoTool = name === 'todo_write' || name === 'todo_read';
+              const isEditTool = name === 'Edit';
+              const isWriteTool = name === 'Write';
+              const isDeleteTool = name === 'DeleteFile';
+              const hasDiff = isEditTool && toolResult?.diff;
+              const hasFilePreview = isWriteTool && toolResult?.preview;
+              const hasDeleteInfo = isDeleteTool && toolResult?.filePath;
 
-            // Import render functions for consistent display
-            const { renderDiff, renderLines } = await import('./theme.js');
+              // Import render functions for consistent display
+              const { renderDiff, renderLines } = await import('./theme.js');
 
-            if (isTodoTool) {
-              // Display todo list
-              console.log(`${indent}${colors.success(`${icons.check} Todo List:`)}`);
-              const todos = toolResult?.todos || [];
-              if (todos.length === 0) {
-                console.log(`${indent}  ${colors.textMuted('No tasks')}`);
-              } else {
-                const statusConfig: Record<
-                  string,
-                  { icon: string; color: (text: string) => string; label: string }
-                > = {
-                  pending: { icon: icons.circle, color: colors.textMuted, label: 'Pending' },
-                  in_progress: { icon: icons.loading, color: colors.warning, label: 'In Progress' },
-                  completed: { icon: icons.success, color: colors.success, label: 'Completed' },
-                  failed: { icon: icons.error, color: colors.error, label: 'Failed' },
-                };
-                for (const todo of todos) {
-                  const status = statusConfig[todo.status] || statusConfig['pending'];
-                  console.log(
-                    `${indent}  ${status.color(status.icon)} ${status.color(status.label)}: ${colors.text(todo.task)}`
-                  );
+              if (isTodoTool) {
+                // Display todo list
+                console.log(`${indent}${colors.success(`${icons.check} Todo List:`)}`);
+                const todos = toolResult?.todos || [];
+                if (todos.length === 0) {
+                  console.log(`${indent}  ${colors.textMuted('No tasks')}`);
+                } else {
+                  const statusConfig: Record<
+                    string,
+                    { icon: string; color: (text: string) => string; label: string }
+                  > = {
+                    pending: { icon: icons.circle, color: colors.textMuted, label: 'Pending' },
+                    in_progress: { icon: icons.loading, color: colors.warning, label: 'In Progress' },
+                    completed: { icon: icons.success, color: colors.success, label: 'Completed' },
+                    failed: { icon: icons.error, color: colors.error, label: 'Failed' },
+                  };
+                  for (const todo of todos) {
+                    const status = statusConfig[todo.status] || statusConfig['pending'];
+                    console.log(
+                      `${indent}  ${status.color(status.icon)} ${status.color(status.label)}: ${colors.text(todo.task)}`
+                    );
+                  }
                 }
-              }
-              if (toolResult?.message) {
-                console.log(`${indent}${colors.textDim(toolResult.message)}`);
-              }
-              console.log('');
-            } else if (hasDiff) {
-              // Display edit result with diff
-              console.log('');
-              const diffOutput = renderDiff(toolResult.diff);
-              const indentedDiff = diffOutput
-                .split('\n')
-                .map((line) => `${indent}  ${line}`)
-                .join('\n');
-              console.log(`${indentedDiff}\n`);
-            } else if (hasFilePreview) {
-              // Display new file content in preview style
-              console.log('');
-              console.log(`${indent}${colors.success(`${icons.file} ${toolResult.filePath}`)}`);
-              console.log(`${indent}${colors.textDim(`  ${toolResult.lineCount} lines`)}`);
-              console.log('');
-              console.log(renderLines(toolResult.preview, { maxLines: 10, indent: indent + '  ' }));
-              console.log('');
-            } else if (hasDeleteInfo) {
-              // Display DeleteFile result
-              console.log('');
-              console.log(
-                `${indent}${colors.success(`${icons.check} Deleted: ${toolResult.filePath}`)}`
-              );
-              console.log('');
-            } else if (showToolDetails) {
-              // Show full result details
-              const indentedPreview = indentMultiline(resultPreview, indent);
-              console.log(
-                `${indent}${colors.success(`${icons.check} Tool Result:`)}\n${indentedPreview}\n`
-              );
-            } else if (toolResult && toolResult.success === false) {
-              // Tool failed
-              console.log(
-                `${indent}${colors.error(`${icons.cross} ${toolResult.message || 'Failed'}`)}\n`
-              );
-            } else if (toolResult) {
-              // Show brief preview by default (SDK mode uses outputToolResult via session)
-              if (!isSdkMode) {
+                if (toolResult?.message) {
+                  console.log(`${indent}${colors.textDim(toolResult.message)}`);
+                }
+                console.log('');
+              } else if (hasDiff) {
+                // Display edit result with diff
+                console.log('');
+                const diffOutput = renderDiff(toolResult.diff);
+                const indentedDiff = diffOutput
+                  .split('\n')
+                  .map((line) => `${indent}  ${line}`)
+                  .join('\n');
+                console.log(`${indentedDiff}\n`);
+              } else if (hasFilePreview) {
+                // Display new file content in preview style
+                console.log('');
+                console.log(`${indent}${colors.success(`${icons.file} ${toolResult.filePath}`)}`);
+                console.log(`${indent}${colors.textDim(`  ${toolResult.lineCount} lines`)}`);
+                console.log('');
+                console.log(renderLines(toolResult.preview, { maxLines: 10, indent: indent + '  ' }));
+                console.log('');
+              } else if (hasDeleteInfo) {
+                // Display DeleteFile result
+                console.log('');
+                console.log(
+                  `${indent}${colors.success(`${icons.check} Deleted: ${toolResult.filePath}`)}`
+                );
+                console.log('');
+              } else if (showToolDetails) {
+                // Show full result details
+                const indentedPreview = indentMultiline(resultPreview, indent);
+                console.log(
+                  `${indent}${colors.success(`${icons.check} Tool Result:`)}\n${indentedPreview}\n`
+                );
+              } else if (toolResult && toolResult.success === false) {
+                // Tool failed
+                console.log(
+                  `${indent}${colors.error(`${icons.cross} ${toolResult.message || 'Failed'}`)}\n`
+                );
+              } else if (toolResult) {
+                // Show brief preview by default
                 const indentedPreview = indentMultiline(truncatedPreview, indent);
                 console.log(
                   `${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`
                 );
-              } else if (sdkOutputAdapter) {
-                // SDK mode: output tool result via adapter
-                sdkOutputAdapter.outputToolResult(name, toolResult);
+              } else {
+                console.log(`${indent}${colors.textDim('(no result)')}\n`);
               }
-            } else {
-              console.log(`${indent}${colors.textDim('(no result)')}\n`);
             }
+            // SDK mode: output tool result via adapter (already done via outputToolStart above)
 
             // Record successful tool execution in history (use truncated preview to save memory)
             executionHistory.push({
@@ -2531,7 +2539,9 @@ export class TaskTool implements Tool {
             });
           } catch (error: any) {
             if (error.message === 'Operation cancelled by user') {
-              console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
+              if (!isSdkMode || !sdkOutputAdapter) {
+                console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
+              }
               cancellationManager.off('cancelled', cancelHandler);
               cleanupStdinPolling();
               const summaryPreview =
@@ -2552,7 +2562,11 @@ export class TaskTool implements Tool {
                 },
               };
             }
-            console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error.message}\n`);
+            if (isSdkMode && sdkOutputAdapter) {
+              sdkOutputAdapter.outputToolError(name, error.message);
+            } else {
+              console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error.message}\n`);
+            }
 
             // Record failed tool execution in history
             executionHistory.push({
@@ -2570,7 +2584,9 @@ export class TaskTool implements Tool {
             });
           }
         }
-        console.log('');
+        if (!isSdkMode || !sdkOutputAdapter) {
+          console.log('');
+        }
         continue; // Continue to next iteration to get final response
       }
 

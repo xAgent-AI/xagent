@@ -195,7 +195,8 @@ You can communicate with other teammates using the task tool:
 
 ### Shared Tasks
 You can interact with the shared task list:
-- View tasks: task(team_mode=true, team_action="list_tasks", team_id="${teamId}")
+- List all tasks: task(team_mode=true, team_action="task_list", team_id="${teamId}")
+- List available tasks (ready to claim): task(team_mode=true, team_action="task_list", team_id="${teamId}", task_filter="available")
 - Create task: task(team_mode=true, team_action="task_create", team_id="${teamId}", task_config={title: "...", description: "..."})
 - Claim task: task(team_mode=true, team_action="task_update", team_id="${teamId}", task_update={task_id: "...", action: "claim"})
 - Complete task: task(team_mode=true, team_action="task_update", team_id="${teamId}", task_update={task_id: "...", action: "complete", result: "..."})

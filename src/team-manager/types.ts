@@ -105,13 +105,14 @@ export interface TeamToolParams {
   team_mode?: boolean;
   team_name?: string;
   teammates?: TeammateConfig[];
-  team_action?: 'create' | 'message' | 'task_create' | 'task_update' | 'shutdown' | 'cleanup';
+  team_action?: 'create' | 'message' | 'task_create' | 'task_update' | 'task_list' | 'shutdown' | 'cleanup';
   display_mode?: DisplayMode;
   team_id?: string;
   member_id?: string;
   message?: TeamMessagePayload;
   task_config?: TaskCreateConfig;
   task_update?: TaskUpdateConfig;
+  task_filter?: 'all' | 'pending' | 'available' | 'in_progress' | 'completed';
   spawn_prompt?: string;
 }
 

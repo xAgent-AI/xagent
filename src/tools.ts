@@ -1476,6 +1476,7 @@ Teammates run in separate processes (tmux/iTerm2/in-process) and communicate via
 | **create** | Create team + spawn teammates | team_name, teammates[{name, role, prompt}], display_mode | team_id, members[{id, name}] |
 | **message** | Send message to teammate(s) | team_id, message{to_member_id: "id"|"broadcast", content} | message_id |
 | **task_create** | Create shared task | team_id, task_config{title, description, priority?, dependencies?} | task_id |
+| **task_list** | List tasks with filter | team_id, task_filter: "all"|"pending"|"available"|"in_progress"|"completed" | tasks[] |
 | **task_update** | Update task status | team_id, task_update{task_id, action: "claim"|"complete"} | status |
 | **shutdown** | Stop a teammate | team_id, member_id | - |
 | **cleanup** | Delete team resources | team_id | - |
@@ -1495,6 +1496,13 @@ Teammates run in separate processes (tmux/iTerm2/in-process) and communicate via
 **message.to_member_id**:
 - Specific member_id: Direct message to that teammate
 - "broadcast": Message to all teammates
+
+**task_filter**: Filter tasks by status
+- "all": All tasks (default)
+- "pending": Tasks waiting to be claimed
+- "available": Tasks with completed dependencies (ready to work)
+- "in_progress": Tasks currently being worked on
+- "completed": Finished tasks
 
 **task_update.action**:
 - "claim": Take ownership of task
@@ -1516,19 +1524,23 @@ task(team_mode=true, team_action="task_create", team_id="abc-123",
      task_config={title: "Review auth module", description: "Check auth.ts", priority: "high"})
 Returns: {task_id: "t1", ...}
 
-3. Coordinate via messages:
+3. List available tasks (for teammates to find work):
+task(team_mode=true, team_action="task_list", team_id="abc-123", task_filter="available")
+Returns: {tasks: [{task_id: "t1", title: "...", status: "pending", ...}]}
+
+4. Coordinate via messages:
 task(team_mode=true, team_action="message", team_id="abc-123",
      message={to_member_id: "m1", content: "Focus on the auth module"})
 task(team_mode=true, team_action="message", team_id="abc-123",
      message={to_member_id: "broadcast", content: "Submit findings in 5 minutes"})
 
-4. Update task status:
+5. Update task status:
 task(team_mode=true, team_action="task_update", team_id="abc-123",
      task_update={task_id: "t1", action: "claim"})
 task(team_mode=true, team_action="task_update", team_id="abc-123",
      task_update={task_id: "t1", action: "complete"})
 
-5. Shutdown teammates and cleanup:
+6. Shutdown teammates and cleanup:
 task(team_mode=true, team_action="shutdown", team_id="abc-123", member_id="m1")
 task(team_mode=true, team_action="shutdown", team_id="abc-123", member_id="m2")
 task(team_mode=true, team_action="cleanup", team_id="abc-123")

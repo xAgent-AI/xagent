@@ -35,6 +35,8 @@ export class TeamCoordinator {
         return this.createTeamTask(params);
       case 'task_update':
         return this.updateTeamTask(params);
+      case 'task_list':
+        return this.listTeamTasks(params);
       case 'shutdown':
         return this.shutdownTeammate(params);
       case 'cleanup':
@@ -203,6 +205,55 @@ export class TeamCoordinator {
     }
 
     throw new Error(`Unknown task action: ${action}`);
+  }
+
+  private async listTeamTasks(params: TeamToolParams): Promise<{ success: boolean; message: string; result?: any }> {
+    if (!params.team_id) throw new Error('team_id is required');
+
+    const team = await this.store.getTeam(params.team_id);
+    if (!team) throw new Error(`Team ${params.team_id} not found`);
+
+    const filter = params.task_filter || 'all';
+    let tasks: TeamTask[];
+
+    switch (filter) {
+      case 'pending':
+        tasks = (await this.store.getTasks(params.team_id)).filter(t => t.status === 'pending');
+        break;
+      case 'available':
+        tasks = await this.store.getAvailableTasks(params.team_id);
+        break;
+      case 'in_progress':
+        tasks = (await this.store.getTasks(params.team_id)).filter(t => t.status === 'in_progress');
+        break;
+      case 'completed':
+        tasks = (await this.store.getTasks(params.team_id)).filter(t => t.status === 'completed');
+        break;
+      default:
+        tasks = await this.store.getTasks(params.team_id);
+    }
+
+    return {
+      success: true,
+      message: `Found ${tasks.length} tasks (filter: ${filter})`,
+      result: {
+        team_id: params.team_id,
+        filter,
+        total_count: tasks.length,
+        tasks: tasks.map(t => ({
+          task_id: t.taskId,
+          title: t.title,
+          description: t.description,
+          status: t.status,
+          priority: t.priority,
+          assignee: t.assignee,
+          dependencies: t.dependencies,
+          created_at: t.createdAt,
+          updated_at: t.updatedAt,
+          result: t.result
+        }))
+      }
+    };
   }
 
   private async shutdownTeammate(params: TeamToolParams): Promise<{ success: boolean; message: string; result?: any }> {

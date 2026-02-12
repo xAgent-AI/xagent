@@ -1700,11 +1700,29 @@ export class TaskTool implements Tool {
   ): Promise<{ success: boolean; cancelled?: boolean; message: string; result?: any }> {
     const indent = '  '.repeat(indentLevel);
 
-    console.log(`${indent}${colors.primaryBright(`${icons.robot} GUI Agent`)}: ${description}`);
-    console.log(
-      `${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`
-    );
-    console.log('');
+    // Get SDK adapter from session for SDK mode output
+    let sdkOutputAdapter: any = null;
+    let isSdkMode = false;
+    try {
+      const { getSingletonSession } = await import('./session.js');
+      const session = getSingletonSession();
+      if (session) {
+        isSdkMode = (session as any).isSdkMode;
+        sdkOutputAdapter = (session as any).sdkOutputAdapter;
+      }
+    } catch {
+      // Session not available
+    }
+
+    // SDK mode: use adapter output (guiAgent.run() handles SDK output internally)
+    // Only output console messages in non-SDK mode
+    if (!isSdkMode) {
+      console.log(`${indent}${colors.primaryBright(`${icons.robot} GUI Agent`)}: ${description}`);
+      console.log(
+        `${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`
+      );
+      console.log('');
+    }
 
     // Get VLM configuration for local mode
     // NOTE: guiSubagentBaseUrl must be explicitly configured, NOT fallback to baseUrl
@@ -1717,18 +1735,30 @@ export class TaskTool implements Tool {
 
     // Log mode information
     if (isRemoteMode) {
-      console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
-    } else {
-      console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
-      // Local mode requires explicit VLM configuration
-      if (!baseUrl || !apiKey || !modelName) {
-        return {
-          success: false,
-          message: `GUI task "${description}" failed: VLM not configured. Please run /model to configure Vision-Language Model first.`,
-        };
+      if (isSdkMode && sdkOutputAdapter) {
+        // SDK mode: use adapter output
+        sdkOutputAdapter.outputInfo('Using remote VLM service');
+      } else {
+        // Normal mode: console output
+        console.log(`${indent}${colors.info(`${icons.brain} Using remote VLM service`)}`);
       }
-      console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
-      console.log(`${indent}${colors.textMuted(`  Base URL: ${baseUrl}`)}`);
+    } else {
+      if (isSdkMode && sdkOutputAdapter) {
+        // SDK mode: use adapter output
+        sdkOutputAdapter.outputInfo('Using local VLM configuration');
+      } else {
+        // Normal mode: console output
+        console.log(`${indent}${colors.info(`${icons.brain} Using local VLM configuration`)}`);
+        // Local mode requires explicit VLM configuration
+        if (!baseUrl || !apiKey || !modelName) {
+          return {
+            success: false,
+            message: `GUI task "${description}" failed: VLM not configured. Please run /model to configure Vision-Language Model first.`,
+          };
+        }
+        console.log(`${indent}${colors.textMuted(`  Model: ${modelName}`)}`);
+        console.log(`${indent}${colors.textMuted(`  Base URL: ${baseUrl}`)}`);
+      }
     }
     console.log('');
 
@@ -1835,6 +1865,7 @@ export class TaskTool implements Tool {
         loopIntervalInMs: 500,
         showAIDebugInfo: config.get('showAIDebugInfo') || false,
         indentLevel: indentLevel,
+        sdkOutputAdapter: isSdkMode ? sdkOutputAdapter : null,
       });
 
       // Add constraints to prompt if any
@@ -1877,9 +1908,15 @@ export class TaskTool implements Tool {
         const iterations = conversationsWithoutScreenshots.filter(
           (c: any) => c.from === 'human' && c.screenshotContext
         ).length;
-        console.log(
-          `${indent}${colors.success(`${icons.check} GUI task completed in ${iterations} iterations`)}`
-        );
+        // SDK mode: use adapter output
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputGUIAgentComplete(description, iterations);
+        } else {
+          // Normal mode: console output
+          console.log(
+            `${indent}${colors.success(`${icons.check} GUI task completed in ${iterations} iterations`)}`
+          );
+        }
         return {
           success: true,
           message: `GUI task "${description}" completed`,
@@ -1894,10 +1931,17 @@ export class TaskTool implements Tool {
           },
         };
       } else if (result.status === 'call_llm') {
-        // Empty action or needs LLM decision - return to main agent with full context
-        console.log(
-          `${indent}${colors.warning(`${icons.warning} GUI agent returned to main agent for LLM decision`)}`
-        );
+        // SDK mode: use adapter output
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputGUIAgentStatus('call_llm', conversationsWithoutScreenshots.filter(
+            (c: any) => c.from === 'human' && c.screenshotContext
+          ).length);
+        } else {
+          // Normal mode: console output
+          console.log(
+            `${indent}${colors.warning(`${icons.warning} GUI agent returned to main agent for LLM decision`)}`
+          );
+        }
         return {
           success: true,
           message: `GUI task "${description}" returned for LLM decision`,
@@ -1914,6 +1958,10 @@ export class TaskTool implements Tool {
           },
         };
       } else if (result.status === 'user_stopped') {
+        // SDK mode: use adapter output
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputGUIAgentCancelled(description);
+        }
         return {
           success: true,
           message: `GUI task "${description}" stopped by user`,
@@ -1932,6 +1980,10 @@ export class TaskTool implements Tool {
       } else {
         // status is 'error' or other non-success status
         const errorMsg = result.error || 'Unknown error';
+        // SDK mode: use adapter output
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputGUIAgentError(description, errorMsg);
+        }
         return {
           success: false,
           message: `GUI task "${description}" failed: ${errorMsg}`,
@@ -1958,6 +2010,10 @@ export class TaskTool implements Tool {
       // If the user cancelled the task, ignore any API errors (like 429)
       // and return cancelled status instead
       if (cancelled || cancellationManager.isOperationCancelled()) {
+        // SDK mode: use adapter output
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputGUIAgentCancelled(description);
+        }
         return {
           success: true,
           cancelled: true, // Mark as cancelled so main agent won't continue
@@ -1967,6 +2023,10 @@ export class TaskTool implements Tool {
       }
 
       if (error.message === 'Operation cancelled by user') {
+        // SDK mode: use adapter output
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputGUIAgentCancelled(description);
+        }
         return {
           success: true,
           message: `GUI task "${description}" cancelled by user`,
@@ -1975,6 +2035,10 @@ export class TaskTool implements Tool {
       }
 
       // Return failure without throwing - let the main agent handle it
+      // SDK mode: use adapter output
+      if (isSdkMode && sdkOutputAdapter) {
+        sdkOutputAdapter.outputGUIAgentError(description, error.message);
+      }
       return {
         success: false,
         message: `GUI task "${description}" failed: ${error.message}`,
@@ -1998,6 +2062,20 @@ export class TaskTool implements Tool {
 
     if (!agent) {
       throw new Error(`Agent ${subagent_type} not found`);
+    }
+
+    // Get SDK adapter from session for subagent output
+    let sdkOutputAdapter: any = null;
+    let isSdkMode = false;
+    try {
+      const { getSingletonSession } = await import('./session.js');
+      const session = getSingletonSession();
+      if (session) {
+        isSdkMode = (session as any).isSdkMode;
+        sdkOutputAdapter = (session as any).sdkOutputAdapter;
+      }
+    } catch {
+      // Session not available
     }
 
     // Special handling for gui-subagent: directly call GUIAgent.run() instead of subagent message loop
@@ -2288,157 +2366,71 @@ export class TaskTool implements Tool {
 
       // Display reasoning content if present
       if (reasoningContent) {
-        console.log(`\n${indent}${colors.textDim(`${icons.brain} Thinking Process:`)}`);
-        const truncatedReasoning =
-          reasoningContent.length > 500
-            ? reasoningContent.substring(0, 500) + '...'
-            : reasoningContent;
-        const indentedReasoning = indentMultiline(truncatedReasoning, indent);
-        console.log(`${indentedReasoning}\n`);
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputThinking(reasoningContent, 'compact');
+        } else {
+          console.log(`\n${indent}${colors.textDim(`${icons.brain} Thinking Process:`)}`);
+          const truncatedReasoning =
+            reasoningContent.length > 500
+              ? reasoningContent.substring(0, 500) + '...'
+              : reasoningContent;
+          const indentedReasoning = indentMultiline(truncatedReasoning, indent);
+          console.log(`${indentedReasoning}\n`);
+        }
       }
 
       // Display assistant response (if there's any text content) with proper indentation
       if (contentStr) {
-        console.log(`\n${indent}${colors.primaryBright(agentName)}: ${description}`);
-        const truncatedContent =
-          contentStr.length > 500 ? contentStr.substring(0, 500) + '...' : contentStr;
-        const indentedContent = indentMultiline(truncatedContent, indent);
-        console.log(`${indentedContent}\n`);
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputAssistant(contentStr);
+        } else {
+          console.log(`\n${indent}${colors.primaryBright(agentName)}: ${description}`);
+          const truncatedContent =
+            contentStr.length > 500 ? contentStr.substring(0, 500) + '...' : contentStr;
+          const indentedContent = indentMultiline(truncatedContent, indent);
+          console.log(`${indentedContent}\n`);
+        }
       }
 
-      // Process tool calls with proper indentation
+      // Process tool calls in parallel (照搬 session 的实现)
       if (toolCalls && toolCalls.length > 0) {
-        for (const toolCall of toolCalls) {
+        // Prepare all tool calls with their indices
+        const preparedToolCalls = toolCalls.map((toolCall: any, index: number) => {
           const { name, arguments: params } = toolCall.function;
-
           let parsedParams: any;
           try {
             parsedParams = typeof params === 'string' ? JSON.parse(params) : params;
           } catch {
             parsedParams = params;
           }
+          return { name, params: parsedParams, id: toolCall.id, index };
+        });
 
-          console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${name}`)}`);
+        // Display all tool call info first
+        for (const tc of preparedToolCalls as Array<{ name: string; params: any; id: string }>) {
+          if (isSdkMode && sdkOutputAdapter) {
+            sdkOutputAdapter.outputToolStart(tc.name, tc.params);
+          } else {
+            console.log(`${indent}${colors.textMuted(`${icons.loading} Tool: ${tc.name}`)}`);
+          }
+        }
 
+        // Execute all tool calls in parallel
+        const executePromises = preparedToolCalls.map(async (tc: { name: string; params: any; id: string; index: number }) => {
           try {
             // Check cancellation before tool execution
             checkCancellation();
 
             const toolResult: any = await cancellationManager.withCancellation(
-              toolRegistry.execute(name, parsedParams, mode, indent),
-              `subagent-${subagent_type}-${name}-${iteration}`
+              toolRegistry.execute(tc.name, tc.params, mode, indent),
+              `subagent-${subagent_type}-${tc.name}-${iteration}`
             );
-
-            // Get showToolDetails config to control result display
-            const showToolDetails = config.get('showToolDetails') || false;
-
-            // Prepare result preview for history
-            const resultPreview =
-              typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
-            const truncatedPreview =
-              resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
-
-            // Special handling for different tools (consistent with session.ts display logic)
-            const isTodoTool = name === 'todo_write' || name === 'todo_read';
-            const isEditTool = name === 'Edit';
-            const isWriteTool = name === 'Write';
-            const isDeleteTool = name === 'DeleteFile';
-            const hasDiff = isEditTool && toolResult?.diff;
-            const hasFilePreview = isWriteTool && toolResult?.preview;
-            const hasDeleteInfo = isDeleteTool && toolResult?.filePath;
-
-            // Import render functions for consistent display
-            const { renderDiff, renderLines } = await import('./theme.js');
-
-            if (isTodoTool) {
-              // Display todo list
-              console.log(`${indent}${colors.success(`${icons.check} Todo List:`)}`);
-              const todos = toolResult?.todos || [];
-              if (todos.length === 0) {
-                console.log(`${indent}  ${colors.textMuted('No tasks')}`);
-              } else {
-                const statusConfig: Record<
-                  string,
-                  { icon: string; color: (text: string) => string; label: string }
-                > = {
-                  pending: { icon: icons.circle, color: colors.textMuted, label: 'Pending' },
-                  in_progress: { icon: icons.loading, color: colors.warning, label: 'In Progress' },
-                  completed: { icon: icons.success, color: colors.success, label: 'Completed' },
-                  failed: { icon: icons.error, color: colors.error, label: 'Failed' },
-                };
-                for (const todo of todos) {
-                  const status = statusConfig[todo.status] || statusConfig['pending'];
-                  console.log(
-                    `${indent}  ${status.color(status.icon)} ${status.color(status.label)}: ${colors.text(todo.task)}`
-                  );
-                }
-              }
-              if (toolResult?.message) {
-                console.log(`${indent}${colors.textDim(toolResult.message)}`);
-              }
-              console.log('');
-            } else if (hasDiff) {
-              // Display edit result with diff
-              console.log('');
-              const diffOutput = renderDiff(toolResult.diff);
-              const indentedDiff = diffOutput
-                .split('\n')
-                .map((line) => `${indent}  ${line}`)
-                .join('\n');
-              console.log(`${indentedDiff}\n`);
-            } else if (hasFilePreview) {
-              // Display new file content in preview style
-              console.log('');
-              console.log(`${indent}${colors.success(`${icons.file} ${toolResult.filePath}`)}`);
-              console.log(`${indent}${colors.textDim(`  ${toolResult.lineCount} lines`)}`);
-              console.log('');
-              console.log(renderLines(toolResult.preview, { maxLines: 10, indent: indent + '  ' }));
-              console.log('');
-            } else if (hasDeleteInfo) {
-              // Display DeleteFile result
-              console.log('');
-              console.log(
-                `${indent}${colors.success(`${icons.check} Deleted: ${toolResult.filePath}`)}`
-              );
-              console.log('');
-            } else if (showToolDetails) {
-              // Show full result details
-              const indentedPreview = indentMultiline(resultPreview, indent);
-              console.log(
-                `${indent}${colors.success(`${icons.check} Tool Result:`)}\n${indentedPreview}\n`
-              );
-            } else if (toolResult && toolResult.success === false) {
-              // Tool failed
-              console.log(
-                `${indent}${colors.error(`${icons.cross} ${toolResult.message || 'Failed'}`)}\n`
-              );
-            } else if (toolResult) {
-              // Show brief preview by default
-              const indentedPreview = indentMultiline(truncatedPreview, indent);
-              console.log(
-                `${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`
-              );
-            } else {
-              console.log(`${indent}${colors.textDim('(no result)')}\n`);
-            }
-
-            // Record successful tool execution in history (use truncated preview to save memory)
-            executionHistory.push({
-              tool: name,
-              status: 'success',
-              params: parsedParams,
-              result: truncatedPreview,
-              timestamp: new Date().toISOString(),
-            });
-
-            messages.push({
-              role: 'tool',
-              content: JSON.stringify(toolResult),
-              tool_call_id: toolCall.id,
-            });
+            return { ...tc, toolResult, error: undefined };
           } catch (error: any) {
             if (error.message === 'Operation cancelled by user') {
-              console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
+              if (!isSdkMode || !sdkOutputAdapter) {
+                console.log(`${indent}${colors.warning(`⚠️  Operation cancelled`)}\n`);
+              }
               cancellationManager.off('cancelled', cancelHandler);
               cleanupStdinPolling();
               const summaryPreview =
@@ -2459,25 +2451,187 @@ export class TaskTool implements Tool {
                 },
               };
             }
-            console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error.message}\n`);
+            return { ...tc, toolResult: undefined, error: error.message };
+          }
+        });
+
+        const settledResults = await Promise.all(executePromises);
+
+        // Check for cancellation in results
+        const cancellationResult = settledResults.find(
+          (r): r is { success: boolean; message: string; result: any } =>
+            'success' in r && r.success === false
+        );
+        if (cancellationResult) {
+          return cancellationResult;
+        }
+
+        // Create a map to store results by tool call index to maintain original order (match session implementation)
+        type ToolResultType = { name: string; params: any; toolResult: any; error?: string; id: string; index: number };
+        const resultsByIndex = new Map<number, ToolResultType>();
+        const usedIndices = new Set<number>();
+
+        for (const result of settledResults as unknown as ToolResultType[]) {
+          // Find the first unused original index that matches the tool name
+          const originalIndex = preparedToolCalls.findIndex((tc: { name: string }, idx: number) =>
+            tc.name === result.name && !usedIndices.has(idx)
+          );
+          if (originalIndex !== -1) {
+            usedIndices.add(originalIndex);
+            resultsByIndex.set(originalIndex, result);
+          }
+        }
+
+        // Import render functions for consistent display
+        const { renderDiff, renderLines } = await import('./theme.js');
+
+        // Process results in the original tool_calls order
+        for (let i = 0; i < preparedToolCalls.length; i++) {
+          const result = resultsByIndex.get(i);
+          if (!result) continue;
+
+          const { name, params: parsedParams, toolResult, error } = result;
+
+          // Get showToolDetails config to control result display
+          const showToolDetails = config.get('showToolDetails') || false;
+
+          // Prepare result preview for history
+          const resultPreview =
+            typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult, null, 2);
+          const truncatedPreview =
+            resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
+
+          if (error) {
+            // Handle error case
+            if (isSdkMode && sdkOutputAdapter) {
+              sdkOutputAdapter.outputToolError(name, error);
+            } else {
+              console.log(`${indent}${colors.error(`${icons.cross} Error:`)} ${error}\n`);
+            }
 
             // Record failed tool execution in history
             executionHistory.push({
               tool: name,
               status: 'error',
               params: parsedParams,
-              error: error.message,
+              error,
               timestamp: new Date().toISOString(),
             });
 
             messages.push({
               role: 'tool',
-              content: JSON.stringify({ error: error.message }),
-              tool_call_id: toolCall.id,
+              content: JSON.stringify({ error }),
+              tool_call_id: result.id,
+            });
+          } else {
+            // Handle success case - display result
+            // SDK mode: output tool result via adapter
+            if (isSdkMode && sdkOutputAdapter) {
+              sdkOutputAdapter.outputToolResult(name, toolResult);
+            }
+            // Normal mode: console output (SDK mode already output via adapter above)
+            if (!isSdkMode || !sdkOutputAdapter) {
+              // Special handling for different tools (consistent with session.ts display logic)
+              const isTodoTool = name === 'todo_write' || name === 'todo_read';
+              const isEditTool = name === 'Edit';
+              const isWriteTool = name === 'Write';
+              const isDeleteTool = name === 'DeleteFile';
+              const hasDiff = isEditTool && toolResult?.diff;
+              const hasFilePreview = isWriteTool && toolResult?.preview;
+              const hasDeleteInfo = isDeleteTool && toolResult?.filePath;
+
+              if (isTodoTool) {
+                // Display todo list
+                console.log(`${indent}${colors.success(`${icons.check} Todo List:`)}`);
+                const todos = toolResult?.todos || [];
+                if (todos.length === 0) {
+                  console.log(`${indent}  ${colors.textMuted('No tasks')}`);
+                } else {
+                  const statusConfig: Record<
+                    string,
+                    { icon: string; color: (text: string) => string; label: string }
+                  > = {
+                    pending: { icon: icons.circle, color: colors.textMuted, label: 'Pending' },
+                    in_progress: { icon: icons.loading, color: colors.warning, label: 'In Progress' },
+                    completed: { icon: icons.success, color: colors.success, label: 'Completed' },
+                    failed: { icon: icons.error, color: colors.error, label: 'Failed' },
+                  };
+                  for (const todo of todos) {
+                    const status = statusConfig[todo.status] || statusConfig['pending'];
+                    console.log(
+                      `${indent}  ${status.color(status.icon)} ${status.color(status.label)}: ${colors.text(todo.task)}`
+                    );
+                  }
+                }
+                if (toolResult?.message) {
+                  console.log(`${indent}${colors.textDim(toolResult.message)}`);
+                }
+                console.log('');
+              } else if (hasDiff) {
+                // Display edit result with diff
+                console.log('');
+                const diffOutput = renderDiff(toolResult.diff);
+                const indentedDiff = diffOutput
+                  .split('\n')
+                  .map((line) => `${indent}  ${line}`)
+                  .join('\n');
+                console.log(`${indentedDiff}\n`);
+              } else if (hasFilePreview) {
+                // Display new file content in preview style
+                console.log('');
+                console.log(`${indent}${colors.success(`${icons.file} ${toolResult.filePath}`)}`);
+                console.log(`${indent}${colors.textDim(`  ${toolResult.lineCount} lines`)}`);
+                console.log('');
+                console.log(renderLines(toolResult.preview, { maxLines: 10, indent: indent + '  ' }));
+                console.log('');
+              } else if (hasDeleteInfo) {
+                // Display DeleteFile result
+                console.log('');
+                console.log(
+                  `${indent}${colors.success(`${icons.check} Deleted: ${toolResult.filePath}`)}`
+                );
+                console.log('');
+              } else if (showToolDetails) {
+                // Show full result details
+                const indentedPreview = indentMultiline(resultPreview, indent);
+                console.log(
+                  `${indent}${colors.success(`${icons.check} Tool Result:`)}\n${indentedPreview}\n`
+                );
+              } else if (toolResult && toolResult.success === false) {
+                // Tool failed
+                console.log(
+                  `${indent}${colors.error(`${icons.cross} ${toolResult.message || 'Failed'}`)}\n`
+                );
+              } else if (toolResult) {
+                // Show brief preview by default
+                const indentedPreview = indentMultiline(truncatedPreview, indent);
+                console.log(
+                  `${indent}${colors.success(`${icons.check} Completed`)}\n${indentedPreview}\n`
+                );
+              } else {
+                console.log(`${indent}${colors.textDim('(no result)')}\n`);
+              }
+            }
+
+            // Record successful tool execution in history (use truncated preview to save memory)
+            executionHistory.push({
+              tool: name,
+              status: 'success',
+              params: parsedParams,
+              result: truncatedPreview,
+              timestamp: new Date().toISOString(),
+            });
+
+            messages.push({
+              role: 'tool',
+              content: JSON.stringify(toolResult),
+              tool_call_id: result.id,
             });
           }
         }
-        console.log('');
+        if (!isSdkMode || !sdkOutputAdapter) {
+          console.log('');
+        }
         continue; // Continue to next iteration to get final response
       }
 
@@ -2854,6 +3008,31 @@ export class AskUserQuestionTool implements Tool {
   }): Promise<{ answers: string[] }> {
     const { questions } = params;
 
+    // Check if in SDK mode
+    const sdkMode = (this as any)._sdkMode;
+    const sdkAdapter = (this as any)._sdkOutputAdapter;
+
+    if (sdkMode && sdkAdapter) {
+      return this.executeSdk(params, sdkAdapter);
+    }
+
+    // Regular TUI mode
+    return this.executeTui(params);
+  }
+
+  /**
+   * Execute in TUI mode using @clack/prompts
+   */
+  private async executeTui(params: {
+    questions: Array<{
+      question: string;
+      header?: string;
+      options?: string[];
+      multiSelect?: boolean;
+    }>;
+  }): Promise<{ answers: string[] }> {
+    const { questions } = params;
+
     try {
       if (questions.length === 0 || questions.length > 4) {
         throw new Error('Must provide 1-4 questions');
@@ -2882,6 +3061,54 @@ export class AskUserQuestionTool implements Tool {
       return { answers };
     } catch (error: any) {
       throw new Error(`Failed to ask user questions: ${error.message}`);
+    }
+  }
+
+  /**
+   * Execute in SDK mode - output question request and wait for response
+   */
+  private async executeSdk(
+    params: {
+      questions: Array<{
+        question: string;
+        header?: string;
+        options?: string[];
+        multiSelect?: boolean;
+      }>;
+    },
+    sdkAdapter: any
+  ): Promise<{ answers: string[] }> {
+    const { questions } = params;
+
+    if (questions.length === 0 || questions.length > 4) {
+      throw new Error('Must provide 1-4 questions');
+    }
+
+    const requestId = `question_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    // Output question request through SDK adapter
+    sdkAdapter.outputQuestionRequest({
+      requestId,
+      questions
+    });
+
+    // Wait for SDK question response
+    // The response will be handled by session.ts which has access to the SDK input
+    // For now, we use a polling mechanism or wait for a specific event
+
+    try {
+      // Import the session to get response handling
+      const { getSingletonSession } = await import('./session.js');
+      const session = getSingletonSession();
+      if (!session) {
+        throw new Error('SDK session not available');
+      }
+      const answers = await session.waitForQuestionResponse(requestId);
+
+      sdkAdapter.outputQuestionResponse(requestId, answers);
+      return { answers };
+    } catch (error: any) {
+      throw new Error(`Failed to get SDK question response: ${error.message}`);
     }
   }
 }
@@ -3449,6 +3676,8 @@ export class ToolRegistry {
   private todoWriteTool: TodoWriteTool;
   private backgroundTasks: Map<string, { process: any; startTime: number; output: string[] }> =
     new Map();
+  private _isSdkMode: boolean = false;
+  private _sdkOutputAdapter: any = null;
 
   constructor() {
     this.todoWriteTool = new TodoWriteTool();
@@ -3553,13 +3782,39 @@ export class ToolRegistry {
         registeredCount++;
 
         if (toolName !== originalName) {
-          console.log(`[MCP] Tool '${originalName}' renamed to '${toolName}' to avoid conflict`);
+          // 在 SDK 模式下不输出重命名信息
+          if (!this._isSdkMode) {
+            console.log(`[MCP] Tool '${originalName}' renamed to '${toolName}' to avoid conflict`);
+          }
         }
       }
     }
 
     if (registeredCount > 0) {
-      console.log(`[MCP] Registered ${registeredCount} tool(s)`);
+      // 在 SDK 模式下不输出注册信息（MCP 相关输出已在 session 中处理）
+      if (!this._isSdkMode) {
+        console.log(`[MCP] Registered ${registeredCount} tool(s)`);
+      }
+    }
+  }
+
+  /**
+   * Set SDK mode for the tool registry.
+   * In SDK mode, tool execution output is sent to the SDK output adapter.
+   */
+  async setSdkMode(enabled: boolean, adapter: any): Promise<void> {
+    this._isSdkMode = enabled;
+    this._sdkOutputAdapter = adapter;
+    // Mark all tools as SDK mode enabled
+    for (const [, tool] of this.tools) {
+      (tool as any)._sdkMode = enabled;
+      (tool as any)._sdkOutputAdapter = adapter;
+    }
+
+    // Initialize SDK mode for TaskTool specifically
+    const taskTool = this.tools.get('task') as any;
+    if (taskTool) {
+      await taskTool.setSdkMode?.(enabled, adapter);
     }
   }
 
@@ -4209,6 +4464,9 @@ export class ToolRegistry {
       throw new Error(`Tool ${toolName} is not allowed in ${executionMode} mode`);
     }
 
+    const isSdkMode = this._isSdkMode;
+    const sdkOutputAdapter = this._sdkOutputAdapter;
+
     // Smart approval mode
     if (executionMode === ExecutionMode.SMART) {
       const debugMode = process.env.DEBUG === 'smart-approval';
@@ -4236,10 +4494,15 @@ export class ToolRegistry {
       const isRemoteMode = authConfig.type === AuthType.OAUTH_XAGENT;
       if (isRemoteMode && toolName === 'InvokeSkill') {
         console.log('');
-        console.log(
-          `${indent}${colors.success(`✅ [Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`)}`
-        );
-        console.log('');
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputInfo(`[Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`);
+        } else {
+          console.log('');
+          console.log(
+            `${indent}${colors.success(`✅ [Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`)}`
+          );
+          console.log('');
+        }
         return await cancellationManager.withCancellation(
           tool.execute(params, executionMode),
           `tool-${toolName}`
@@ -4249,6 +4512,11 @@ export class ToolRegistry {
       const { getSmartApprovalEngine } = await import('./smart-approval.js');
 
       const approvalEngine = getSmartApprovalEngine(debugMode);
+
+      // Set SDK mode for approval engine if in SDK mode
+      if (isSdkMode && sdkOutputAdapter) {
+        approvalEngine.setSdkMode(true, sdkOutputAdapter);
+      }
 
       // Evaluate tool call
       const result = await approvalEngine.evaluate({
@@ -4260,49 +4528,66 @@ export class ToolRegistry {
       // Decide whether to execute based on approval result
       if (result.decision === 'approved') {
         // Whitelist or AI approval passed, execute directly
-        console.log('');
-        console.log(
-          `${indent}${colors.success(`✅ [Smart Mode] Tool '${toolName}' passed approval, executing directly`)}`
-        );
-        console.log(
-          `${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`
-        );
-        console.log(`${indent}${colors.textDim(`  Latency: ${result.latency}ms`)}`);
-        console.log('');
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputInfo(`[Smart Mode] Tool '${toolName}' passed approval, executing directly`);
+          sdkOutputAdapter.outputInfo(`Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}, Latency: ${result.latency}ms`);
+        } else {
+          console.log('');
+          console.log(
+            `${indent}${colors.success(`✅ [Smart Mode] Tool '${toolName}' passed approval, executing directly`)}`
+          );
+          console.log(
+            `${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`
+          );
+          console.log(`${indent}${colors.textDim(`  Latency: ${result.latency}ms`)}`);
+          console.log('');
+        }
         return await cancellationManager.withCancellation(
           tool.execute(params, executionMode),
           `tool-${toolName}`
         );
       } else if (result.decision === 'requires_confirmation') {
         // Requires user confirmation
-        const confirmed = await approvalEngine.requestConfirmation(result);
+        const confirmed = await approvalEngine.requestConfirmation(result, toolName, params);
 
         if (confirmed) {
-          console.log('');
-          console.log(
-            `${indent}${colors.success(`✅ [Smart Mode] User confirmed execution of tool '${toolName}'`)}`
-          );
-          console.log('');
+          if (isSdkMode && sdkOutputAdapter) {
+            sdkOutputAdapter.outputInfo(`[Smart Mode] User confirmed execution of tool '${toolName}'`);
+          } else {
+            console.log('');
+            console.log(
+              `${indent}${colors.success(`✅ [Smart Mode] User confirmed execution of tool '${toolName}'`)}`
+            );
+            console.log('');
+          }
           return await cancellationManager.withCancellation(
             tool.execute(params, executionMode),
             `tool-${toolName}`
           );
         } else {
-          console.log('');
-          console.log(
-            `${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled execution of tool '${toolName}'`)}`
-          );
-          console.log('');
+          if (isSdkMode && sdkOutputAdapter) {
+            sdkOutputAdapter.outputWarning(`[Smart Mode] User cancelled execution of tool '${toolName}'`);
+          } else {
+            console.log('');
+            console.log(
+              `${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled execution of tool '${toolName}'`)}`
+            );
+            console.log('');
+          }
           throw new Error(`Tool execution cancelled by user: ${toolName}`);
         }
       } else {
         // Rejected execution
-        console.log('');
-        console.log(
-          `${indent}${colors.error(`❌ [Smart Mode] Tool '${toolName}' execution rejected`)}`
-        );
-        console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
-        console.log('');
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputError(`[Smart Mode] Tool '${toolName}' execution rejected`, { reason: result.description });
+        } else {
+          console.log('');
+          console.log(
+            `${indent}${colors.error(`❌ [Smart Mode] Tool '${toolName}' execution rejected`)}`
+          );
+          console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
+          console.log('');
+        }
         throw new Error(`Tool execution rejected: ${toolName}`);
       }
     }
@@ -4336,11 +4621,16 @@ export class ToolRegistry {
     const server = mcpManager.getServer(serverName);
     const _serverTools = server?.getToolNames() || [];
 
+    const isSdkMode = this._isSdkMode;
+    const sdkOutputAdapter = this._sdkOutputAdapter;
+
     // Display tool call info
-    console.log('');
-    console.log(
-      `${indent}${colors.warning(`${icons.tool} MCP Tool Call: ${serverName}::${actualToolName}`)}`
-    );
+    if (!isSdkMode || !sdkOutputAdapter) {
+      console.log('');
+      console.log(
+        `${indent}${colors.warning(`${icons.tool} MCP Tool Call: ${serverName}::${actualToolName}`)}`
+      );
+    }
 
     // Smart approval mode for MCP tools
     if (executionMode === ExecutionMode.SMART) {
@@ -4353,11 +4643,20 @@ export class ToolRegistry {
 
       // Remote mode: remote LLM has already approved the tool, auto-approve
       if (isRemoteMode) {
-        console.log(
-          `${indent}${colors.success(`✅ [Smart Mode] Remote mode: MCP tool '${serverName}::${actualToolName}' auto-approved`)}`
-        );
+        if (isSdkMode && sdkOutputAdapter) {
+          sdkOutputAdapter.outputInfo(`[Smart Mode] Remote mode: MCP tool '${serverName}::${actualToolName}' auto-approved`);
+        } else {
+          console.log(
+            `${indent}${colors.success(`✅ [Smart Mode] Remote mode: MCP tool '${serverName}::${actualToolName}' auto-approved`)}`
+          );
+        }
       } else {
         const approvalEngine = getSmartApprovalEngine(debugMode);
+
+        // Set SDK mode for approval engine if in SDK mode
+        if (isSdkMode && sdkOutputAdapter) {
+          approvalEngine.setSdkMode(true, sdkOutputAdapter);
+        }
 
         // Evaluate MCP tool call
         const result = await approvalEngine.evaluate({
@@ -4367,23 +4666,40 @@ export class ToolRegistry {
         });
 
         if (result.decision === 'approved') {
-          console.log(
-            `${indent}${colors.success(`✅ [Smart Mode] MCP tool '${serverName}::${actualToolName}' passed approval`)}`
-          );
-          console.log(
-            `${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`
-          );
-        } else if (result.decision === 'requires_confirmation') {
-          const confirmed = await approvalEngine.requestConfirmation(result);
-          if (!confirmed) {
+          if (isSdkMode && sdkOutputAdapter) {
+            sdkOutputAdapter.outputInfo(`[Smart Mode] MCP tool '${serverName}::${actualToolName}' passed approval`);
+            sdkOutputAdapter.outputInfo(`Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`);
+          } else {
             console.log(
-              `${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled MCP tool execution`)}`
+              `${indent}${colors.success(`✅ [Smart Mode] MCP tool '${serverName}::${actualToolName}' passed approval`)}`
             );
+            console.log(
+              `${indent}${colors.textDim(`  Detection method: ${result.detectionMethod === 'whitelist' ? 'Whitelist' : 'AI Review'}`)}`
+            );
+          }
+        } else if (result.decision === 'requires_confirmation') {
+          const confirmed = await approvalEngine.requestConfirmation(
+            result,
+            `MCP[${serverName}]::${actualToolName}`,
+            params
+          );
+          if (!confirmed) {
+            if (isSdkMode && sdkOutputAdapter) {
+              sdkOutputAdapter.outputWarning(`[Smart Mode] User cancelled MCP tool execution`);
+            } else {
+              console.log(
+                `${indent}${colors.warning(`⚠️  [Smart Mode] User cancelled MCP tool execution`)}`
+              );
+            }
             throw new Error(`Tool execution cancelled by user: ${toolName}`);
           }
         } else {
-          console.log(`${indent}${colors.error(`❌ [Smart Mode] MCP tool execution rejected`)}`);
-          console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
+          if (isSdkMode && sdkOutputAdapter) {
+            sdkOutputAdapter.outputError(`[Smart Mode] MCP tool execution rejected`, { reason: result.description });
+          } else {
+            console.log(`${indent}${colors.error(`❌ [Smart Mode] MCP tool execution rejected`)}`);
+            console.log(`${indent}${colors.textDim(`  Reason: ${result.description}`)}`);
+          }
           throw new Error(`Tool execution rejected: ${toolName}`);
         }
       }

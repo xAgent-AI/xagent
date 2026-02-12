@@ -1,5 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { MCPServerConfig } from './types.js';
+import { getSingletonSession } from './session.js';
+import { output as logOutput } from './output-util.js';
 
 export interface MCPTool {
   name: string;
@@ -44,9 +46,14 @@ export class MCPServer {
       await this.waitForTools(10000);
 
       this.isConnected = true;
-      console.log(`✅ MCP Server connected`);
+      const session = getSingletonSession();
+      if (session?.getIsSdkMode()) {
+        // SDK 模式下不输出
+      } else {
+        await logOutput('success', `�?MCP Server connected`);
+      }
     } catch (error) {
-      console.error(`❌ [mcp] Failed to connect MCP Server: ${error instanceof Error ? error.message : String(error)}`);
+      await logOutput('error', `�?[mcp] Failed to connect MCP Server`, { error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   }
@@ -70,7 +77,7 @@ export class MCPServer {
           resolve();
         } else if (Date.now() - startTime > timeoutMs) {
           clearInterval(checkInterval);
-          console.warn(`[MCP] Timeout waiting for tools (${timeoutMs}ms), proceeding anyway`);
+          logOutput('warning', `[MCP] Timeout waiting for tools (${timeoutMs}ms), proceeding anyway`);
           resolve();  // Don't reject, just proceed without tools
         } else {
           // Continue checking
@@ -96,12 +103,12 @@ export class MCPServer {
       });
 
       this.process.on('error', (error) => {
-        console.error('MCP Server error:', error);
+        logOutput('error', 'MCP Server error', { error: error.message });
         reject(error);
       });
 
       this.process.on('exit', (code, signal) => {
-        console.log(`MCP Server exited with code ${code}, signal ${signal}`);
+        logOutput('info', `MCP Server exited with code ${code}, signal ${signal}`);
         this.isConnected = false;
       });
 
@@ -113,7 +120,7 @@ export class MCPServer {
 
       if (this.process.stderr) {
         this.process.stderr.on('data', (data) => {
-          console.error('MCP Server stderr:', data.toString());
+          logOutput('error', 'MCP Server stderr', { error: data.toString() });
         });
       }
 
@@ -140,7 +147,10 @@ export class MCPServer {
     }
 
     const transportType = this.getTransportType();
-    console.log(`Connecting to MCP Server at ${this.config.url} (${transportType})`);
+    const session = getSingletonSession();
+    if (!session?.getIsSdkMode()) {
+      console.log(`Connecting to MCP Server at ${this.config.url} (${transportType})`);
+    }
 
     // Build headers with auth token
     const headers: Record<string, string> = {
@@ -191,7 +201,8 @@ export class MCPServer {
         // which handles both regular JSON and SSE format responses
         await this.loadTools(headers);
       } catch (error: any) {
-        console.error(`HTTP connection failed: ${error.message}`);
+        const errorMsg = `HTTP connection failed: ${error.message}`;
+        await logOutput('error', errorMsg, { error: error.message });
         if (error.response) {
           console.error(`Response status: ${error.response.status}`);
           if (error.response.data?.message) {
@@ -272,11 +283,11 @@ export class MCPServer {
       clearTimeout(timeoutId);
       const serverInfo = this.config.url || this.config.command || 'MCP server';
       if (error.name === 'AbortError') {
-        console.error(`\n❌ SSE connection timed out`);
+        console.error(`\n�?SSE connection timed out`);
         console.error(`   Server: ${serverInfo}`);
         console.error(`   The server is not responding. Please try again later.`);
       } else {
-        console.error(`\n❌ SSE connection failed`);
+        console.error(`\n�?SSE connection failed`);
         console.error(`   Server: ${serverInfo}`);
         console.error(`   ${error.message}`);
       }
@@ -324,7 +335,12 @@ export class MCPServer {
         if (!tool.name || typeof tool.name !== 'string' || tool.name.trim() === '') continue;
         this.tools.set(tool.name, tool);
       }
-      console.log(`Loaded ${result.tools.length} tools from MCP Server`);
+      const session = getSingletonSession();
+      if (session?.getIsSdkMode()) {
+        // SDK 模式下不输出
+      } else {
+        console.log(`Loaded ${result.tools.length} tools from MCP Server`);
+      }
     }
   }
 
@@ -388,12 +404,12 @@ export class MCPServer {
       } else if (resultData?.tools) {
         this.handleToolsList(resultData);
       } else if (resultData?.error) {
-        console.error(`\n❌ MCP server returned an error`);
+        console.error(`\n�?MCP server returned an error`);
         console.error(`   ${resultData.error.message || 'Unknown error'}`);
       }
     } catch (error: any) {
       const serverInfo = this.config.url || this.config.command || 'MCP server';
-      console.error(`\n❌ Failed to load MCP tools`);
+      console.error(`\n�?Failed to load MCP tools`);
       console.error(`   Server: ${serverInfo}`);
       console.error(`   ${error.message}`);
     }
@@ -729,3 +745,4 @@ export function getMCPManager(): MCPManager {
   }
   return mcpManagerInstance;
 }
+

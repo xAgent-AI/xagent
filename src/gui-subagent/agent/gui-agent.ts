@@ -16,6 +16,7 @@ import { sleep, asyncRetry } from '../utils.js';
 import { actionParser } from '../action-parser/index.js';
 import { colors, icons} from '../../theme.js';
 import { getLogger } from '../../logger.js';
+import { SdkOutputAdapter } from '../../sdk-output-adapter.js';
 
 /**
  * Helper function to truncate long text
@@ -88,6 +89,11 @@ export interface GUIAgentConfig<T extends Operator> {
   maxLoopCount?: number;
   logger?: any;
   signal?: AbortSignal;
+  /**
+   * SDK output adapter for SDK mode output
+   * When provided, GUI Agent will use it to output status and progress in SDK format
+   */
+  sdkOutputAdapter?: SdkOutputAdapter | null;
   onData?: (data: GUIAgentData) => void;
   onError?: (error: Error) => void;
   showAIDebugInfo?: boolean;
@@ -154,6 +160,7 @@ export class GUIAgent<T extends Operator> {
   private readonly maxLoopCount: number;
   private readonly logger: Console;
   private readonly signal?: AbortSignal;
+  private readonly sdkOutputAdapter?: SdkOutputAdapter | null;
   private readonly onData?: (data: GUIAgentData) => void;
   private readonly onError?: (error: Error) => void;
   private readonly showAIDebugInfo: boolean;
@@ -179,6 +186,7 @@ export class GUIAgent<T extends Operator> {
     this.maxLoopCount = config.maxLoopCount || MAX_LOOP_COUNT;
     this.logger = config.logger || guiLogger;
     this.signal = config.signal;
+    this.sdkOutputAdapter = config.sdkOutputAdapter ?? null;
     this.onData = config.onData;
     this.onError = config.onError;
     this.showAIDebugInfo = config.showAIDebugInfo ?? false;
@@ -198,6 +206,9 @@ export class GUIAgent<T extends Operator> {
 
   /**
    * Display conversation results with formatting similar to session.ts (simplified)
+   * In SDK mode, uses the SDK adapter for structured output
+   * Note: For assistant actions, SDK output is handled in the action execution loop
+   * to ensure accurate timing information
    */
   private displayConversationResult(conversation: Conversation, iteration: number, indentLevel: number = 1): void {
     const indent = '  '.repeat(indentLevel);
@@ -213,16 +224,21 @@ export class GUIAgent<T extends Operator> {
       const actionSummary = content.replace(/Thought:[\s\S]*?Action:\s*/i, '').trim();
       const actionType = conversation.predictionParsed?.[0]?.action_type || 'action';
 
-      console.log(`${indent}${colors.primaryBright(`[${iteration}]`)} ${colors.textMuted(actionType)}${timing ? colors.textDim(` (${timing.cost}ms)`) : ''}`);
+      // In SDK mode, action output is handled in the action execution loop
+      // Only use console output for non-SDK mode
+      if (!this.sdkOutputAdapter) {
+        console.log(`${indent}${colors.primaryBright(`[${iteration}]`)} ${colors.textMuted(actionType)}${timing ? colors.textDim(` (${timing.cost}ms)`) : ''}`);
 
-      // Optionally show action details on next line if verbose
-      if (this.showAIDebugInfo && actionSummary) {
-        const truncatedSummary = actionSummary.length > 60 ? actionSummary.substring(0, 60) + '...' : actionSummary;
-        console.log(`${innerIndent}${colors.textMuted(truncatedSummary)}`);
+        // Optionally show action details on next line if verbose
+        if (this.showAIDebugInfo && actionSummary) {
+          const truncatedSummary = actionSummary.length > 60 ? actionSummary.substring(0, 60) + '...' : actionSummary;
+          console.log(`${innerIndent}${colors.textMuted(truncatedSummary)}`);
+        }
       }
     } else if (conversation.from === 'human' && conversation.screenshotBase64) {
       // Show minimal indicator for screenshot
-      if (this.showAIDebugInfo) {
+      // In SDK mode, screenshot is handled by the conversation data
+      if (this.showAIDebugInfo && !this.sdkOutputAdapter) {
         const timing = conversation.timing;
         console.log(`${indent}${colors.textMuted(`${icons.loading} screenshot${timing ? ` (${timing.cost}ms)` : ''}`)}`);
       }
@@ -238,18 +254,30 @@ export class GUIAgent<T extends Operator> {
 
     switch (status) {
       case GUIAgentStatus.RUNNING:
-        console.log(`${indent}${colors.info(`${icons.loading} Step ${iteration}: Running...`)}`);
+        if (!this.sdkOutputAdapter) {
+          console.log(`${indent}${colors.info(`${icons.loading} Step ${iteration}: Running...`)}`);
+        } else {
+          this.sdkOutputAdapter.outputInfo(`Step ${iteration}: Running...`);
+        }
         break;
       case GUIAgentStatus.END:
         // Handled by caller
         break;
       case GUIAgentStatus.ERROR:
         if (data.error) {
-          console.log(`${indent}${colors.error(`${icons.cross} ${data.error}`)}`);
+          if (!this.sdkOutputAdapter) {
+            console.log(`${indent}${colors.error(`${icons.cross} ${data.error}`)}`);
+          } else {
+            this.sdkOutputAdapter.outputError(data.error);
+          }
         }
         break;
       case GUIAgentStatus.USER_STOPPED:
-        console.log(`${indent}${colors.warning(`${icons.warning} Stopped`)}`);
+        if (!this.sdkOutputAdapter) {
+          console.log(`${indent}${colors.warning(`${icons.warning} Stopped`)}`);
+        } else {
+          this.sdkOutputAdapter.outputWarning('Stopped');
+        }
         break;
       default:
         break;
@@ -315,6 +343,11 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       ],
     };
 
+    // Output start via SDK adapter if available
+    if (this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputGUIAgentStart(instruction, this.isLocalMode ? 'local' : 'remote');
+    }
+
     // Initialize operator for initial screenshot
     try {
       await this.operator.doInitialize();
@@ -332,6 +365,11 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
       } else {
         data.status = GUIAgentStatus.ERROR;
         data.error = `Failed to initialize operator: ${errorMsg}`;
+      }
+
+      // Output error via SDK adapter if available
+      if (this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputGUIAgentError(data.error, errorMsg);
       }
       return data;
     }
@@ -353,8 +391,20 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
     data.status = GUIAgentStatus.RUNNING;
     data.systemPrompt = this.systemPrompt;
     const indent = '  '.repeat(this.indentLevel);
-    console.log(`${indent}${colors.primaryBright(`${icons.rocket} GUI Agent started`)}`);
-    console.log('');
+
+    // Output start via SDK adapter if available, otherwise use console
+    if (this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputGUIAgentStart(data.conversations[0]?.value || '', this.isLocalMode ? 'local' : 'remote');
+    } else {
+      console.log(`${indent}${colors.primaryBright(`${icons.rocket} GUI Agent started`)}`);
+      console.log('');
+    }
+
+    // Output running status via SDK adapter if available
+    if (this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputGUIAgentStatus(GUIAgentStatus.RUNNING);
+    }
+
     await this.onData?.({ ...data, conversations: [] });
 
     try {
@@ -367,9 +417,17 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
         // Check pause status
         if (this.isPaused && this.resumePromise) {
           data.status = GUIAgentStatus.PAUSE;
+          // Output pause status via SDK adapter if available
+          if (this.sdkOutputAdapter) {
+            this.sdkOutputAdapter.outputGUIAgentStatus(GUIAgentStatus.PAUSE, loopCnt);
+          }
           await this.onData?.({ ...data, conversations: [] });
           await this.resumePromise;
           data.status = GUIAgentStatus.RUNNING;
+          // Output running status via SDK adapter if available
+          if (this.sdkOutputAdapter) {
+            this.sdkOutputAdapter.outputGUIAgentStatus(GUIAgentStatus.RUNNING, loopCnt);
+          }
           await this.onData?.({ ...data, conversations: [] });
         }
 
@@ -687,6 +745,12 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
                 // Any other status (success, failed, etc.) is considered success
                 stepSuccess = true;
+
+                // Output action via SDK adapter if available
+                if (this.sdkOutputAdapter && actionType) {
+                  const timingCost = Date.now() - start;
+                  this.sdkOutputAdapter.outputGUIAgentAction(loopCnt, actionType, timingCost);
+                }
                 break;
               } catch (executeError) {
                 stepRetryCount++;
@@ -767,7 +831,11 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
       // Output error immediately if task failed
       if (finalStatus === GUIAgentStatus.ERROR && finalError) {
-        console.log(`\n${indent}${colors.error('✖')} ${finalError}\n`);
+        if (!this.sdkOutputAdapter) {
+          console.log(`\n${indent}${colors.error('✖')} ${finalError}\n`);
+        } else {
+          this.sdkOutputAdapter.outputError(finalError);
+        }
       }
 
       // Call onData callback if set
@@ -795,6 +863,26 @@ finished(content='xxx') # Use escape characters \', \", and \n in content part t
 
       // Log final status (only visible when showAIDebugInfo is enabled)
       this.logger.debug(`[GUIAgent] Final status: ${finalStatus}${finalError ? `, Error: ${finalError}` : ''}, Steps: ${loopCnt}`);
+
+      // Output final status via SDK adapter if available
+      if (this.sdkOutputAdapter) {
+        switch (finalStatus) {
+          case GUIAgentStatus.END:
+            this.sdkOutputAdapter.outputGUIAgentComplete(data.conversations[0]?.value || '', loopCnt);
+            break;
+          case GUIAgentStatus.USER_STOPPED:
+            this.sdkOutputAdapter.outputGUIAgentCancelled(data.conversations[0]?.value || '');
+            break;
+          case GUIAgentStatus.ERROR:
+            this.sdkOutputAdapter.outputGUIAgentError(
+              data.conversations[0]?.value || 'GUI Agent error',
+              finalError || 'Unknown error'
+            );
+            break;
+          default:
+            this.sdkOutputAdapter.outputGUIAgentStatus(finalStatus, loopCnt, finalError);
+        }
+      }
 
       data.status = finalStatus;
       data.error = finalError;

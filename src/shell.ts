@@ -1,5 +1,6 @@
 import { existsSync } from 'fs';
 import { spawn, spawnSync } from 'child_process';
+import { output as logOutput } from './output-util.js';
 
 /**
  * Find bash executable on PATH (Windows).
@@ -115,7 +116,7 @@ export function killProcessTree(pid: number): void {
 				detached: true,
 			});
 		} catch (error) {
-			console.warn(`[shell] Failed to kill process tree (PID ${pid}): ${error instanceof Error ? error.message : String(error)}`);
+			logOutput('warning', `[shell] Failed to kill process tree (PID ${pid})`, { error: error instanceof Error ? error.message : String(error) });
 		}
 	} else {
 		// Use SIGKILL on Unix/Linux/Mac
@@ -126,7 +127,7 @@ export function killProcessTree(pid: number): void {
 			try {
 				process.kill(pid, 'SIGKILL');
 			} catch (fallbackError) {
-				console.warn(`[shell] Failed to kill process (PID ${pid}): ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`);
+				logOutput('warning', `[shell] Failed to kill process (PID ${pid})`, { error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError) });
 			}
 		}
 	}

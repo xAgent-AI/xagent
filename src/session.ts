@@ -52,6 +52,7 @@ import {
 } from './context-compressor.js';
 import { getLogger } from './logger.js';
 import { ensureTtySane, setupEscKeyHandler } from './terminal.js';
+import { SdkOutputAdapter } from './sdk-output-adapter.js';
 
 // Type aliases for backward compatibility
 type AIClient = AIClientInterface;
@@ -83,6 +84,18 @@ export class InteractiveSession {
   private currentTaskId: string | null = null;
   private taskCompleted: boolean = false;
   private isFirstApiCall: boolean = true;
+  private sdkOutputAdapter: SdkOutputAdapter | null = null;
+  private isSdkMode: boolean = false;
+  private sdkInputBuffer: string[] = [];
+  private resolveInput: ((value: string | null) => void) | null = null;
+  private _currentRequestId: string | null = null;
+  private heartbeatTimeout: NodeJS.Timeout | null = null;
+  private heartbeatTimeoutMs: number = 300000; // 5 minutes timeout for long AI responses
+  private lastActivityTime: number = Date.now();
+
+  // SDK response handling for approvals and questions
+  private approvalPromises: Map<string, { resolve: (approved: boolean) => void; reject: (err: Error) => void }> = new Map();
+  private questionPromises: Map<string, { resolve: (answers: string[]) => void; reject: (err: Error) => void }> = new Map();
 
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
@@ -171,6 +184,76 @@ export class InteractiveSession {
   }
 
   /**
+   * Set SDK mode for programmatic access.
+   * In SDK mode, output is formatted as JSON to stdout.
+   */
+  setSdkMode(adapter: SdkOutputAdapter): void {
+    this.isSdkMode = true;
+    this.sdkOutputAdapter = adapter;
+
+    // Initialize SDK mode for other modules using centralized output util
+    const { initOutputMode } = require('./output-util.js');
+    initOutputMode(true, adapter);
+
+    // Initialize SmartApprovalEngine in SDK mode
+    this.initSmartApprovalSdkMode(adapter).catch(() => {
+      // Silently ignore errors - not critical
+    });
+
+    // Initialize tool registry in SDK mode (fire and forget, doesn't need to await)
+    this.initToolRegistrySdkMode(adapter).catch(() => {
+      // Silently ignore errors - tool registry init is not critical
+    });
+  }
+
+  /**
+   * Initialize SmartApprovalEngine in SDK mode.
+   */
+  private async initSmartApprovalSdkMode(adapter: SdkOutputAdapter): Promise<void> {
+    const { getSmartApprovalEngine } = await import('./smart-approval.js');
+    const approvalEngine = getSmartApprovalEngine();
+    approvalEngine.setSdkMode(true, adapter);
+  }
+
+  /**
+   * Initialize tool registry in SDK mode.
+   */
+  private async initToolRegistrySdkMode(adapter: SdkOutputAdapter): Promise<void> {
+    const toolRegistry = getToolRegistry();
+    await toolRegistry.setSdkMode(true, adapter);
+  }
+
+  /**
+   * Get SDK mode status.
+   */
+  getIsSdkMode(): boolean {
+    return this.isSdkMode;
+  }
+
+  /**
+   * Output assistant response - handles SDK mode and normal mode differently.
+   */
+  private outputAssistant(content: string, reasoningContent?: string): void {
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputAssistant(content, reasoningContent);
+    } else {
+      const indent = this.getIndent();
+      console.log('');
+      console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
+      console.log(
+        `${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`
+      );
+      console.log('');
+      const renderedContent = renderMarkdown(
+        content,
+        (process.stdout.columns || 80) - indent.length * 2
+      );
+      console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
+      console.log('');
+    }
+  }
+
+  /**
    * Update system prompt to reflect MCP changes (called after add/remove MCP)
    */
   async updateSystemPrompt(): Promise<void> {
@@ -235,11 +318,13 @@ export class InteractiveSession {
           
           if (state.lastSkillUpdate && state.lastSkillUpdate > lastUpdateTime) {
             lastUpdateTime = state.lastSkillUpdate;
-            
+
             // Update system prompt with new skills
             await this.updateSystemPrompt();
-            
-            console.log(colors.textMuted('  🔄 Skills updated from CLI'));
+
+            if (!this.isSdkMode) {
+              console.log(colors.textMuted('  🔄 Skills updated from CLI'));
+            }
           }
         }
       } catch {
@@ -263,39 +348,50 @@ export class InteractiveSession {
     this.currentTaskId = crypto.randomUUID();
 
     const _separator = icons.separator.repeat(60);
-    console.log('');
-    console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
-    console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
-    console.log(
-      colors.gradient('║') +
-        ' '.repeat(13) +
-        '🤖 ' +
-        colors.gradient('XAGENT CLI') +
-        ' '.repeat(32) +
-        colors.gradient('  ║')
-    );
-    console.log(
-      colors.gradient('║') +
-        ' '.repeat(16) +
-        colors.textMuted(`v${packageJson.version}`) +
-        ' '.repeat(36) +
-        colors.gradient('  ║')
-    );
-    console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
-    console.log(colors.gradient('╚════════════════════════════════════════════════════════════╝'));
-    console.log(colors.textMuted('  AI-powered command-line assistant'));
 
-    // Show initialization message if skills were initialized
-    if (initializedCount > 0) {
-      console.log(colors.textMuted(`  ✨ Initialized ${initializedCount} built-in skills`));
+    if (!this.isSdkMode) {
+      // Normal mode: show ASCII art welcome
+      console.log('');
+      console.log(colors.gradient('╔════════════════════════════════════════════════════════════╗'));
+      console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
+      console.log(
+        colors.gradient('║') +
+          ' '.repeat(13) +
+          '🤖 ' +
+          colors.gradient('XAGENT CLI') +
+          ' '.repeat(32) +
+          colors.gradient('  ║')
+      );
+      console.log(
+        colors.gradient('║') +
+          ' '.repeat(16) +
+          colors.textMuted(`v${packageJson.version}`) +
+          ' '.repeat(36) +
+          colors.gradient('  ║')
+      );
+      console.log(colors.gradient('║') + ' '.repeat(58) + colors.gradient('  ║'));
+      console.log(colors.gradient('╚════════════════════════════════════════════════════════════╝'));
+      console.log(colors.textMuted('  AI-powered command-line assistant'));
+
+      // Show initialization message if skills were initialized
+      if (initializedCount > 0) {
+        console.log(colors.textMuted(`  ✨ Initialized ${initializedCount} built-in skills`));
+      }
+      console.log('');
     }
-    console.log('');
 
     await this.initialize();
     this.showWelcomeMessage();
 
     // Start watching for skill updates from CLI
     this.startSkillUpdateWatcher();
+
+    // SDK 模式初始化：设置输出适配器
+    if (this.isSdkMode) {
+      // Start heartbeat timeout monitoring in SDK mode
+      this.startHeartbeatMonitoring();
+    }
+
     // Set up ESC key handler using the terminal module
     // This avoids conflicts with readline and provides clean ESC detection
     let _escCleanup: (() => void) | undefined;
@@ -487,31 +583,49 @@ export class InteractiveSession {
 
       const mcpServers = this.configManager.getMcpServers();
       Object.entries(mcpServers).forEach(([name, config]) => {
-        console.log(`📝 Registering MCP server: ${name} (${config.transport})`);
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputMCPRegistering(name, config.transport || 'stdio');
+        } else {
+          console.log(`📝 Registering MCP server: ${name} (${config.transport})`);
+        }
         this.mcpManager.registerServer(name, config);
       });
 
       // Eagerly connect to MCP servers to get tool definitions
       if (mcpServers && Object.keys(mcpServers).length > 0) {
         try {
-          console.log(
-            `${colors.info(`${icons.brain} Connecting to ${Object.keys(mcpServers).length} MCP server(s)...`)}`
-          );
+          const serverCount = Object.keys(mcpServers).length;
+          if (this.isSdkMode && this.sdkOutputAdapter) {
+            this.sdkOutputAdapter.outputMCPLoading(serverCount);
+          } else {
+            console.log(
+              `${colors.info(`${icons.brain} Connecting to ${serverCount} MCP server(s)...`)}`
+            );
+          }
           await this.mcpManager.connectAllServers();
           const connectedCount = Array.from(this.mcpManager.getAllServers()).filter((s: any) =>
             s.isServerConnected()
           ).length;
           const mcpTools = this.mcpManager.getToolDefinitions();
-          console.log(
-            `${colors.success(`✓ ${connectedCount}/${Object.keys(mcpServers).length} MCP server(s) connected (${mcpTools.length} tools available)`)}`
-          );
+
+          if (this.isSdkMode && this.sdkOutputAdapter) {
+            this.sdkOutputAdapter.outputMCPConnected(serverCount, connectedCount, mcpTools.length);
+          } else {
+            console.log(
+              `${colors.success(`✓ ${connectedCount}/${serverCount} MCP server(s) connected (${mcpTools.length} tools available)`)}`
+            );
+          }
 
           // Register MCP tools with the tool registry (hide MCP origin from LLM)
           const toolRegistry = getToolRegistry();
           const allMcpTools = this.mcpManager.getAllTools();
           toolRegistry.registerMCPTools(allMcpTools);
         } catch (error: any) {
-          console.log(`${colors.warning(`⚠ MCP connection failed: ${error.message}`)}`);
+          if (this.isSdkMode && this.sdkOutputAdapter) {
+            this.sdkOutputAdapter.outputMCPConnectionFailed(error.message);
+          } else {
+            console.log(`${colors.warning(`⚠ MCP connection failed: ${error.message}`)}`);
+          }
         }
       }
 
@@ -527,7 +641,11 @@ export class InteractiveSession {
 
       this.currentAgent = this.agentManager.getAgent('general-purpose') ?? null;
 
-      console.log(colors.success('✔ Initialization complete'));
+      if (this.isSdkMode && this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputSuccess('Initialization complete');
+      } else {
+        console.log(colors.success('✔ Initialization complete'));
+      }
     } catch (error: any) {
       const spinner = ora({ text: '', spinner: 'dots', color: 'red' }).start();
       spinner.fail(colors.error(`Initialization failed: ${error.message}`));
@@ -638,10 +756,14 @@ export class InteractiveSession {
     // VLM configuration is optional - only show for non-OAuth (local) mode
     // Remote mode uses backend VLM configuration
     if (authType !== AuthType.OAUTH_XAGENT) {
-      console.log('');
-      console.log(colors.info(`${icons.info} VLM configuration is optional.`));
-      console.log(colors.info(`You can configure it later using the /model command if needed.`));
-      console.log('');
+      if (this.isSdkMode && this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputInfo('VLM configuration is optional. You can configure it later using the /model command if needed.');
+      } else {
+        console.log('');
+        console.log(colors.info(`${icons.info} VLM configuration is optional.`));
+        console.log(colors.info(`You can configure it later using the /model command if needed.`));
+        console.log('');
+      }
     }
 
     this.configManager.setAuthConfig(authConfig);
@@ -662,21 +784,82 @@ export class InteractiveSession {
     const language = this.configManager.getLanguage();
     const separator = icons.separator.repeat(40);
 
-    console.log('');
-    console.log(colors.border(separator));
+    if (!this.isSdkMode) {
+      console.log('');
+      console.log(colors.border(separator));
 
-    if (language === 'zh') {
-      console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
-      console.log(colors.textMuted('Type /help to see available commands'));
-    } else {
-      console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
-      console.log(colors.textMuted('Type /help to see available commands'));
+      if (language === 'zh') {
+        console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
+        console.log(colors.textMuted('Type /help to see available commands'));
+      } else {
+        console.log(colors.primaryBright(`${icons.sparkles} Welcome to XAGENT CLI!`));
+        console.log(colors.textMuted('Type /help to see available commands'));
+      }
+
+      console.log(colors.border(separator));
+      console.log('');
     }
 
-    console.log(colors.border(separator));
-    console.log('');
-
     this.showExecutionMode();
+
+    // In SDK mode, output ready signal
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputReady();
+    }
+  }
+
+  /**
+   * Start heartbeat timeout monitoring in SDK mode
+   */
+  private startHeartbeatMonitoring(): void {
+    this.stopHeartbeatMonitoring();
+
+    // Check heartbeat timeout periodically
+    this.heartbeatTimeout = setInterval(() => {
+      const elapsed = Date.now() - this.lastActivityTime;
+
+      if (elapsed > this.heartbeatTimeoutMs) {
+        // Heartbeat timeout - no activity for too long
+        this.sdkOutputAdapter?.output({
+          type: 'error',
+          subtype: 'heartbeat_timeout',
+          timestamp: Date.now(),
+          data: {
+            message: 'Heartbeat timeout - no activity detected',
+            elapsed_ms: elapsed,
+            timeout_ms: this.heartbeatTimeoutMs
+          }
+        });
+
+        // Stop monitoring
+        this.stopHeartbeatMonitoring();
+      }
+    }, 30000); // Check every 30 seconds
+  }
+
+  /**
+   * Stop heartbeat timeout monitoring
+   */
+  private stopHeartbeatMonitoring(): void {
+    if (this.heartbeatTimeout) {
+      clearInterval(this.heartbeatTimeout);
+      this.heartbeatTimeout = null;
+    }
+  }
+
+  /**
+   * Reset heartbeat timeout (called on activity)
+   */
+  private resetHeartbeatTimeout(): void {
+    this.lastActivityTime = Date.now();
+  }
+
+  /**
+   * Stop heartbeat monitoring (public method for cleanup)
+   * Used by SDK session to clean up when session ends
+   */
+  public stopHeartbeatMonitor(): void {
+    this.stopHeartbeatMonitoring();
   }
 
   private showExecutionMode(): void {
@@ -711,10 +894,12 @@ export class InteractiveSession {
     const config = modeConfig[this.executionMode];
     const modeName = this.executionMode;
 
-    console.log(colors.textMuted(`${icons.info} Current Mode:`));
-    console.log(`  ${config.color(config.icon)} ${styleHelpers.text.bold(config.color(modeName))}`);
-    console.log(`  ${colors.textDim(`  ${config.description}`)}`);
-    console.log('');
+    if (!this.isSdkMode) {
+      console.log(colors.textMuted(`${icons.info} Current Mode:`));
+      console.log(`  ${config.color(config.icon)} ${styleHelpers.text.bold(config.color(modeName))}`);
+      console.log(`  ${colors.textDim(`  ${config.description}`)}`);
+      console.log('');
+    }
 
     this.showRemoteModelInfo();
   }
@@ -723,6 +908,21 @@ export class InteractiveSession {
     const authConfig = this.configManager.getAuthConfig();
     const isRemote = authConfig.type === AuthType.OAUTH_XAGENT;
 
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      // SDK 模式：通过 adapter 输出
+      if (isRemote) {
+        const llmModel = authConfig.remote_llmModelName || 'Not set';
+        const vlmModel = authConfig.remote_vlmModelName || 'Not set';
+        this.sdkOutputAdapter.outputInfo(`Remote Models - LLM: ${llmModel}, VLM: ${vlmModel}`);
+      } else {
+        const modelName = authConfig.modelName || 'Not set';
+        const guiSubagentModel = this.configManager.get('guiSubagentModel') || 'Not set';
+        this.sdkOutputAdapter.outputInfo(`Local Models - LLM: ${modelName}, VLM: ${guiSubagentModel}`);
+      }
+      return;
+    }
+
+    // 正常模式：控制台输出
     if (isRemote) {
       const llmModel = authConfig.remote_llmModelName || colors.textMuted('Not set');
       const vlmModel = authConfig.remote_vlmModelName || colors.textMuted('Not set');
@@ -742,6 +942,12 @@ export class InteractiveSession {
   private async promptLoop(): Promise<void> {
     // Check if we're shutting down
     if ((this as any)._isShuttingDown) {
+      return;
+    }
+
+    // In SDK mode, use a different input loop
+    if (this.isSdkMode) {
+      await this.sdkPromptLoop();
       return;
     }
 
@@ -776,10 +982,52 @@ export class InteractiveSession {
   }
 
   private async handleInput(input: string): Promise<void> {
+    // Reset heartbeat timeout on any input activity
+    this.resetHeartbeatTimeout();
+
     const trimmedInput = input.trim();
 
     if (!trimmedInput) {
       return;
+    }
+
+    // Check for SDK JSON message format
+    if (this.isSdkMode) {
+      const { isSdkMessage, parseSdkMessage } = await import('./types.js');
+
+      if (isSdkMessage(trimmedInput)) {
+        const sdkMessage = parseSdkMessage(trimmedInput);
+
+        if (sdkMessage) {
+          if (sdkMessage.type === 'ping') {
+            // Handle ping - respond with pong
+            await this.handlePing(sdkMessage);
+            return;
+          } else if (sdkMessage.type === 'control_request') {
+            // Handle control request
+            await this.handleControlRequest(sdkMessage);
+            return;
+          } else if (sdkMessage.type === 'user') {
+            // Store request_id for tracking
+            this._currentRequestId = sdkMessage.request_id || null;
+            // Handle user message from SDK
+            await this.processUserMessage(sdkMessage.content);
+            return;
+          } else if (sdkMessage.type === 'approval_response') {
+            // Handle approval response
+            await this.handleApprovalResponse(sdkMessage);
+            return;
+          } else if (sdkMessage.type === 'question_response') {
+            // Handle question response
+            await this.handleQuestionResponse(sdkMessage);
+            return;
+          }
+        }
+      } else {
+        // Not a JSON SDK message, treat as regular text
+        await this.processUserMessage(trimmedInput);
+        return;
+      }
     }
 
     if (trimmedInput.startsWith('/')) {
@@ -799,6 +1047,327 @@ export class InteractiveSession {
     }
 
     await this.processUserMessage(trimmedInput);
+  }
+
+  /**
+   * SDK prompt loop - reads input from stdin without showing prompt
+   */
+  private async sdkPromptLoop(): Promise<void> {
+    // Read input from stdin directly without outputting prompt
+    const input = await this.readSdkInput();
+
+    if ((this as any)._isShuttingDown || input === null) {
+      return;
+    }
+
+    try {
+      await this.handleInput(input);
+    } catch (err: any) {
+      this.sdkOutputAdapter?.output({
+        type: 'error',
+        subtype: 'general',
+        timestamp: Date.now(),
+        data: { message: err.message }
+      });
+    }
+
+    // Continue the loop
+    this.sdkPromptLoop();
+  }
+
+  private sdkRl: readline.Interface | null = null;
+  private sdkInputProcessing: boolean = false;
+
+  /**
+   * Check if a line is an SDK control message (approval_response, question_response)
+   */
+  private isSdkControlMessage(line: string): boolean {
+    try {
+      const parsed = JSON.parse(line);
+      return parsed.type === 'approval_response' || parsed.type === 'question_response';
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Process an SDK input line (returns true if processed)
+   */
+  private async processSdkInputLine(line: string): Promise<boolean> {
+    const { isSdkMessage, parseSdkMessage } = await import('./types.js');
+
+    if (isSdkMessage(line)) {
+      const sdkMessage = parseSdkMessage(line);
+
+      if (sdkMessage) {
+        if (sdkMessage.type === 'ping') {
+          await this.handlePing(sdkMessage);
+          return true;
+        } else if (sdkMessage.type === 'control_request') {
+          await this.handleControlRequest(sdkMessage);
+          return true;
+        } else if (sdkMessage.type === 'user') {
+          this._currentRequestId = sdkMessage.request_id || null;
+          await this.processUserMessage(sdkMessage.content);
+          return true;
+        } else if (sdkMessage.type === 'approval_response') {
+          await this.handleApprovalResponse(sdkMessage);
+          return true;
+        } else if (sdkMessage.type === 'question_response') {
+          await this.handleQuestionResponse(sdkMessage);
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Read a line of input from stdin (SDK mode)
+   * Uses readline 'line' event for reliable stdin reading
+   * SDK control messages (approval_response, question_response) bypass the main loop
+   */
+  private readSdkInput(): Promise<string | null> {
+    return new Promise((resolve) => {
+      // Create readline interface if not exists
+      if (!this.sdkRl) {
+        this.sdkRl = readline.createInterface({
+          input: process.stdin,
+          crlfDelay: Infinity,
+        });
+
+        // Handle line events - SDK control messages bypass normal flow
+        this.sdkRl.on('line', async (line) => {
+          const cleanLine = line
+            .replace(/^\uFEFF/, '')
+            // eslint-disable-next-line no-control-regex
+            .replace(/[\x00-\x1F\x7F-\x9F]/g, '');
+
+          // Check if this is an SDK control message
+          if (this.isSdkControlMessage(cleanLine)) {
+            // Process immediately, don't wait for main loop
+            // We need to set a flag to prevent re-entrancy issues
+            if (this.sdkInputProcessing) {
+              // Already processing, queue it
+              this.sdkInputBuffer.push(cleanLine);
+            } else {
+              this.sdkInputProcessing = true;
+              try {
+                await this.processSdkInputLine(cleanLine);
+              } finally {
+                this.sdkInputProcessing = false;
+              }
+            }
+            return;
+          }
+
+          // Regular input
+          if (this.resolveInput) {
+            // Immediate handler available, resolve immediately
+            this.resolveInput(cleanLine);
+            this.resolveInput = null;
+          } else {
+            // No handler available, queue the message
+            this.sdkInputBuffer.push(cleanLine);
+          }
+        });
+
+        // Handle close events
+        this.sdkRl.on('close', () => {
+          if (this.resolveInput) {
+            this.resolveInput(null);
+            this.resolveInput = null;
+          }
+        });
+
+        // Handle errors
+        this.sdkRl.on('error', () => {
+          if (this.resolveInput) {
+            this.resolveInput(null);
+            this.resolveInput = null;
+          }
+        });
+      }
+
+      // Check for SDK control messages in buffer first
+      for (let i = 0; i < this.sdkInputBuffer.length; i++) {
+        const line = this.sdkInputBuffer[i];
+        if (this.isSdkControlMessage(line)) {
+          this.sdkInputBuffer.splice(i, 1);
+          resolve(line);
+          return;
+        }
+      }
+
+      if (this.sdkInputBuffer.length > 0) {
+        const line = this.sdkInputBuffer.shift()!;
+        resolve(line);
+        return;
+      }
+
+      // Set up the resolve callback
+      this.resolveInput = (value: string | null) => {
+        resolve(value);
+      };
+    });
+  }
+
+  /**
+   * Handle SDK ping messages (heartbeat)
+   */
+  private async handlePing(pingMessage: any): Promise<void> {
+    const requestId = pingMessage.request_id || `ping_${Date.now()}`;
+
+    // Reset activity timestamp on ping (heartbeat activity)
+    this.lastActivityTime = Date.now();
+
+    // Send pong response through SDK adapter for consistency
+    this.sdkOutputAdapter?.output({
+      type: 'system',
+      subtype: 'pong',
+      timestamp: Date.now(),
+      data: {
+        type: 'pong',
+        request_id: requestId,
+        timestamp: Date.now()
+      }
+    });
+  }
+
+  /**
+   * Handle SDK control requests
+   */
+  private async handleControlRequest(request: any): Promise<void> {
+    // Update activity to prevent heartbeat timeout during control requests
+    this.lastActivityTime = Date.now();
+
+    const { request_id, request: req } = request;
+
+    switch (req.subtype) {
+      case 'interrupt':
+        this.sdkOutputAdapter?.outputSystem('interrupt', { request_id });
+        (this as any)._isShuttingDown = true;
+        process.exit(0);
+        break;
+
+      case 'set_permission_mode':
+        {
+          const { ExecutionMode } = await import('./types.js');
+          const modeMap: Record<string, ExecutionMode> = {
+            'default': ExecutionMode.DEFAULT,
+            'acceptEdits': ExecutionMode.ACCEPT_EDITS,
+            'plan': ExecutionMode.PLAN,
+            'bypassPermissions': ExecutionMode.YOLO,
+          };
+          const mode = modeMap[req.mode] || ExecutionMode.SMART;
+          this.executionMode = mode;
+          this.sdkOutputAdapter?.outputSystem('permission_mode_changed', {
+            request_id,
+            mode: req.mode
+          });
+        }
+        break;
+
+      case 'set_model':
+        this.sdkOutputAdapter?.outputSystem('model_changed', {
+          request_id,
+          model: req.model
+        });
+        break;
+
+      default:
+        this.sdkOutputAdapter?.outputWarning(`Unknown control request: ${req.subtype}`);
+    }
+  }
+
+  /**
+   * Handle SDK approval responses
+   */
+  private async handleApprovalResponse(response: {
+    request_id: string;
+    approved: boolean;
+  }): Promise<void> {
+    const { request_id, approved } = response;
+
+    const pending = this.approvalPromises.get(request_id);
+    if (pending) {
+      pending.resolve(approved);
+      this.approvalPromises.delete(request_id);
+    } else {
+      this.sdkOutputAdapter?.outputWarning(`Unknown approval request ID: ${request_id}`);
+    }
+  }
+
+  /**
+   * Handle SDK question responses
+   */
+  private async handleQuestionResponse(response: {
+    request_id: string;
+    answers: string[];
+  }): Promise<void> {
+    const { request_id, answers } = response;
+
+    const pending = this.questionPromises.get(request_id);
+    if (pending) {
+      pending.resolve(answers);
+      this.questionPromises.delete(request_id);
+    } else {
+      this.sdkOutputAdapter?.outputWarning(`Unknown question request ID: ${request_id}`);
+    }
+  }
+
+  /**
+   * Wait for SDK approval response
+   */
+  async waitForApprovalResponse(requestId: string, timeoutMs: number = 300000): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const pending = this.approvalPromises.get(requestId);
+        if (pending) {
+          pending.reject(new Error('Approval request timeout'));
+          this.approvalPromises.delete(requestId);
+        }
+        resolve(false);
+      }, timeoutMs);
+
+      this.approvalPromises.set(requestId, {
+        resolve: (approved: boolean) => {
+          clearTimeout(timeout);
+          resolve(approved);
+        },
+        reject: (err: Error) => {
+          clearTimeout(timeout);
+          reject(err);
+        }
+      });
+    });
+  }
+
+  /**
+   * Wait for SDK question response
+   */
+  async waitForQuestionResponse(requestId: string, timeoutMs: number = 300000): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        const pending = this.questionPromises.get(requestId);
+        if (pending) {
+          pending.reject(new Error('Question request timeout'));
+          this.questionPromises.delete(requestId);
+        }
+        resolve([]);  // Return empty array on timeout instead of rejecting
+      }, timeoutMs);
+
+      this.questionPromises.set(requestId, {
+        resolve: (answers: string[]) => {
+          clearTimeout(timeout);
+          resolve(answers);
+        },
+        reject: (err: Error) => {
+          clearTimeout(timeout);
+          reject(err);
+        }
+      });
+    });
   }
 
   private async handleSubAgentCommand(input: string): Promise<void> {
@@ -905,6 +1474,12 @@ export class InteractiveSession {
     const thinkingConfig = this.configManager.getThinkingConfig();
     const displayMode = thinkingConfig.displayMode || 'compact';
 
+    // SDK 模式：使用 adapter 输出
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputThinking(reasoningContent, displayMode);
+      return;
+    }
+
     const separator = icons.separator.repeat(
       Math.min(60, process.stdout.columns || 80) - indent.length
     );
@@ -981,10 +1556,14 @@ export class InteractiveSession {
     const threshold = thresholdMatch ? parseInt(thresholdMatch[1], 10) : 0;
     const contextWindow = contextWindowMatch ? parseInt(contextWindowMatch[1], 10) : 0;
 
-    console.log('');
-    console.log(
-      `${indent}${colors.success(`${icons.sparkles} Compressing context (${currentMessages} msgs, ${tokenCount.toLocaleString()} > ${threshold.toLocaleString()}/${contextWindow.toLocaleString()} tokens, ${Math.round((tokenCount / contextWindow) * 100)}% of context window)...`)}`
-    );
+    if (this.isSdkMode && this.sdkOutputAdapter) {
+      this.sdkOutputAdapter.outputContextCompressionTriggered(reason);
+    } else {
+      console.log('');
+      console.log(
+        `${indent}${colors.success(`${icons.sparkles} Compressing context (${currentMessages} msgs, ${tokenCount.toLocaleString()} > ${threshold.toLocaleString()}/${contextWindow.toLocaleString()} tokens, ${Math.round((tokenCount / contextWindow) * 100)}% of context window)...`)}`
+      );
+    }
 
     const toolRegistry = getToolRegistry();
     const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
@@ -1001,9 +1580,20 @@ export class InteractiveSession {
     if (result.wasCompressed) {
       this.conversation = result.compressedMessages;
       const reductionPercent = Math.round((1 - result.compressedSize / result.originalSize) * 100);
-      console.log(
-        `${indent}${colors.success(`${icons.success} Compressed ${result.originalMessageCount} → ${result.compressedMessageCount} messages (${reductionPercent}% smaller)`)}`
-      );
+
+      if (this.isSdkMode && this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputContextCompressionResult(
+          result.originalSize,
+          result.compressedSize,
+          reductionPercent,
+          result.originalMessageCount,
+          result.compressedMessageCount
+        );
+      } else {
+        console.log(
+          `${indent}${colors.success(`${icons.success} Compressed ${result.originalMessageCount} → ${result.compressedMessageCount} messages (${reductionPercent}% smaller)`)}`
+        );
+      }
 
       // Summary is embedded in first user message, look for it
       // The format is: "[Conversation Summary - X messages compressed]\n\n${summary}"
@@ -1032,27 +1622,36 @@ export class InteractiveSession {
           summaryContent = summaryContent.substring(0, maxPreviewLength) + '\n...';
         }
 
-        console.log('');
-        console.log(
-          `${indent}${theme.predefinedStyles.title(`${icons.sparkles} Conversation Summary`)}`
-        );
-        const separator = icons.separator.repeat(
-          Math.min(60, process.stdout.columns || 80) - indent.length * 2
-        );
-        console.log(`${indent}${colors.border(separator)}`);
-        const renderedSummary = renderMarkdown(
-          summaryContent,
-          (process.stdout.columns || 80) - indent.length * 4
-        );
-        console.log(
-          `${indent}${theme.predefinedStyles.dim(renderedSummary).replace(/^/gm, indent)}`
-        );
-        if (isTruncated) {
-          console.log(
-            `${indent}${colors.textMuted(`(... ${summaryMessage.content.length - maxPreviewLength} more chars hidden)`)}`
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputContextCompressionSummary(
+            'Conversation compressed successfully',
+            summaryContent,
+            isTruncated,
+            summaryMessage.content.length
           );
+        } else {
+          console.log('');
+          console.log(
+            `${indent}${theme.predefinedStyles.title(`${icons.sparkles} Conversation Summary`)}`
+          );
+          const separator = icons.separator.repeat(
+            Math.min(60, process.stdout.columns || 80) - indent.length * 2
+          );
+          console.log(`${indent}${colors.border(separator)}`);
+          const renderedSummary = renderMarkdown(
+            summaryContent,
+            (process.stdout.columns || 80) - indent.length * 4
+          );
+          console.log(
+            `${indent}${theme.predefinedStyles.dim(renderedSummary).replace(/^/gm, indent)}`
+          );
+          if (isTruncated) {
+            console.log(
+              `${indent}${colors.textMuted(`(... ${summaryMessage.content.length - maxPreviewLength} more chars hidden)`)}`
+            );
+          }
+          console.log(`${indent}${colors.border(separator)}`);
         }
-        console.log(`${indent}${colors.border(separator)}`);
       }
 
       // Sync compressed conversation history to slashCommandHandler
@@ -1193,17 +1792,25 @@ export class InteractiveSession {
     // Mark that an operation is in progress
     (this as any)._isOperationInProgress = true;
 
-    const indent = this.getIndent();
     const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
     const icon = colors.primary(icons.brain);
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let frameIndex = 0;
 
+    // SDK 模式下不显示 spinner
+    const showThinkingSpinner = !this.isSdkMode;
+    let spinnerInterval: NodeJS.Timeout | null = null;
+
     // Custom spinner: only icon rotates, text stays static
-    const spinnerInterval = setInterval(() => {
-      process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
-      frameIndex = (frameIndex + 1) % frames.length;
-    }, 120);
+    if (showThinkingSpinner) {
+      spinnerInterval = setInterval(() => {
+        process.stdout.write(`\r${colors.primary(frames[frameIndex])} ${icon} ${thinkingText}`);
+        frameIndex = (frameIndex + 1) % frames.length;
+      }, 120);
+    }
+
+    let content = '';
+    let reasoningContent = '';
 
     try {
       const memory = await this.memoryManager.loadMemory();
@@ -1255,30 +1862,20 @@ export class InteractiveSession {
       // Mark that first API call is complete
       this.isFirstApiCall = false;
 
-      clearInterval(spinnerInterval);
+      if (spinnerInterval) clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r'); // Clear spinner line
 
       const assistantMessage = response.choices[0].message;
 
-      const content = typeof assistantMessage.content === 'string' ? assistantMessage.content : '';
-      const reasoningContent = assistantMessage.reasoning_content || '';
+      content = typeof assistantMessage.content === 'string' ? assistantMessage.content : '';
+      reasoningContent = assistantMessage.reasoning_content || '';
       // Display reasoning content if available and thinking mode is enabled
       if (reasoningContent && this.configManager.getThinkingConfig().enabled) {
         this.displayThinkingContent(reasoningContent);
       }
 
-      console.log('');
-      console.log(`${indent}${colors.primaryBright(`${icons.robot} Assistant:`)}`);
-      console.log(
-        `${indent}${colors.border(icons.separator.repeat(Math.min(60, process.stdout.columns || 80) - indent.length))}`
-      );
-      console.log('');
-      const renderedContent = renderMarkdown(
-        content,
-        (process.stdout.columns || 80) - indent.length * 2
-      );
-      console.log(`${indent}${renderedContent.replace(/^/gm, indent)}`);
-      console.log('');
+      // Output assistant response
+      this.outputAssistant(content, reasoningContent);
 
       this.conversation.push({
         role: 'assistant',
@@ -1311,14 +1908,27 @@ export class InteractiveSession {
         );
       }
 
+      // Signal request completion to SDK (no tools to execute)
+      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
+        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, 'success');
+        this._currentRequestId = null;
+      }
+
       // Operation completed successfully, clear the flag
       (this as any)._isOperationInProgress = false;
     } catch (error: any) {
-      clearInterval(spinnerInterval);
+      if (spinnerInterval) clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
 
       // Clear the operation flag
       (this as any)._isOperationInProgress = false;
+
+      // Signal request completion to SDK
+      if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
+        const status = error.message === 'Operation cancelled by user' ? 'cancelled' : 'error';
+        this.sdkOutputAdapter.outputRequestDone(this._currentRequestId, status);
+        this._currentRequestId = null;
+      }
 
       if (error.message === 'Operation cancelled by user') {
         // Notify backend to cancel the task
@@ -1498,13 +2108,19 @@ export class InteractiveSession {
 
     // Display all tool calls info
     for (const { name, params } of preparedToolCalls) {
-      if (showToolDetails) {
-        console.log('');
-        console.log(`${indent}${colors.warning(`${icons.tool} Tool Call: ${name}`)}`);
-        console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
+      // SDK mode: use adapter output
+      if (this.isSdkMode && this.sdkOutputAdapter) {
+        this.sdkOutputAdapter.outputToolStart(name, params);
       } else {
-        const toolDescription = this.getToolDescription(name, params);
-        console.log(`${indent}${colors.textMuted(`${icons.loading} ${toolDescription}`)}`);
+        // Normal mode: console output
+        if (showToolDetails) {
+          console.log('');
+          console.log(`${indent}${colors.warning(`${icons.tool} Tool Call: ${name}`)}`);
+          console.log(`${indent}${colors.textDim(JSON.stringify(params, null, 2))}`);
+        } else {
+          const toolDescription = this.getToolDescription(name, params);
+          console.log(`${indent}${colors.textMuted(`${icons.loading} ${toolDescription}`)}`);
+        }
       }
     }
 
@@ -1555,8 +2171,14 @@ export class InteractiveSession {
 
         _hasError = true;
 
-        console.log('');
-        console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${tool} - ${error}`)}`);
+        // SDK mode: use adapter output
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputToolError(tool, error);
+        } else {
+          // Normal mode: console output
+          console.log('');
+          console.log(`${indent}${colors.error(`${icons.cross} Tool Error: ${tool} - ${error}`)}`);
+        }
 
         // Add detailed error info including tool name and params for AI understanding and correction
         this.conversation.push({
@@ -1570,200 +2192,208 @@ export class InteractiveSession {
           timestamp: Date.now(),
         });
       } else {
+        // SDK mode: output tool result via adapter
+        if (this.isSdkMode && this.sdkOutputAdapter) {
+          this.sdkOutputAdapter.outputToolResult(tool, result);
+        }
+
         // Use correct indent for gui-subagent tasks
         const isGuiSubagent = tool === 'task' && params?.subagent_type === 'gui-subagent';
         const displayIndent = isGuiSubagent ? indent + '  ' : indent;
 
-        // Always show details for todo tools so users can see their task lists
-        const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
+        // Normal mode: console output (SDK mode already output via adapter above)
+        if (!this.isSdkMode || !this.sdkOutputAdapter) {
+          // Always show details for todo tools so users can see their task lists
+          const isTodoTool = tool === 'todo_write' || tool === 'todo_read';
 
-        // Special handling for edit tool with diff
-        const isEditTool = tool === 'Edit';
-        const hasDiff = isEditTool && result?.diff;
+          // Special handling for edit tool with diff
+          const isEditTool = tool === 'Edit';
+          const hasDiff = isEditTool && result?.diff;
 
-        // Special handling for Write tool with file preview
-        const isWriteTool = tool === 'Write';
-        const hasFilePreview = isWriteTool && result?.preview;
+          // Special handling for Write tool with file preview
+          const isWriteTool = tool === 'Write';
+          const hasFilePreview = isWriteTool && result?.preview;
 
-        // Special handling for DeleteFile tool
-        const isDeleteTool = tool === 'DeleteFile';
-        const hasDeleteInfo = isDeleteTool && result?.filePath;
+          // Special handling for DeleteFile tool
+          const isDeleteTool = tool === 'DeleteFile';
+          const hasDeleteInfo = isDeleteTool && result?.filePath;
 
-        // Special handling for task tool (subagent)
-        const isTaskTool = tool === 'task' && params?.subagent_type;
+          // Special handling for task tool (subagent)
+          const isTaskTool = tool === 'task' && params?.subagent_type;
 
-        // Check if tool is an MCP wrapper tool by looking up in tool registry
-        const { getToolRegistry } = await import('./tools.js');
-        const toolRegistry = getToolRegistry();
-        const toolDef = toolRegistry.get(tool);
-        const isMcpTool = toolDef && (toolDef as any)._isMcpTool === true;
+          // Check if tool is an MCP wrapper tool by looking up in tool registry
+          const { getToolRegistry } = await import('./tools.js');
+          const toolRegistry = getToolRegistry();
+          const toolDef = toolRegistry.get(tool);
+          const isMcpTool = toolDef && (toolDef as any)._isMcpTool === true;
 
-        if (isTodoTool) {
-          console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
-          console.log(this.renderTodoList(result?.todos || [], displayIndent));
-          // Show summary if available
-          if (result?.message) {
-            console.log(`${displayIndent}${colors.textDim(result.message)}`);
-          }
-        } else if (hasDiff) {
-          // Show edit result with diff
-          console.log('');
-          const diffOutput = renderDiff(result.diff);
-          const indentedDiff = diffOutput
-            .split('\n')
-            .map((line) => `${displayIndent}  ${line}`)
-            .join('\n');
-          console.log(`${indentedDiff}`);
-        } else if (hasFilePreview) {
-          // Show new file content in diff-like style
-          console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.file} ${result.filePath}`)}`);
-          console.log(`${displayIndent}${colors.textDim(`  ${result.lineCount} lines`)}`);
-          console.log('');
-          console.log(renderLines(result.preview, { maxLines: 10, indent: displayIndent + '  ' }));
-        } else if (hasDeleteInfo) {
-          // Show DeleteFile result
-          console.log('');
-          console.log(
-            `${displayIndent}${colors.success(`${icons.check} Deleted: ${result.filePath}`)}`
-          );
-        } else if (isTaskTool) {
-          // Special handling for task tool (subagent) - show friendly summary
-          console.log('');
-          const subagentType = params.subagent_type;
-          const subagentName =
-            params.description ||
-            (params.prompt ? params.prompt.substring(0, 50).replace(/\n/g, ' ') : 'Unknown task');
-
-          if (result?.success) {
-            console.log(
-              `${displayIndent}${colors.success(`${icons.check} ${subagentType}: Completed`)}`
-            );
-            console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
-            if (result.message) {
-              console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
-            }
-          } else if (result?.cancelled) {
-            console.log(
-              `${displayIndent}${colors.warning(`${icons.cross} ${subagentType}: Cancelled`)}`
-            );
-            console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
-          } else {
-            console.log(
-              `${displayIndent}${colors.error(`${icons.cross} ${subagentType}: Failed`)}`
-            );
-            console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+          if (isTodoTool) {
+            console.log('');
+            console.log(`${displayIndent}${colors.success(`${icons.check} Todo List:`)}`);
+            console.log(this.renderTodoList(result?.todos || [], displayIndent));
+            // Show summary if available
             if (result?.message) {
-              console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+              console.log(`${displayIndent}${colors.textDim(result.message)}`);
             }
-          }
-        } else if (isMcpTool) {
-          // Special handling for MCP tools - show friendly summary
-          console.log('');
-          // Extract server name and tool name from tool name (format: serverName__toolName)
-          let serverName = 'MCP';
-          let toolDisplayName = tool;
-          if (tool.includes('__')) {
-            const parts = tool.split('__');
-            serverName = parts[0];
-            toolDisplayName = parts.slice(1).join('__');
-          }
+          } else if (hasDiff) {
+            // Show edit result with diff
+            console.log('');
+            const diffOutput = renderDiff(result.diff);
+            const indentedDiff = diffOutput
+              .split('\n')
+              .map((line) => `${displayIndent}  ${line}`)
+              .join('\n');
+            console.log(`${indentedDiff}`);
+          } else if (hasFilePreview) {
+            // Show new file content in diff-like style
+            console.log('');
+            console.log(`${displayIndent}${colors.success(`${icons.file} ${result.filePath}`)}`);
+            console.log(`${displayIndent}${colors.textDim(`  ${result.lineCount} lines`)}`);
+            console.log('');
+            console.log(renderLines(result.preview, { maxLines: 10, indent: displayIndent + '  ' }));
+          } else if (hasDeleteInfo) {
+            // Show DeleteFile result
+            console.log('');
+            console.log(
+              `${displayIndent}${colors.success(`${icons.check} Deleted: ${result.filePath}`)}`
+            );
+          } else if (isTaskTool) {
+            // Special handling for task tool (subagent) - show friendly summary
+            console.log('');
+            const subagentType = params.subagent_type;
+            const subagentName =
+              params.description ||
+              (params.prompt ? params.prompt.substring(0, 50).replace(/\n/g, ' ') : 'Unknown task');
 
-          // Try to extract meaningful content from MCP result
-          let summary = '';
-          if (result?.content && Array.isArray(result.content) && result.content.length > 0) {
-            const firstBlock = result.content[0];
-            if (firstBlock?.type === 'text' && firstBlock?.text) {
-              const text = firstBlock.text;
-              if (typeof text === 'string') {
-                // Detect HTML content
-                if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
-                  summary = '[HTML content fetched]';
-                } else {
-                  // Try to parse if it's JSON
-                  try {
-                    const parsed = JSON.parse(text);
-                    if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.title) {
-                      // Search results format
-                      summary = `Found ${parsed.length} result(s)`;
-                    } else if (parsed?.message) {
-                      summary = parsed.message;
-                    } else if (typeof parsed === 'string') {
-                      summary = parsed.substring(0, 100);
+            if (result?.success) {
+              console.log(
+                `${displayIndent}${colors.success(`${icons.check} ${subagentType}: Completed`)}`
+              );
+              console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+              if (result.message) {
+                console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+              }
+            } else if (result?.cancelled) {
+              console.log(
+                `${displayIndent}${colors.warning(`${icons.cross} ${subagentType}: Cancelled`)}`
+              );
+              console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+            } else {
+              console.log(
+                `${displayIndent}${colors.error(`${icons.cross} ${subagentType}: Failed`)}`
+              );
+              console.log(`${displayIndent}${colors.textDim(`  Task: ${subagentName}`)}`);
+              if (result?.message) {
+                console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+              }
+            }
+          } else if (isMcpTool) {
+            // Special handling for MCP tools - show friendly summary
+            console.log('');
+            // Extract server name and tool name from tool name (format: serverName__toolName)
+            let serverName = 'MCP';
+            let toolDisplayName = tool;
+            if (tool.includes('__')) {
+              const parts = tool.split('__');
+              serverName = parts[0];
+              toolDisplayName = parts.slice(1).join('__');
+            }
+
+            // Try to extract meaningful content from MCP result
+            let summary = '';
+            if (result?.content && Array.isArray(result.content) && result.content.length > 0) {
+              const firstBlock = result.content[0];
+              if (firstBlock?.type === 'text' && firstBlock?.text) {
+                const text = firstBlock.text;
+                if (typeof text === 'string') {
+                  // Detect HTML content
+                  if (text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<html')) {
+                    summary = '[HTML content fetched]';
+                  } else {
+                    // Try to parse if it's JSON
+                    try {
+                      const parsed = JSON.parse(text);
+                      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0]?.title) {
+                        // Search results format
+                        summary = `Found ${parsed.length} result(s)`;
+                      } else if (parsed?.message) {
+                        summary = parsed.message;
+                      } else if (typeof parsed === 'string') {
+                        summary = parsed.substring(0, 100);
+                      }
+                    } catch {
+                      // Not JSON, use as-is with truncation
+                      summary = text.substring(0, 100);
                     }
-                  } catch {
-                    // Not JSON, use as-is with truncation
-                    summary = text.substring(0, 100);
                   }
                 }
               }
+            } else if (result?.message) {
+              summary = result.message;
             }
-          } else if (result?.message) {
-            summary = result.message;
-          }
 
-          if (result?.success !== false) {
-            console.log(
-              `${displayIndent}${colors.success(`${icons.check} ${serverName}: Success`)}`
-            );
-            console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
-            if (summary) {
-              console.log(`${displayIndent}${colors.textDim(`  ${summary}`)}`);
-            }
-          } else {
-            console.log(`${displayIndent}${colors.error(`${icons.cross} ${serverName}: Failed`)}`);
-            console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
-            if (result?.message || result?.error) {
+            if (result?.success !== false) {
               console.log(
-                `${displayIndent}${colors.textDim(`  ${result?.message || result?.error}`)}`
+                `${displayIndent}${colors.success(`${icons.check} ${serverName}: Success`)}`
               );
+              console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
+              if (summary) {
+                console.log(`${displayIndent}${colors.textDim(`  ${summary}`)}`);
+              }
+            } else {
+              console.log(`${displayIndent}${colors.error(`${icons.cross} ${serverName}: Failed`)}`);
+              console.log(`${displayIndent}${colors.textDim(`  Tool: ${toolDisplayName}`)}`);
+              if (result?.message || result?.error) {
+                console.log(
+                  `${displayIndent}${colors.textDim(`  ${result?.message || result?.error}`)}`
+                );
+              }
             }
-          }
-        } else if (tool === 'InvokeSkill') {
-          // Special handling for InvokeSkill - show friendly summary
-          console.log('');
-          const skillName = params?.skillId || 'Unknown skill';
-          const taskDesc = params?.taskDescription || '';
+          } else if (tool === 'InvokeSkill') {
+            // Special handling for InvokeSkill - show friendly summary
+            console.log('');
+            const skillName = params?.skillId || 'Unknown skill';
+            const taskDesc = params?.taskDescription || '';
 
-          if (result?.success) {
-            console.log(`${displayIndent}${colors.success(`${icons.check} Skill: Completed`)}`);
-            console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
-            if (taskDesc) {
-              const truncatedTask =
-                taskDesc.length > 60 ? taskDesc.substring(0, 60) + '...' : taskDesc;
-              console.log(`${displayIndent}${colors.textDim(`  Task: ${truncatedTask}`)}`);
+            if (result?.success) {
+              console.log(`${displayIndent}${colors.success(`${icons.check} Skill: Completed`)}`);
+              console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
+              if (taskDesc) {
+                const truncatedTask =
+                  taskDesc.length > 60 ? taskDesc.substring(0, 60) + '...' : taskDesc;
+                console.log(`${displayIndent}${colors.textDim(`  Task: ${truncatedTask}`)}`);
+              }
+            } else {
+              console.log(`${displayIndent}${colors.error(`${icons.cross} Skill: Failed`)}`);
+              console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
+              if (result?.message) {
+                console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
+              }
             }
+          } else if (showToolDetails) {
+            console.log('');
+            console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
+            console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
+          } else if (result && result.success === false) {
+            // GUI task or other tool failed
+            console.log(
+              `${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`
+            );
+          } else if (result) {
+            // Show brief preview by default (consistent with subagent behavior)
+            const resultPreview =
+              typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+            const truncatedPreview =
+              resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
+            // Indent the preview
+            const indentedPreview = truncatedPreview
+              .split('\n')
+              .map((line) => `${displayIndent}  ${line}`)
+              .join('\n');
+            console.log(`${indentedPreview}`);
           } else {
-            console.log(`${displayIndent}${colors.error(`${icons.cross} Skill: Failed`)}`);
-            console.log(`${displayIndent}${colors.textDim(`  Skill: ${skillName}`)}`);
-            if (result?.message) {
-              console.log(`${displayIndent}${colors.textDim(`  ${result.message}`)}`);
-            }
+            console.log(`${displayIndent}${colors.textDim('(no result)')}`);
           }
-        } else if (showToolDetails) {
-          console.log('');
-          console.log(`${displayIndent}${colors.success(`${icons.check} Tool Result:`)}`);
-          console.log(`${displayIndent}${colors.textDim(JSON.stringify(result, null, 2))}`);
-        } else if (result && result.success === false) {
-          // GUI task or other tool failed
-          console.log(
-            `${displayIndent}${colors.error(`${icons.cross} ${result.message || 'Failed'}`)}`
-          );
-        } else if (result) {
-          // Show brief preview by default (consistent with subagent behavior)
-          const resultPreview =
-            typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-          const truncatedPreview =
-            resultPreview.length > 200 ? resultPreview.substring(0, 200) + '...' : resultPreview;
-          // Indent the preview
-          const indentedPreview = truncatedPreview
-            .split('\n')
-            .map((line) => `${displayIndent}  ${line}`)
-            .join('\n');
-          console.log(`${indentedPreview}`);
-        } else {
-          console.log(`${displayIndent}${colors.textDim('(no result)')}`);
         }
 
         const toolCallRecord: ToolCall = {

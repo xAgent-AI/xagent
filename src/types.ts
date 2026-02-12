@@ -217,3 +217,121 @@ export interface ToolCallItem {
   type?: string;
   function: ToolCallFunction;
 }
+
+// ============================================================================
+// SDK Message Types (for programmatic access)
+// ============================================================================
+
+/**
+ * SDK input message from client
+ */
+export interface SdkInputMessage {
+  type: 'user';
+  content: string;
+  request_id?: string;  // Optional request ID for tracking
+  uuid?: string;
+  parent_tool_use_id?: string | null;
+}
+
+/**
+ * SDK control request message
+ */
+export interface SdkControlRequest {
+  type: 'control_request';
+  request_id: string;
+  request: {
+    subtype: 'interrupt' | 'initialize' | 'set_permission_mode' | 'set_model';
+    [key: string]: unknown;
+  };
+}
+
+/**
+ * SDK ping message (heartbeat)
+ */
+export interface SdkPingMessage {
+  type: 'ping';
+  request_id?: string;
+  timestamp: number;
+}
+
+/**
+ * SDK approval response message (for responding to approval requests in SDK mode)
+ */
+export interface SdkApprovalResponse {
+  type: 'approval_response';
+  request_id: string;
+  approved: boolean;
+}
+
+/**
+ * SDK question response message (for responding to ask_user_question in SDK mode)
+ */
+export interface SdkQuestionResponse {
+  type: 'question_response';
+  request_id: string;
+  answers: string[];
+}
+
+/**
+ * SDK input message union type
+ */
+export type SdkInputMessageType = SdkInputMessage | SdkControlRequest | SdkPingMessage | SdkApprovalResponse | SdkQuestionResponse;
+
+/**
+ * Check if a string is a JSON SDK message
+ */
+export function isSdkMessage(input: string): boolean {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith('{')) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    // Check for known message types
+    return (
+      parsed.type === 'user' ||
+      parsed.type === 'control_request' ||
+      parsed.type === 'ping' ||
+      parsed.type === 'approval_response' ||
+      parsed.type === 'question_response'
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Try to parse SDK message from string
+ */
+export function parseSdkMessage(input: string): SdkInputMessageType | null {
+  const trimmed = input.trim();
+
+  try {
+    const parsed = JSON.parse(trimmed);
+
+    if (parsed.type === 'user') {
+      return parsed as SdkInputMessage;
+    }
+
+    if (parsed.type === 'control_request') {
+      return parsed as SdkControlRequest;
+    }
+
+    if (parsed.type === 'ping') {
+      return parsed as SdkPingMessage;
+    }
+
+    if (parsed.type === 'approval_response') {
+      return parsed as SdkApprovalResponse;
+    }
+
+    if (parsed.type === 'question_response') {
+      return parsed as SdkQuestionResponse;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}

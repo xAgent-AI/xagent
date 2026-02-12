@@ -2,6 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
 import { ChatMessage, Conversation } from './types.js';
+import { output as logOutput } from './output-util.js';
 
 export class ConversationManager {
   private conversationsDir: string;
@@ -17,7 +18,7 @@ export class ConversationManager {
       await fs.mkdir(this.conversationsDir, { recursive: true });
       await this.loadConversations();
     } catch (error) {
-      console.error('Failed to initialize conversation manager:', error);
+      await logOutput('error', 'Failed to initialize conversation manager', { error: (error as Error).message });
     }
   }
 
@@ -34,7 +35,7 @@ export class ConversationManager {
         }
       }
     } catch (error) {
-      console.error('Failed to load conversations:', error);
+      await logOutput('error', 'Failed to load conversations', { error: (error as Error).message });
     }
   }
 
@@ -122,7 +123,7 @@ export class ConversationManager {
     }
 
     this.currentConversationId = conversationId;
-    console.log(`âœ… Switched to conversation: ${conversationId}`);
+    await logOutput('success', `âœ?Switched to conversation: ${conversationId}`);
   }
 
   listConversations(): Conversation[] {
@@ -146,7 +147,7 @@ export class ConversationManager {
       this.currentConversationId = null;
     }
 
-    console.log(`âœ… Deleted conversation: ${conversationId}`);
+    await logOutput('success', `âœ?Deleted conversation: ${conversationId}`);
   }
 
   async clearCurrentConversation(): Promise<void> {
@@ -177,7 +178,7 @@ export class ConversationManager {
     const markdown = this.conversationToMarkdown(conversation);
     await fs.writeFile(outputPath, markdown, 'utf-8');
 
-    console.log(`âœ… Exported conversation to: ${outputPath}`);
+    await logOutput('success', `âœ?Exported conversation to: ${outputPath}`);
   }
 
   private conversationToMarkdown(conversation: Conversation): string {
@@ -221,7 +222,7 @@ export class ConversationManager {
     this.conversations.set(conversation.id, conversation);
     await this.saveConversation(conversation);
 
-    console.log(`âœ… Imported conversation: ${conversation.id}`);
+    await logOutput('success', `âœ?Imported conversation: ${conversation.id}`);
 
     return conversation;
   }
@@ -286,3 +287,4 @@ export function getConversationManager(): ConversationManager {
   }
   return conversationManagerInstance;
 }
+

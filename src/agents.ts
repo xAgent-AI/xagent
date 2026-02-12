@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import { AgentConfig, ExecutionMode } from './types.js';
 import { getToolRegistry } from './tools.js';
+import { output as logOutput } from './output-util.js';
 
 export class AgentManager {
   private agents: Map<string, AgentConfig> = new Map();
@@ -51,7 +52,7 @@ export class AgentManager {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error(`Failed to load agents from ${dirPath}:`, error);
+        logOutput('error', `Failed to load agents from ${dirPath}`, { error: (error as Error).message });
       }
     }
   }
@@ -77,7 +78,7 @@ export class AgentManager {
          }
        }
      } catch (error) {
-       console.error('Failed to apply JSON agent config:', error);
+       logOutput('error', 'Failed to apply JSON agent config', { error: (error as Error).message });
      }
    }
 
@@ -122,7 +123,7 @@ export class AgentManager {
         description: config.description
       };
     } catch (error) {
-      console.error('Failed to parse agent config:', error);
+      logOutput('error', 'Failed to parse agent config', { error: (error as Error).message });
       return null;
     }
   }

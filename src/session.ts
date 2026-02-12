@@ -97,6 +97,17 @@ export class InteractiveSession {
   private approvalPromises: Map<string, { resolve: (approved: boolean) => void; reject: (err: Error) => void }> = new Map();
   private questionPromises: Map<string, { resolve: (answers: string[]) => void; reject: (err: Error) => void }> = new Map();
 
+  // Team mode properties
+  private isTeamMode: boolean = false;
+  private teamId: string | null = null;
+  private memberId: string | null = null;
+  private memberName: string | null = null;
+  private memberRole: string | null = null;
+  private teamStore: any = null;
+  private messageClient: any = null;
+  private spawnPrompt: string | null = null;
+  private brokerPort: number | null = null;
+
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -111,6 +122,51 @@ export class InteractiveSession {
     this.conversationManager = getConversationManager();
     this.sessionManager = getSessionManager(process.cwd());
     this.slashCommandHandler = new SlashCommandHandler();
+
+    // Check if running in Team Mode
+    if (process.env.XAGENT_TEAM_MODE === 'true') {
+      this.isTeamMode = true;
+      this.teamId = process.env.XAGENT_TEAM_ID || null;
+      this.memberId = process.env.XAGENT_MEMBER_ID || null;
+      this.memberName = process.env.XAGENT_MEMBER_NAME || null;
+      this.memberRole = process.env.XAGENT_MEMBER_ROLE || null;
+      this.spawnPrompt = process.env.XAGENT_SPAWN_PROMPT || null;
+      this.brokerPort = process.env.XAGENT_BROKER_PORT ? parseInt(process.env.XAGENT_BROKER_PORT, 10) : null;
+      
+      // Import and initialize team components
+      import('./team-manager/index.js').then(async ({ getTeamStore, MessageClient }) => {
+        this.teamStore = getTeamStore();
+        
+        // Connect to message broker if port is available
+        if (this.brokerPort && this.teamId && this.memberId) {
+          this.messageClient = new MessageClient(
+            this.teamId,
+            this.memberId,
+            this.brokerPort
+          );
+          
+          this.messageClient.on('message', (msg: any) => {
+            this.handleTeamMessage(msg);
+          });
+          
+          this.messageClient.on('connected', () => {
+            console.log(`[Team] Connected to message broker on port ${this.brokerPort}`);
+          });
+          
+          this.messageClient.on('disconnected', () => {
+            console.log('[Team] Disconnected from message broker');
+          });
+          
+          try {
+            await this.messageClient.connect();
+          } catch (err) {
+            console.error('[Team] Failed to connect to message broker:', err);
+          }
+        }
+      }).catch(() => {
+        // Ignore import errors
+      });
+    }
 
     // Register /clear callback, clear local conversation when clearing dialogue
     this.slashCommandHandler.setClearCallback(() => {
@@ -221,6 +277,75 @@ export class InteractiveSession {
   private async initToolRegistrySdkMode(adapter: SdkOutputAdapter): Promise<void> {
     const toolRegistry = getToolRegistry();
     await toolRegistry.setSdkMode(true, adapter);
+  }
+
+  /**
+   * Handle incoming team message from socket.
+   */
+  private handleTeamMessage(msg: any): void {
+    if (!msg || !msg.content) return;
+
+    this.conversation.push({
+      role: 'user',
+      content: `<teammate-message from="${msg.fromMemberId}" type="${msg.type}">${msg.content}</teammate-message>`,
+      timestamp: msg.timestamp || Date.now()
+    });
+  }
+
+  /**
+   * Get team mode status.
+   */
+  getIsTeamMode(): boolean {
+    return this.isTeamMode;
+  }
+
+  /**
+   * Get team ID.
+   */
+  getTeamId(): string | null {
+    return this.teamId;
+  }
+
+  /**
+   * Get member ID.
+   */
+  getMemberId(): string | null {
+    return this.memberId;
+  }
+
+  /**
+   * Get member name.
+   */
+  getMemberName(): string | null {
+    return this.memberName;
+  }
+
+  /**
+   * Get spawn prompt (for team mode).
+   */
+  getSpawnPrompt(): string | null {
+    return this.spawnPrompt;
+  }
+
+  /**
+   * Cleanup team mode resources.
+   */
+  async cleanupTeamMode(): Promise<void> {
+    if (this.messageClient) {
+      await this.messageClient.disconnect();
+      this.messageClient = null;
+    }
+    
+    if (this.teamStore && this.teamId && this.memberId) {
+      try {
+        await this.teamStore.updateMember(this.teamId, this.memberId, {
+          status: 'shutdown',
+          lastActivity: Date.now()
+        });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
   }
 
   /**

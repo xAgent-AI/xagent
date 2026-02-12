@@ -164,7 +164,21 @@ program
   .description('Start the xAgent CLI interactive session')
   .option('--approval-mode <mode>', 'Set approval mode (yolo, accept_edits, plan, default, smart)')
   .option('--sdk', 'Run in SDK mode for programmatic access (stdin/stdout JSON communication)')
+  .option('--team-mode', 'Run as a team member (internal use)')
+  .option('--team-id <id>', 'Team ID for team mode')
+  .option('--member-id <id>', 'Member ID for team mode')
+  .option('--member-name <name>', 'Member name for team mode')
+  .option('--broker-port <port>', 'Message broker port for team mode')
   .action(async (options) => {
+    // Set team mode environment variables
+    if (options.teamMode) {
+      process.env.XAGENT_TEAM_MODE = 'true';
+      if (options.teamId) process.env.XAGENT_TEAM_ID = options.teamId;
+      if (options.memberId) process.env.XAGENT_MEMBER_ID = options.memberId;
+      if (options.memberName) process.env.XAGENT_MEMBER_NAME = options.memberName;
+      if (options.brokerPort) process.env.XAGENT_BROKER_PORT = options.brokerPort;
+    }
+
     // Check if running in SDK mode
     if (options.sdk || process.env.XAGENT_SDK === 'true') {
       const { startSdkSession } = await import('./sdk-session.js');

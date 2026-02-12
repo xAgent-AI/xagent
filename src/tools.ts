@@ -1433,43 +1433,123 @@ export interface ToolCallOptions {
 
 export class TaskTool implements Tool {
   name = 'task';
-  description = `Launch specialized AI subagents to handle complex, multi-step tasks. Subagents are expert agents designed for specific domains like planning, code exploration, frontend testing, and more.
+  description = `Launch specialized AI subagents or agent teams to handle complex tasks autonomously.
 
-# When to Use
-- Complex tasks requiring specialized expertise (planning, analysis, testing)
-- Multi-step workflows that benefit from dedicated focus
-- When you need to delegate work to avoid context overload
-- Parallel execution of independent tasks across different domains
-- User explicitly requests a specific type of agent (e.g., "use the frontend tester")
+# Two Modes
 
-# Available SubAgents
-1. **plan-agent** - Task planning and breakdown, risk analysis, implementation roadmaps
-2. **explore-agent** - Codebase exploration, architecture analysis, finding specific code
-3. **frontend-tester** - Writing and running frontend tests, UI validation
-4. **code-reviewer** - Code review, security checks, bug detection
-5. **frontend-developer** - Frontend development (React, TypeScript, modern web)
-6. **backend-developer** - Backend development (Node.js, APIs, databases)
-7. **gui-subagent** - Browser automation, visual web interactions, desktop application automation
+## Mode 1: SubAgent (Single/Parallel)
+Launch specialized AI agents. Each agent runs independently with isolated context.
+
+### SubAgent Types
+| Type | Use Case |
+|------|----------|
+| **plan-agent** | Task planning, risk analysis, roadmaps |
+| **explore-agent** | Codebase exploration, architecture analysis |
+| **code-reviewer** | Code review, security checks, bug detection |
+| **frontend-tester** | Frontend tests, UI validation |
+| **frontend-developer** | React, TypeScript, web development |
+| **backend-developer** | Node.js, APIs, databases |
+| **gui-subagent** | Browser automation, visual interactions |
+
+### SubAgent Examples
+Single: task(description="Explore auth flow", subagent_type="explore-agent")
+Parallel: task(description="Review code", agents=[{subagent_type="code-reviewer", prompt="Check security"}, {subagent_type="frontend-tester", prompt="Test forms"}])
+
+### When to Use SubAgents
+- Code exploration and understanding
+- Independent parallel tasks
+- Specialized work (testing, security review)
+
+---
+
+## Mode 2: Agent Team
+Create collaborative AI teams with shared tasks and real-time messaging.
+
+### Team Architecture
+Lead Agent (you) creates a team, spawns teammates, and coordinates via messaging.
+Teammates run in separate processes (tmux/iTerm2/in-process) and communicate via TCP socket.
+
+### Team Actions
+
+| Action | Purpose | Input | Output |
+|--------|---------|-------|--------|
+| **create** | Create team + spawn teammates | team_name, teammates[{name, role, prompt}], display_mode | team_id, members[{id, name}] |
+| **message** | Send message to teammate(s) | team_id, message{to_member_id: "id"|"broadcast", content} | message_id |
+| **task_create** | Create shared task | team_id, task_config{title, description, priority?, dependencies?} | task_id |
+| **task_update** | Update task status | team_id, task_update{task_id, action: "claim"|"complete"} | status |
+| **shutdown** | Stop a teammate | team_id, member_id | - |
+| **cleanup** | Delete team resources | team_id | - |
+
+### Key Parameters
+
+**teammates[]**: Each teammate needs name, role, and prompt.
+- name: Identifier for messaging (e.g., "security", "frontend")
+- role: Description of responsibility
+- prompt: Initial instructions for the teammate
+
+**display_mode**: How teammates are displayed
+- "tmux": Split panes (requires tmux)
+- "iterm2": Split panes (macOS only)
+- "in-process": Run in background (default)
+
+**message.to_member_id**:
+- Specific member_id: Direct message to that teammate
+- "broadcast": Message to all teammates
+
+**task_update.action**:
+- "claim": Take ownership of task
+- "complete": Mark task done
+
+### Complete Workflow Example
+
+1. Create team:
+task(team_mode=true, team_action="create", team_name="pr-review",
+     display_mode="tmux",
+     teammates=[
+       {name: "security", role: "Security Reviewer", prompt: "Review for security vulnerabilities"},
+       {name: "style", role: "Code Style", prompt: "Check code style and best practices"}
+     ])
+Returns: {team_id: "abc-123", members: [{id: "m1", name: "security"}, {id: "m2", name: "style"}]}
+
+2. Create tasks:
+task(team_mode=true, team_action="task_create", team_id="abc-123",
+     task_config={title: "Review auth module", description: "Check auth.ts", priority: "high"})
+Returns: {task_id: "t1", ...}
+
+3. Coordinate via messages:
+task(team_mode=true, team_action="message", team_id="abc-123",
+     message={to_member_id: "m1", content: "Focus on the auth module"})
+task(team_mode=true, team_action="message", team_id="abc-123",
+     message={to_member_id: "broadcast", content: "Submit findings in 5 minutes"})
+
+4. Update task status:
+task(team_mode=true, team_action="task_update", team_id="abc-123",
+     task_update={task_id: "t1", action: "claim"})
+task(team_mode=true, team_action="task_update", team_id="abc-123",
+     task_update={task_id: "t1", action: "complete"})
+
+5. Shutdown teammates and cleanup:
+task(team_mode=true, team_action="shutdown", team_id="abc-123", member_id="m1")
+task(team_mode=true, team_action="shutdown", team_id="abc-123", member_id="m2")
+task(team_mode=true, team_action="cleanup", team_id="abc-123")
+
+### When to Use Teams
+- Complex tasks needing multiple perspectives
+- Parallel work with coordination
+- Cross-layer work (frontend + backend + tests)
+- Long-running collaborative tasks
+
+---
 
 # When NOT to Use
-- Simple, straightforward tasks you can handle directly
-- Tasks that don't require specialized expertise
-- Single-step operations (use other tools instead)
-
-# Examples
-- "Analyze the authentication module and create a security report" → explore-agent
-- "Create a detailed implementation plan for feature X" → plan-agent
-- "Write unit tests for this React component" → frontend-tester
-- "Review my changes for potential bugs" → code-reviewer
-- "Automatically fill out this form and navigate the website" → gui-subagent
-- "Test the login process on the desktop application" → gui-subagent
-- "send a message to the my mom on the desktop application wechat" → gui-subagent
+- Simple tasks you can handle directly
+- Single-step operations
+- Quick lookups or minor edits
 
 # Best Practices
-- Provide clear, specific prompts to subagents
-- Include relevant context (file paths, requirements, constraints)
-- Set appropriate executionMode if needed
-- For parallel execution, ensure tasks are truly independent`;
+- **SubAgents**: Provide clear context in prompts, use parallel mode for truly independent tasks
+- **Teams**: Define distinct roles, use descriptive teammate names, always cleanup after work
+- **Both**: Include relevant file paths and constraints; start simple, add complexity as needed`;
   allowedModes = [
     ExecutionMode.YOLO,
     ExecutionMode.ACCEPT_EDITS,
@@ -1481,7 +1561,7 @@ export class TaskTool implements Tool {
     params: {
       description: string;
       prompt?: string;
-      query?: string; // Support both prompt and query (tool definition uses query)
+      query?: string;
       subagent_type?:
         | 'general-purpose'
         | 'plan-agent'
@@ -1497,9 +1577,23 @@ export class TaskTool implements Tool {
       constraints?: string[];
       executionMode?: ExecutionMode;
       parallel?: boolean;
+      team_mode?: boolean;
+      team_name?: string;
+      teammates?: Array<{ name: string; role: string; prompt: string; model?: string }>;
+      team_action?: 'create' | 'spawn' | 'message' | 'task_create' | 'task_update' | 'shutdown' | 'cleanup' | 'list_tasks' | 'get_messages';
+      display_mode?: 'auto' | 'tmux' | 'iterm2' | 'in-process';
+      team_id?: string;
+      member_id?: string;
+      message?: { to_member_id?: string | 'broadcast'; content: string };
+      task_config?: { title: string; description: string; assignee?: string; dependencies?: string[]; priority?: 'high' | 'medium' | 'low' };
+      task_update?: { task_id: string; action: 'claim' | 'complete' | 'block'; result?: string };
     },
     _executionMode?: ExecutionMode
   ): Promise<{ success: boolean; message: string; result?: any }> {
+    if (params.team_mode) {
+      return this.executeTeamMode(params);
+    }
+
     const mode = params.executionMode || _executionMode || ExecutionMode.YOLO;
 
     try {
@@ -2815,6 +2909,12 @@ export class TaskTool implements Tool {
         error: r.error,
       })),
     };
+  }
+
+  private async executeTeamMode(params: any): Promise<{ success: boolean; message: string; result?: any }> {
+    const { getTeamCoordinator } = await import('./team-manager/index.js');
+    const coordinator = getTeamCoordinator();
+    return coordinator.execute(params);
   }
 }
 

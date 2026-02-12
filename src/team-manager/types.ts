@@ -1,0 +1,106 @@
+import { ExecutionMode } from '../types.js';
+
+export type DisplayMode = 'auto' | 'tmux' | 'iterm2' | 'in-process';
+
+export type TeamStatus = 'active' | 'completed' | 'cancelled';
+export type MemberStatus = 'spawning' | 'active' | 'idle' | 'shutdown';
+export type TaskStatus = 'pending' | 'in_progress' | 'completed';
+export type TaskPriority = 'high' | 'medium' | 'low';
+export type MessageType = 'direct' | 'broadcast' | 'task_update' | 'shutdown_request' | 'shutdown_response';
+
+export interface Team {
+  teamId: string;
+  teamName: string;
+  createdAt: number;
+  leadSessionId: string;
+  members: TeamMember[];
+  status: TeamStatus;
+  workDir: string;
+}
+
+export interface TeamMember {
+  memberId: string;
+  name: string;
+  role: string;
+  model?: string;
+  status: MemberStatus;
+  processId?: number;
+  lastActivity?: number;
+  displayMode?: 'tmux' | 'iterm2' | 'in-process';
+}
+
+export interface TeamTask {
+  taskId: string;
+  teamId: string;
+  title: string;
+  description: string;
+  status: TaskStatus;
+  assignee?: string;
+  dependencies: string[];
+  priority: TaskPriority;
+  createdAt: number;
+  updatedAt: number;
+  result?: string;
+}
+
+export interface TeamMessage {
+  messageId: string;
+  teamId: string;
+  fromMemberId: string;
+  toMemberId: string | 'broadcast';
+  content: string;
+  timestamp: number;
+  type: MessageType;
+  read: boolean;
+}
+
+export interface TeammateConfig {
+  name: string;
+  role: string;
+  prompt: string;
+  model?: string;
+  allowedTools?: string[];
+}
+
+export interface TeamMessagePayload {
+  to_member_id?: string | 'broadcast';
+  content: string;
+}
+
+export interface TaskCreateConfig {
+  title: string;
+  description: string;
+  assignee?: string;
+  dependencies?: string[];
+  priority?: TaskPriority;
+}
+
+export interface TaskUpdateConfig {
+  task_id: string;
+  action: 'claim' | 'complete';
+  result?: string;
+}
+
+export interface TeamToolParams {
+  team_mode?: boolean;
+  team_name?: string;
+  teammates?: TeammateConfig[];
+  team_action?: 'create' | 'message' | 'task_create' | 'task_update' | 'shutdown' | 'cleanup';
+  display_mode?: DisplayMode;
+  team_id?: string;
+  member_id?: string;
+  message?: TeamMessagePayload;
+  task_config?: TaskCreateConfig;
+  task_update?: TaskUpdateConfig;
+  spawn_prompt?: string;
+}
+
+export interface TeamModeConfig {
+  teamId: string;
+  memberId: string;
+  memberName: string;
+  memberRole?: string;
+  teamDir: string;
+  tasksDir: string;
+  spawnPrompt?: string;
+}

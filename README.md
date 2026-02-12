@@ -129,7 +129,7 @@ xAgent offers **completely free** access with multiple authentication options:
 |--------|-------------|
 | 🔐 **xAgent Account** | Browser-based login (recommended) |
 | 🔑 **API Key** | Server environments |
-| 🌐 **Third-Party APIs** | GLM-4, DeepSeek, Qwen, Kimi, and more |
+| 🌐 **Third-Party APIs** | GLM-5, DeepSeek, Qwen, Kimi, and more |
 
 ---
 
@@ -187,7 +187,7 @@ Customize xAgent by editing `~/.xagent/settings.json`:
   "selectedAuthType": "openai_compatible",
   "apiKey": "your-api-key",
   "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
-  "modelName": "glm-4.7",
+  "modelName": "glm-5",
   "guiSubagentModel": "doubao-1-5-ui-tars-250428",
   "guiSubagentBaseUrl": "https://ark.cn-beijing.volces.com/api/v3",
   "guiSubagentApiKey": "your-api-key",

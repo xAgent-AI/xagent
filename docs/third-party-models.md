@@ -17,7 +17,7 @@ xAgent CLI has built-in support for the following third-party model providers:
 
 | Provider | Model Names | Description |
 |----------|-------------|-------------|
-| **Zhipu AI (ChatGLM)** | glm-4, glm-4-flash, glm-4-plus | GLM-4 Series Models |
+| **Zhipu AI (ChatGLM)** | glm-5, glm-4, glm-4-flash, glm-4-plus | GLM-5 Series Models |
 | **DeepSeek** | deepseek-chat, deepseek-coder | DeepSeek Series Models |
 | **Alibaba Qwen** | qwen-max, qwen-plus, qwen-turbo | Alibaba Cloud Qwen Series |
 | **Baidu Wenxin Yiyu** | ernie-bot-4, ernie-bot-turbo | Baidu Intelligence Cloud Wenxin Series |
@@ -38,12 +38,12 @@ In the menu that appears, select:
 ? Select authentication method:
   Use xAgent account (recommended)
   Use xAgent API Key
-❯ Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)
+❯ Use third-party model API (Zhipu GLM-5, DeepSeek, etc.)
 
 ### 3. Select Model Provider
 
 ? Select third-party model provider:
-❯ Zhipu AI (GLM-4) - Zhipu AI GLM-4 Series Models
+❯ Zhipu AI (GLM-5) - Zhipu AI GLM-5 Series Models
   DeepSeek - DeepSeek Series Models
   Alibaba Qwen - Alibaba Cloud Qwen Series Models
   Baidu Wenxin Yiyu - Baidu Intelligence Cloud Wenxin Series Models
@@ -52,7 +52,7 @@ In the menu that appears, select:
 
 ### 4. Enter API Key
 
-? Enter Zhipu AI (GLM-4) API Key: ****************************
+? Enter Zhipu AI (GLM-5) API Key: ****************************
 
 ### 5. Confirm Model Name
 
@@ -62,7 +62,7 @@ In the menu that appears, select:
 
 The system will automatically verify your API Key configuration.
 
-✅ Zhipu AI (GLM-4) configuration successful!
+✅ Zhipu AI (GLM-5) configuration successful!
 
 ## Detailed Configuration Steps
 
@@ -143,12 +143,13 @@ Edit `~/.xagent/settings.json`:
   "selectedAuthType": "openai_compatible",
   "apiKey": "your-glm-api-key",
   "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
-  "modelName": "glm-4"
+  "modelName": "glm-5"
 }
 ```
 
 #### Available Models
 
+- `glm-5` - GLM-5 Standard
 - `glm-4` - GLM-4 Standard
 - `glm-4-flash` - GLM-4 Flash (Fast Version)
 - `glm-4-plus` - GLM-4 Plus (Enhanced Version)
@@ -159,10 +160,10 @@ Edit `~/.xagent/settings.json`:
 
 ```bash
 $ xagent auth
-# Select: Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)
-# Select: Zhipu AI (GLM-4) - Zhipu AI GLM-4 Series Models
+# Select: Use third-party model API (Zhipu GLM-5, DeepSeek, etc.)
+# Select: Zhipu AI (GLM-5) - Zhipu AI GLM-5 Series Models
 # Enter API Key: (your GLM API key)
-# Enter model name: glm-4-plus
+# Enter model name: glm-5
 ```
 
 ### DeepSeek
@@ -189,7 +190,7 @@ Edit `~/.xagent/settings.json`:
 
 ```bash
 $ xagent auth
-# Select: Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)
+# Select: Use third-party model API (Zhipu GLM-5, DeepSeek, etc.)
 # Select: DeepSeek - DeepSeek Series Models
 # Enter API Key: (your DeepSeek API key)
 # Enter model name: deepseek-coder
@@ -221,7 +222,7 @@ Edit `~/.xagent/settings.json`:
 
 ```bash
 $ xagent auth
-# Select: Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)
+# Select: Use third-party model API (Zhipu GLM-5, DeepSeek, etc.)
 # Select: Alibaba Qwen - Alibaba Cloud Qwen Series Models
 # Enter API Key: (your Aliyun API key)
 # Enter model name: qwen-max
@@ -252,7 +253,7 @@ Edit `~/.xagent/settings.json`:
 
 ```bash
 $ xagent auth
-# Select: Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)
+# Select: Use third-party model API (Zhipu GLM-5, DeepSeek, etc.)
 # Select: Baidu Wenxin Yiyu - Baidu Intelligence Cloud Wenxin Series Models
 # Enter API Key: (your Baidu API key)
 # Enter model name: ernie-bot-4
@@ -283,7 +284,7 @@ Edit `~/.xagent/settings.json`:
 
 ```bash
 $ xagent auth
-# Select: Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)
+# Select: Use third-party model API (Zhipu GLM-5, DeepSeek, etc.)
 # Select: Moonshot AI (Kimi) - Moonshot Kimi Series Models
 # Enter API Key: (your Moonshot API key)
 # Enter model name: moonshot-v1-32k
@@ -296,7 +297,7 @@ If the model you need is not in the built-in provider list, you can choose "Cust
 ### Configuration Steps
 
 1. Run `xagent auth`
-2. Select "Use third-party model API (Zhipu GLM-4, DeepSeek, etc.)"
+2. Select "Use third-party model API (Zhipu GLM-5, DeepSeek, etc.)"
 3. Select "Custom - Manually enter API configuration"
 4. Enter the following information:
    - Model Name
@@ -330,7 +331,7 @@ Edit `~/.xagent/settings.json`:
 **Error Message**:
 
 ```
-❌ Zhipu AI (GLM-4) configuration validation failed. Please check API Key and network connection.
+❌ Zhipu AI (GLM-5) configuration validation failed. Please check API Key and network connection.
 ```
 
 **Solutions**:

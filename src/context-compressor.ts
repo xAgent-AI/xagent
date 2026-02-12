@@ -46,6 +46,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'glm-4-plus': 128000,
   'glm-4-air': 128000,
   'glm-4.7': 128000,
+  'glm-5': 128000,
 
   // MiniMax
   'MiniMax-M2': 1000000,

@@ -1,7 +1,7 @@
 import { TeamStore, getTeamStore } from './team-store.js';
 import { TeammateSpawner, getTeammateSpawner } from './teammate-spawner.js';
 import { MessageBroker, getMessageBroker, removeMessageBroker } from './message-broker.js';
-import { TeamToolParams, Team, TeamMember, TeamTask, TeamMessage } from './types.js';
+import { TeamToolParams, Team, TeamMember, TeamTask, TeamMessage, MessageDeliveryInfo } from './types.js';
 import { colors } from '../theme.js';
 
 export class TeamCoordinator {
@@ -108,20 +108,45 @@ export class TeamCoordinator {
     const fromMemberId = process.env.XAGENT_MEMBER_ID || 'lead';
     const broker = await this.getBroker(params.team_id);
 
-    const message = broker.sendMessage(
-      fromMemberId,
-      params.message.to_member_id || 'broadcast',
-      params.message.content
-    );
+    try {
+      const { message, deliveryInfo } = await broker.sendMessageWithAck(
+        fromMemberId,
+        params.message.to_member_id || 'broadcast',
+        params.message.content
+      );
 
-    return {
-      success: true,
-      message: 'Message sent successfully',
-      result: {
-        message_id: message.messageId,
-        delivered_to: message.toMemberId
-      }
-    };
+      const isBroadcast = params.message.to_member_id === 'broadcast' || !params.message.to_member_id;
+      const ackCount = Array.isArray(deliveryInfo)
+        ? deliveryInfo.filter(d => d.status === 'acknowledged').length
+        : (deliveryInfo.status === 'acknowledged' ? 1 : 0);
+      const totalCount = Array.isArray(deliveryInfo) ? deliveryInfo.length : 1;
+
+      return {
+        success: true,
+        message: isBroadcast
+          ? `Message broadcasted and acknowledged by ${ackCount}/${totalCount} members`
+          : `Message delivered and acknowledged`,
+        result: {
+          message_id: message.messageId,
+          delivered_to: message.toMemberId,
+          delivery_status: Array.isArray(deliveryInfo)
+            ? deliveryInfo.map(d => ({ member_id: d.acknowledgedBy?.[0], status: d.status }))
+            : { status: deliveryInfo.status, acknowledged_at: deliveryInfo.acknowledgedAt }
+        }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to send message: ${error instanceof Error ? error.message : String(error)}`,
+        result: undefined
+      };
+    }
+  }
+
+  async getMessageDeliveryInfo(teamId: string, messageId: string): Promise<MessageDeliveryInfo | undefined> {
+    const broker = this.brokers.get(teamId);
+    if (!broker) return undefined;
+    return broker.getDeliveryInfo(messageId);
   }
 
   private async createTeamTask(params: TeamToolParams): Promise<{ success: boolean; message: string; result?: any }> {

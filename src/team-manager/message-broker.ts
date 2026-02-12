@@ -1,6 +1,6 @@
 import * as net from 'net';
 import { EventEmitter } from 'events';
-import { TeamMessage } from './types.js';
+import { TeamMessage, MessageAck, MessageDeliveryInfo } from './types.js';
 import crypto from 'crypto';
 
 const generateId = () => crypto.randomUUID();
@@ -8,12 +8,22 @@ const generateId = () => crypto.randomUUID();
 export interface MessageBrokerOptions {
   port?: number;
   host?: string;
+  ackTimeout?: number;
 }
 
 export interface ConnectedClient {
   memberId: string;
   socket: net.Socket;
   joinedAt: number;
+}
+
+export interface PendingAck {
+  message: TeamMessage;
+  targetMemberId: string;
+  sentAt: number;
+  resolve: (info: MessageDeliveryInfo) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
 }
 
 export class MessageBroker extends EventEmitter {
@@ -23,12 +33,16 @@ export class MessageBroker extends EventEmitter {
   private host: string;
   private teamId: string;
   private isRunning: boolean = false;
+  private pendingAcks: Map<string, PendingAck> = new Map();
+  private ackTimeout: number;
+  private deliveryInfo: Map<string, MessageDeliveryInfo> = new Map();
 
   constructor(teamId: string, options: MessageBrokerOptions = {}) {
     super();
     this.teamId = teamId;
     this.port = options.port || 0;
     this.host = options.host || '127.0.0.1';
+    this.ackTimeout = options.ackTimeout || 30000;
   }
 
   async start(): Promise<number> {
@@ -124,7 +138,9 @@ export class MessageBroker extends EventEmitter {
   }
 
   private handleMessage(fromMemberId: string, msg: any): void {
-    if (msg.type === 'direct' || msg.type === 'broadcast') {
+    if (msg.type === 'ack') {
+      this.handleAck(fromMemberId, msg);
+    } else if (msg.type === 'direct' || msg.type === 'broadcast') {
       this.routeMessage(fromMemberId, msg);
     } else if (msg.type === 'task_update') {
       this.broadcast({
@@ -137,6 +153,29 @@ export class MessageBroker extends EventEmitter {
         type: 'task_update',
         read: false
       }, fromMemberId);
+    }
+  }
+
+  private handleAck(fromMemberId: string, ack: MessageAck): void {
+    const pendingKey = `${ack.messageId}:${fromMemberId}`;
+    const pending = this.pendingAcks.get(pendingKey);
+    
+    if (pending) {
+      clearTimeout(pending.timer);
+      this.pendingAcks.delete(pendingKey);
+      
+      const info = this.deliveryInfo.get(ack.messageId);
+      if (info) {
+        info.status = 'acknowledged';
+        info.acknowledgedAt = ack.timestamp;
+        if (!info.acknowledgedBy) {
+          info.acknowledgedBy = [];
+        }
+        info.acknowledgedBy.push(fromMemberId);
+      }
+      
+      this.emit('message:acknowledged', { messageId: ack.messageId, fromMemberId, status: ack.status });
+      pending.resolve(this.deliveryInfo.get(ack.messageId)!);
     }
   }
 
@@ -175,18 +214,58 @@ export class MessageBroker extends EventEmitter {
     this.emit('message:broadcast', message);
   }
 
-  private sendToMember(memberId: string, message: TeamMessage): void {
-    const client = this.clients.get(memberId);
-    if (client) {
-      try {
-        client.socket.write(JSON.stringify(message) + '\n');
-        this.emit('message:sent', { memberId, message });
-      } catch {
-        this.emit('message:failed', { memberId, message });
+  private sendToMember(memberId: string, message: TeamMessage, requiresAck: boolean = true): Promise<MessageDeliveryInfo> {
+    return new Promise((resolve, reject) => {
+      const client = this.clients.get(memberId);
+      const info: MessageDeliveryInfo = {
+        messageId: message.messageId,
+        status: 'pending',
+        sentAt: Date.now()
+      };
+      this.deliveryInfo.set(message.messageId, info);
+
+      if (!client) {
+        info.status = 'failed';
+        info.failedReason = 'client not found';
+        this.emit('message:failed', { memberId, message, reason: 'client not found' });
+        reject(new Error(`Client ${memberId} not found`));
+        return;
       }
-    } else {
-      this.emit('message:failed', { memberId, message, reason: 'client not found' });
-    }
+
+      try {
+        const msgWithAck = { ...message, requiresAck };
+        client.socket.write(JSON.stringify(msgWithAck) + '\n');
+        info.status = 'sent';
+        this.emit('message:sent', { memberId, message });
+
+        if (requiresAck) {
+          const pendingKey = `${message.messageId}:${memberId}`;
+          const timer = setTimeout(() => {
+            this.pendingAcks.delete(pendingKey);
+            info.status = 'failed';
+            info.failedReason = 'ack timeout';
+            this.emit('message:timeout', { messageId: message.messageId, memberId });
+            reject(new Error(`ACK timeout for message ${message.messageId} to ${memberId}`));
+          }, this.ackTimeout);
+
+          this.pendingAcks.set(pendingKey, {
+            message,
+            targetMemberId: memberId,
+            sentAt: Date.now(),
+            resolve,
+            reject,
+            timer
+          });
+        } else {
+          resolve(info);
+        }
+      } catch (err) {
+        info.status = 'failed';
+        info.failedReason = String(err);
+        this.emit('message:failed', { memberId, message, error: err });
+        reject(err);
+      }
+    });
   }
 
   private sendToSocket(socket: net.Socket, msg: object): void {
@@ -206,7 +285,8 @@ export class MessageBroker extends EventEmitter {
       content,
       timestamp: Date.now(),
       type,
-      read: false
+      read: false,
+      requiresAck: true
     };
 
     if (toMemberId === 'broadcast') {
@@ -216,6 +296,56 @@ export class MessageBroker extends EventEmitter {
     }
 
     return message;
+  }
+
+  async sendMessageWithAck(
+    fromMemberId: string,
+    toMemberId: string | 'broadcast',
+    content: string,
+    type: TeamMessage['type'] = 'direct'
+  ): Promise<{ message: TeamMessage; deliveryInfo: MessageDeliveryInfo | MessageDeliveryInfo[] }> {
+    const message: TeamMessage = {
+      messageId: generateId(),
+      teamId: this.teamId,
+      fromMemberId,
+      toMemberId,
+      content,
+      timestamp: Date.now(),
+      type,
+      read: false,
+      requiresAck: true
+    };
+
+    if (toMemberId === 'broadcast') {
+      const results = await this.broadcastWithAck(message, fromMemberId);
+      return { message, deliveryInfo: results };
+    } else {
+      const info = await this.sendToMember(toMemberId, message, true);
+      return { message, deliveryInfo: info };
+    }
+  }
+
+  private async broadcastWithAck(message: TeamMessage, excludeMemberId?: string): Promise<MessageDeliveryInfo[]> {
+    const promises: Promise<MessageDeliveryInfo>[] = [];
+    
+    for (const [memberId, client] of this.clients) {
+      if (memberId !== excludeMemberId) {
+        promises.push(this.sendToMember(memberId, { ...message }, true));
+      }
+    }
+    
+    return Promise.allSettled(promises).then(results =>
+      results.map(r => r.status === 'fulfilled' ? r.value : {
+        messageId: message.messageId,
+        status: 'failed' as const,
+        sentAt: Date.now(),
+        failedReason: r.status === 'rejected' ? String(r.reason) : undefined
+      })
+    );
+  }
+
+  getDeliveryInfo(messageId: string): MessageDeliveryInfo | undefined {
+    return this.deliveryInfo.get(messageId);
   }
 
   getPort(): number {
@@ -319,12 +449,30 @@ export class MessageClient extends EventEmitter {
         if (msg.type === 'registered') {
           this.emit('registered', msg);
         } else {
+          if (msg.requiresAck && msg.messageId) {
+            this.sendAck(msg.messageId, 'received');
+          }
           this.emit('message', msg);
         }
       } catch {
         // ignore parse errors
       }
     }
+  }
+
+  private sendAck(messageId: string, status: 'received' | 'processed', error?: string): void {
+    const ack: MessageAck = {
+      messageId,
+      fromMemberId: this.memberId,
+      status,
+      timestamp: Date.now(),
+      error
+    };
+    this.send({ type: 'ack', ...ack });
+  }
+
+  acknowledgeMessage(messageId: string, status: 'received' | 'processed' = 'processed', error?: string): void {
+    this.sendAck(messageId, status, error);
   }
 
   sendDirect(toMemberId: string, content: string): void {

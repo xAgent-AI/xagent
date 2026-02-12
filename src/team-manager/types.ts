@@ -7,6 +7,8 @@ export type MemberStatus = 'spawning' | 'active' | 'idle' | 'shutdown';
 export type TaskStatus = 'pending' | 'in_progress' | 'completed';
 export type TaskPriority = 'high' | 'medium' | 'low';
 export type MessageType = 'direct' | 'broadcast' | 'task_update' | 'shutdown_request' | 'shutdown_response';
+export type MessageDeliveryStatus = 'pending' | 'sent' | 'delivered' | 'acknowledged' | 'failed';
+export type AckStatus = 'received' | 'processed';
 
 export interface Team {
   teamId: string;
@@ -52,6 +54,24 @@ export interface TeamMessage {
   timestamp: number;
   type: MessageType;
   read: boolean;
+  requiresAck?: boolean;
+}
+
+export interface MessageAck {
+  messageId: string;
+  fromMemberId: string;
+  status: AckStatus;
+  timestamp: number;
+  error?: string;
+}
+
+export interface MessageDeliveryInfo {
+  messageId: string;
+  status: MessageDeliveryStatus;
+  sentAt: number;
+  acknowledgedAt?: number;
+  acknowledgedBy?: string[];
+  failedReason?: string;
 }
 
 export interface TeammateConfig {

@@ -455,6 +455,8 @@ const ANTHROPIC_MODELS: Model[] = [
   { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', provider: 'anthropic', contextWindow: 200000, supportsTools: true, supportsThinking: true, supportsStreaming: true },
   { id: 'claude-haiku-3', name: 'Claude Haiku 3', provider: 'anthropic', contextWindow: 200000, supportsTools: true, supportsStreaming: true },
   // MiniMax models (uses Anthropic format)
+  { id: 'MiniMax-M2.5', name: 'MiniMax-M2.5', provider: 'anthropic', contextWindow: 200000, supportsTools: true, supportsStreaming: true },
+  { id: 'MiniMax-M2.1', name: 'MiniMax-M2.1', provider: 'anthropic', contextWindow: 200000, supportsTools: true, supportsStreaming: true },
   { id: 'MiniMax-M2', name: 'MiniMax-M2', provider: 'anthropic', contextWindow: 200000, supportsTools: true, supportsStreaming: true },
   { id: 'MiniMax-M2-8k', name: 'MiniMax-M2-8K', provider: 'anthropic', contextWindow: 8000, supportsTools: true, supportsStreaming: true },
   { id: 'MiniMax-M2-32k', name: 'MiniMax-M2-32K', provider: 'anthropic', contextWindow: 32000, supportsTools: true, supportsStreaming: true },

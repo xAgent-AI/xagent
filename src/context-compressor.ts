@@ -51,6 +51,7 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   // MiniMax
   'MiniMax-M2': 1000000,
   'MiniMax-M2.1': 1000000,
+  'MiniMax-M2.5': 1000000,
 
   // Moonshot (Kimi)
   'moonshot-v1-8k': 8192,

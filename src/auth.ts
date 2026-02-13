@@ -104,9 +104,9 @@ export const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
   {
     name: 'MiniMax',
     baseUrl: 'https://api.minimax.chat/anthropic',
-    defaultModel: 'MiniMax-M2.1',
+    defaultModel: 'MiniMax-M2.5',
     description: 'MiniMax (Anthropic-compatible format)',
-    models: ['MiniMax-M2.1', 'MiniMax-M2.1-lightning', 'MiniMax-M2', 'MiniMax-M2-Stable'],
+    models: ['MiniMax-M2.5', 'MiniMax-M2.1', 'MiniMax-M2.1-lightning', 'MiniMax-M2', 'MiniMax-M2-Stable'],
   },
   {
     name: '01.AI (Yi)',
@@ -321,7 +321,7 @@ export class AuthService {
         const response = await axios.post(
           `${this.authConfig.baseUrl}/v1/messages`,
           {
-            model: 'MiniMax-M2',
+            model: 'MiniMax-M2.5',
             max_tokens: 1,
             messages: [{ role: 'user', content: 'test' }],
           },

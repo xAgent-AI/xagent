@@ -1460,6 +1460,20 @@ Launch specialized AI agents. Each agent runs independently with isolated contex
 Single: task(description="Explore auth flow", subagent_type="explore-agent")
 Parallel: task(description="Review code", agents=[{subagent_type:"code-reviewer", prompt:"Check security"}, {subagent_type:"frontend-tester", prompt:"Test forms"}])
 
+### When to Use SubAgents
+- Complex tasks needing specialized expertise
+- Independent tasks that can run in parallel
+- One-time exploratory or research tasks
+
+### When NOT to Use SubAgents
+- Tasks requiring context continuity
+- Multi-step workflows with dependencies
+
+### Best Practices
+- **Clear Prompts**: Provide detailed context and specific goals
+- **Parallel Mode**: Use for independent tasks to save time
+- **Type Selection**: Choose appropriate subagent type for the task
+
 ---
 
 ## Mode 2: Agent Team
@@ -1488,8 +1502,6 @@ As the lead, you coordinate teammates, assign tasks, and synthesize their result
 - **get_status**: task(team_mode=true, team_action="get_status", team_id="...")
 - **list_teams**: task(team_mode=true, team_action="list_teams")
 
----
-
 ### When to Use Teams
 - Complex tasks needing multiple perspectives
 - Parallel work with coordination
@@ -1498,14 +1510,16 @@ As the lead, you coordinate teammates, assign tasks, and synthesize their result
 
 ---
 
-# When NOT to Use
+# When NOT to Use Teams
 - Simple tasks you can handle directly
 - Single-step operations
 - Quick lookup or minor edits
 
 # Best Practices
-- **SubAgents**: Provide clear context in prompts, use parallel mode for truly independent tasks
-- **Teams**: Define distinct roles, use descriptive teammate names, always cleanup after work`;
+- **Task Management**: Create clear task descriptions with proper dependencies
+- **Coordination**: Monitor task status, reassign if needed, synthesize results
+- **Communication**: Broadcast important updates, use direct messages for specific teammates
+- **Cleanup**: Always cleanup team when work is done`;
     }
 
     return `Launch specialized AI subagents or agent teams to handle complex tasks autonomously.
@@ -1530,6 +1544,20 @@ Launch specialized AI agents. Each agent runs independently with isolated contex
 Single: task(description="Explore auth flow", subagent_type="explore-agent")
 Parallel: task(description="Review code", agents=[{subagent_type:"code-reviewer", prompt:"Check security"}, {subagent_type:"frontend-tester", prompt:"Test forms"}])
 
+### When to Use SubAgents
+- Complex tasks needing specialized expertise
+- Independent tasks that can run in parallel
+- One-time exploratory or research tasks
+
+### When NOT to Use SubAgents
+- Tasks requiring context continuity
+- Multi-step workflows with dependencies
+
+### Best Practices
+- **Clear Prompts**: Provide detailed context and specific goals
+- **Parallel Mode**: Use for independent tasks to save time
+- **Type Selection**: Choose appropriate subagent type for the task
+
 ---
 
 ## Mode 2: Agent Team
@@ -1550,8 +1578,6 @@ As a teammate, you work on assigned tasks and communicate with the team.
 #### View Info
 - **get_status**: task(team_mode=true, team_action="get_status", team_id="...")
 
----
-
 ### When to Use Teams
 - Complex tasks needing multiple perspectives
 - Parallel work with coordination
@@ -1560,14 +1586,15 @@ As a teammate, you work on assigned tasks and communicate with the team.
 
 ---
 
-# When NOT to Use
+# When NOT to Use Teams
 - Simple tasks you can handle directly
 - Single-step operations
 - Quick lookup or minor edits
 
 # Best Practices
-- **SubAgents**: Provide clear context in prompts, use parallel mode for truly independent tasks
-- **Teams**: Define distinct roles, use descriptive teammate names, always cleanup after work`;
+- **Task Awareness**: Check task list regularly, claim available tasks proactively
+- **Task Completion**: Always complete or release tasks, update status promptly
+- **Dependencies**: Check task dependencies before claiming, wait for prerequisites`;
   }
 
   allowedModes = [

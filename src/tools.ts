@@ -4473,6 +4473,87 @@ export class ToolRegistry {
           };
           break;
 
+        case 'team':
+          parameters = {
+            type: 'object',
+            properties: {
+              action: {
+                type: 'string',
+                enum: ['create', 'spawn', 'message', 'shutdown', 'cleanup', 'task_create', 'task_update', 'task_delete', 'task_list', 'get_status', 'list_teams'],
+                description: 'The team action to perform',
+              },
+              team_name: {
+                type: 'string',
+                description: 'Team name (required for create action)',
+              },
+              team_id: {
+                type: 'string',
+                description: 'Team ID (required for most actions)',
+              },
+              member_id: {
+                type: 'string',
+                description: 'Member ID (required for shutdown action)',
+              },
+              teammates: {
+                type: 'array',
+                description: 'Array of teammate configs (required for create/spawn)',
+                items: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string', description: 'Teammate name' },
+                    role: { type: 'string', description: 'Teammate role' },
+                    prompt: { type: 'string', description: 'Teammate system prompt' },
+                    model: { type: 'string', description: 'Optional model override' },
+                  },
+                  required: ['name', 'role', 'prompt'],
+                },
+              },
+              message: {
+                type: 'object',
+                description: 'Message payload (required for message action)',
+                properties: {
+                  to_member_id: {
+                    type: 'string',
+                    description: 'Target member ID or "broadcast"',
+                  },
+                  content: {
+                    type: 'string',
+                    description: 'Message content',
+                  },
+                },
+              },
+              task_config: {
+                type: 'object',
+                description: 'Task creation config (for task_create)',
+                properties: {
+                  title: { type: 'string', description: 'Task title' },
+                  description: { type: 'string', description: 'Task description' },
+                  priority: { type: 'string', enum: ['high', 'medium', 'low'], description: 'Task priority' },
+                },
+              },
+              task_update: {
+                type: 'object',
+                description: 'Task update config (for task_update)',
+                properties: {
+                  task_id: { type: 'string', description: 'Task ID' },
+                  action: { type: 'string', enum: ['claim', 'complete', 'release'], description: 'Update action' },
+                  result: { type: 'string', description: 'Task result (optional)' },
+                },
+              },
+              task_id: {
+                type: 'string',
+                description: 'Task ID (required for task_delete)',
+              },
+              task_filter: {
+                type: 'string',
+                enum: ['all', 'pending', 'available', 'in_progress', 'completed'],
+                description: 'Task filter (for task_list)',
+              },
+            },
+            required: ['action'],
+          };
+          break;
+
         default: {
           // For MCP tools, use their inputSchema; for other unknown tools, keep empty schema
           const mcpTool = tool as any;

@@ -130,9 +130,13 @@ export class InteractiveSession {
       this.teamId = process.env.XAGENT_TEAM_ID || null;
       this.memberId = process.env.XAGENT_MEMBER_ID || null;
       this.memberName = process.env.XAGENT_MEMBER_NAME || null;
-      this.memberRole = process.env.XAGENT_MEMBER_ROLE || null;
+      this.memberRole = 'teammate'; // Role is now determined by tool response, not env var
       this.spawnPrompt = process.env.XAGENT_SPAWN_PROMPT || null;
       this.brokerPort = process.env.XAGENT_BROKER_PORT ? parseInt(process.env.XAGENT_BROKER_PORT, 10) : null;
+      
+      // Show team role info in welcome message
+      console.log(colors.info(`[Team] Running as: ${this.memberName} (${this.memberRole})`));
+      console.log(colors.info(`[Team] Team ID: ${this.teamId}, Member ID: ${this.memberId}`));
       
       // Import and initialize team components
       import('./team-manager/index.js').then(async ({ getTeamStore, MessageClient }) => {

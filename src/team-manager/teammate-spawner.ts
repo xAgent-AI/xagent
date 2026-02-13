@@ -1,10 +1,19 @@
 import { spawn, ChildProcess, execSync } from 'child_process';
 import crypto from 'crypto';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { TeamStore, getTeamStore } from './team-store.js';
 import { TeamMember, DisplayMode, TeammateConfig, TEAMMATE_PERMISSIONS } from './types.js';
 import { colors } from '../theme.js';
 
 const generateId = () => crypto.randomUUID();
+
+function getXagentCommand(): string {
+  const currentFile = fileURLToPath(import.meta.url);
+  const projectRoot = path.resolve(path.dirname(currentFile), '../..');
+  const cliPath = path.join(projectRoot, 'dist', 'cli.js');
+  return cliPath;
+}
 
 export class TeammateSpawner {
   private store: TeamStore;
@@ -46,11 +55,17 @@ export class TeammateSpawner {
     displayMode: DisplayMode = 'auto',
     brokerPort?: number
   ): Promise<TeamMember> {
+    // Validate required fields
+    if (!config.name || config.name.trim() === '') {
+      throw new Error('Teammate name is required. Please provide a valid name in the teammates config.');
+    }
+
     const memberId = generateId();
+    const memberName = config.name.trim();
 
     const member: Omit<TeamMember, 'role' | 'permissions'> = {
       memberId,
-      name: config.name,
+      name: memberName,
       memberRole: config.role,
       model: config.model,
       status: 'spawning',
@@ -115,7 +130,8 @@ export class TeammateSpawner {
   ): Promise<number> {
     const paneName = `xagent-${config.name.replace(/\s+/g, '-')}`;
     const args = this.buildCommandArgs(teamId, memberId, config, brokerPort, false, undefined);
-    const cmd = `xagent ${args.join(' ')}`;
+    const cliPath = getXagentCommand();
+    const cmd = `node "${cliPath}" ${args.join(' ')}`;
 
     try {
       if (this.isInsideTmux()) {
@@ -147,7 +163,8 @@ export class TeammateSpawner {
     brokerPort?: number
   ): Promise<number> {
     const args = this.buildCommandArgs(teamId, memberId, config, brokerPort, false, undefined);
-    const cmd = `xagent ${args.join(' ')}`;
+    const cliPath = getXagentCommand();
+    const cmd = `node "${cliPath}" ${args.join(' ')}`;
 
     try {
       execSync(`it2 splitpane -v`, { cwd: workDir, stdio: 'ignore' });
@@ -168,6 +185,7 @@ export class TeammateSpawner {
     brokerPort?: number
   ): Promise<number> {
     const args = this.buildCommandArgs(teamId, memberId, config, brokerPort, false, undefined);
+    const cliPath = getXagentCommand();
 
     const env: Record<string, string> = {
       ...process.env as Record<string, string>,
@@ -176,15 +194,13 @@ export class TeammateSpawner {
       XAGENT_MEMBER_ID: memberId,
       XAGENT_MEMBER_NAME: config.name,
       XAGENT_SPAWN_PROMPT: config.prompt,
-      XAGENT_MEMBER_ROLE: config.role,
-      XAGENT_IS_TEAM_LEAD: 'false',
     };
 
     if (brokerPort) {
       env.XAGENT_BROKER_PORT = String(brokerPort);
     }
 
-    const teammateProcess = spawn('xagent', args, {
+    const teammateProcess = spawn('node', [cliPath, ...args], {
       cwd: workDir,
       stdio: ['pipe', 'pipe', 'pipe'],
       env

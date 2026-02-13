@@ -41,7 +41,7 @@ export const LEAD_PERMISSIONS: MemberPermissions = {
 };
 
 export const TEAMMATE_PERMISSIONS: MemberPermissions = {
-  canCreateTask: true,
+  canCreateTask: false,
   canAssignTask: false,
   canClaimTask: true,
   canCompleteTask: true,

@@ -1542,7 +1542,6 @@ As a teammate, you work on assigned tasks and communicate with the team.
 - **direct message** only: task(team_mode=true, team_action="message", team_id="...", message={to_member_id: "target-id", content: "..."})
 
 #### Task Management (Teammate)
-- **create task**: task(team_mode=true, team_action="task_create", team_id="...", task_config={title: "...", description: "..."})
 - **claim task**: task(team_mode=true, team_action="task_update", team_id="...", task_update={task_id: "...", action: "claim"})
 - **complete task**: task(team_mode=true, team_action="task_update", team_id="...", task_update={task_id: "...", action: "complete", result: "..."})
 - **list tasks**: task(team_mode=true, team_action="task_list", team_id="...", task_filter="all"|"pending"|"available"|"in_progress"|"completed")

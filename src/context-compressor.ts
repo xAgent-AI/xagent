@@ -45,13 +45,13 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'glm-4': 128000,
   'glm-4-plus': 128000,
   'glm-4-air': 128000,
-  'glm-4.7': 128000,
-  'glm-5': 128000,
+  'glm-4.7': 200000,
+  'glm-5': 200000,
 
   // MiniMax
-  'MiniMax-M2': 1000000,
-  'MiniMax-M2.1': 1000000,
-  'MiniMax-M2.5': 1000000,
+  'MiniMax-M2': 200000,
+  'MiniMax-M2.1': 200000,
+  'MiniMax-M2.5': 200000,
 
   // Moonshot (Kimi)
   'moonshot-v1-8k': 8192,

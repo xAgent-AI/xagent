@@ -3006,8 +3006,6 @@ export class AskUserQuestionTool implements Tool {
       multiSelect?: boolean;
     }>;
   }): Promise<{ answers: string[] }> {
-    const { questions } = params;
-
     // Check if in SDK mode
     const sdkMode = (this as any)._sdkMode;
     const sdkAdapter = (this as any)._sdkOutputAdapter;

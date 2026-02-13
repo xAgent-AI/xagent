@@ -182,6 +182,7 @@ export class TeamStore {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       createdBy,
+      version: 1,
     };
 
     const tasksDir = path.join(this.getTeamDir(teamId), 'tasks');
@@ -209,7 +210,8 @@ export class TeamStore {
   async updateTask(
     teamId: string,
     taskId: string,
-    updates: Partial<TeamTask>
+    updates: Partial<TeamTask>,
+    expectedVersion?: number
   ): Promise<TeamTask | null> {
     const team = await this.getTeam(teamId);
     if (!team) {
@@ -221,13 +223,21 @@ export class TeamStore {
       const task = await this.getTask(teamId, taskId);
       if (!task) return null;
 
-      Object.assign(task, updates, { updatedAt: Date.now() });
+      if (expectedVersion !== undefined && task.version !== expectedVersion) {
+        return null;
+      }
+
+      Object.assign(task, updates, { updatedAt: Date.now(), version: task.version + 1 });
       const taskPath = path.join(this.getTeamDir(teamId), 'tasks', `${taskId}.json`);
       await fs.writeFile(taskPath, JSON.stringify(task, null, 2));
       return task;
     }
 
-    Object.assign(team.sharedTaskList[taskIndex], updates, { updatedAt: Date.now() });
+    if (expectedVersion !== undefined && team.sharedTaskList[taskIndex].version !== expectedVersion) {
+      return null;
+    }
+
+    Object.assign(team.sharedTaskList[taskIndex], updates, { updatedAt: Date.now(), version: (team.sharedTaskList[taskIndex].version || 0) + 1 });
     const taskPath = path.join(this.getTeamDir(teamId), 'tasks', `${taskId}.json`);
     await fs.writeFile(taskPath, JSON.stringify(team.sharedTaskList[taskIndex], null, 2));
     await this.saveTeam(team);
@@ -316,10 +326,16 @@ export class TeamStore {
       throw new Error(`Task has uncompleted dependencies: ${uncompletedDeps.join(', ')}`);
     }
 
-    return this.updateTask(teamId, taskId, {
+    const result = await this.updateTask(teamId, taskId, {
       status: 'in_progress',
       assignee: memberId,
-    });
+    }, task.version);
+
+    if (!result) {
+      throw new Error(`Task ${taskId} was already claimed by another member`);
+    }
+
+    return result;
   }
 
   async sendMessage(

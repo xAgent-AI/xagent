@@ -92,6 +92,7 @@ export interface TeamTask {
   updatedAt: number;
   createdBy: string;
   result?: string;
+  version: number;
 }
 
 export interface TeamMessage {

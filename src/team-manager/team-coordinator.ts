@@ -386,19 +386,30 @@ export class TeamCoordinator {
         };
       }
 
-      const claimedTask = await this.store.claimTask(params.team_id, task_id, memberId);
-      if (!claimedTask) {
-        throw new Error(`Task ${task_id} not found or cannot be claimed`);
+      try {
+        const claimedTask = await this.store.claimTask(params.team_id, task_id, memberId);
+        if (!claimedTask) {
+          return {
+            success: false,
+            message: `Task ${task_id} not found`,
+          };
+        }
+        return {
+          success: true,
+          message: `Task ${task_id} claimed successfully`,
+          result: {
+            task_id: claimedTask.taskId,
+            status: claimedTask.status,
+            assignee: claimedTask.assignee,
+          },
+        };
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          success: false,
+          message: errorMessage,
+        };
       }
-      return {
-        success: true,
-        message: `Task ${task_id} claimed successfully`,
-        result: {
-          task_id: claimedTask.taskId,
-          status: claimedTask.status,
-          assignee: claimedTask.assignee,
-        },
-      };
     }
 
     if (action === 'complete') {

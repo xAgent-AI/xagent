@@ -85,7 +85,10 @@ export class TeamCoordinator {
     params: TeamToolParams
   ): Promise<{ success: boolean; message: string; result?: any }> {
     const memberId = process.env.XAGENT_MEMBER_ID || 'lead';
-    const isTeamLead = process.env.XAGENT_IS_TEAM_LEAD !== 'false' || params.is_team_lead === true;
+    // Role determined by action type:
+    // - create: caller is lead
+    // - other actions: use process.env.XAGENT_MEMBER_ID to determine
+    const isTeamLead = params.team_action === 'create' || memberId === 'lead';
 
     const permissions = isTeamLead ? LEAD_PERMISSIONS : TEAMMATE_PERMISSIONS;
 
@@ -132,6 +135,9 @@ export class TeamCoordinator {
       case 'task_list':
         return this.listTeamTasks(params);
       case 'shutdown':
+        if (!params.team_id) {
+          return { success: false, message: 'team_id is required for shutdown' };
+        }
         if (params.member_id === 'self') {
           return this.shutdownTeammate(params, memberId);
         }
@@ -168,13 +174,34 @@ export class TeamCoordinator {
   private async createTeam(
     params: TeamToolParams
   ): Promise<{ success: boolean; message: string; result?: any }> {
+    if (!params.team_name) {
+      return { success: false, message: 'team_name is required' };
+    }
+    if (!params.teammates || params.teammates.length === 0) {
+      return { success: false, message: 'teammates is required' };
+    }
+
+    // 检查每个 teammate 配置
+    for (let i = 0; i < params.teammates.length; i++) {
+      const t = params.teammates[i];
+      if (!t.name) {
+        return { success: false, message: `teammates[${i}].name is required` };
+      }
+      if (!t.role) {
+        return { success: false, message: `teammates[${i}].role is required` };
+      }
+      if (!t.prompt) {
+        return { success: false, message: `teammates[${i}].prompt is required` };
+      }
+    }
+
     const team = await this.store.createTeam(
       params.team_name || 'unnamed-team',
       process.env.XAGENT_SESSION_ID || 'lead',
       process.cwd()
     );
 
-    const displayMode = params.display_mode || 'auto';
+    const displayMode = 'auto';
 
     const broker = await this.getBroker(team.teamId);
     const brokerPort = broker.getPort();
@@ -182,16 +209,7 @@ export class TeamCoordinator {
     console.log(
       colors.primaryBright(`\n🚀 Team "${team.teamName}" created (ID: ${team.teamId})`)
     );
-    console.log(colors.textMuted(`   Display mode: ${displayMode}`));
     console.log(colors.textMuted(`   Message broker: port ${brokerPort}`));
-
-    if (displayMode !== 'auto' && displayMode !== 'in-process') {
-      if (!this.spawner.isDisplayModeAvailable(displayMode)) {
-        console.log(
-          colors.warning(`   ⚠ ${displayMode} not available, falling back to in-process`)
-        );
-      }
-    }
 
     const spawnedMembers: TeamMember[] = [];
     if (params.teammates && params.teammates.length > 0) {
@@ -204,9 +222,10 @@ export class TeamCoordinator {
           brokerPort
         );
         spawnedMembers.push(member);
+        const displayName = member.name || member.memberId.slice(0, 8);
         console.log(
           colors.success(
-            `  ✓ Spawned: ${member.name} (${member.memberRole || member.role}) [${member.displayMode}]`
+            `  ✓ Spawned: ${displayName} (${member.memberRole || member.role}) [${member.displayMode}]`
           )
         );
       }
@@ -222,6 +241,9 @@ export class TeamCoordinator {
         team_name: team.teamName,
         display_mode: displayMode,
         lead_id: leadMember?.memberId,
+        your_role: 'lead',
+        your_member_id: leadMember?.memberId,
+        is_team_lead: true, // Pass this in subsequent calls
         members: spawnedMembers.map((m) => ({
           id: m.memberId,
           name: m.name,
@@ -236,50 +258,58 @@ export class TeamCoordinator {
     params: TeamToolParams
   ): Promise<{ success: boolean; message: string; result?: any }> {
     if (!params.team_id) {
-      throw new Error('team_id is required for spawning teammates');
+      return { success: false, message: 'team_id is required' };
     }
     if (!params.teammates || params.teammates.length === 0) {
-      throw new Error('teammates config is required for spawning');
+      return { success: false, message: 'teammates[0] is required' };
+    }
+
+    // 只检查第一个 teammate
+    const t = params.teammates[0];
+    if (!t.name) {
+      return { success: false, message: 'teammates[0].name is required' };
+    }
+    if (!t.role) {
+      return { success: false, message: 'teammates[0].role is required' };
+    }
+    if (!t.prompt) {
+      return { success: false, message: 'teammates[0].prompt is required' };
     }
 
     const team = await this.store.getTeam(params.team_id);
     if (!team) {
-      throw new Error(`Team ${params.team_id} not found`);
+      return { success: false, message: `Team ${params.team_id} not found` };
     }
 
-    const displayMode = params.display_mode || 'auto';
+    const displayMode = 'auto';
     const broker = await this.getBroker(params.team_id);
     const brokerPort = broker.getPort();
 
-    const spawnedMembers: TeamMember[] = [];
+    // 只 spawn 一个 teammate
+    const teammateConfig = params.teammates[0];
+    const member = await this.spawner.spawnTeammate(
+      params.team_id,
+      teammateConfig,
+      team.workDir,
+      displayMode,
+      brokerPort
+    );
 
-    for (const teammateConfig of params.teammates) {
-      const member = await this.spawner.spawnTeammate(
-        params.team_id,
-        teammateConfig,
-        team.workDir,
-        displayMode,
-        brokerPort
-      );
-      spawnedMembers.push(member);
-      console.log(
-        colors.success(
-          `  ✓ Spawned: ${member.name} (${member.memberRole || member.role}) [${member.displayMode}]`
-        )
-      );
-    }
+    const displayName = member.name || member.memberId.slice(0, 8);
+    console.log(
+      colors.success(
+        `  ✓ Spawned: ${displayName} (${member.memberRole || member.role}) [${member.displayMode}]`
+      )
+    );
 
     return {
       success: true,
-      message: `Spawned ${spawnedMembers.length} teammate(s)`,
+      message: `Spawned teammate: ${displayName}`,
       result: {
         team_id: params.team_id,
-        members: spawnedMembers.map((m) => ({
-          id: m.memberId,
-          name: m.name,
-          role: m.memberRole || m.role,
-          display_mode: m.displayMode,
-        })),
+        member_id: member.memberId,
+        name: member.name,
+        role: member.memberRole || member.role,
       },
     };
   }
@@ -700,6 +730,10 @@ export class TeamCoordinator {
       throw new Error(`Team ${params.team_id} not found`);
     }
 
+    const memberId = process.env.XAGENT_MEMBER_ID || 'lead';
+    const isTeamLead = memberId === 'lead';
+    const yourRole = isTeamLead ? 'lead' : 'teammate';
+
     return {
       success: true,
       message: `Team status retrieved`,
@@ -707,6 +741,8 @@ export class TeamCoordinator {
         team_id: params.team_id,
         team_name: status.team.teamName,
         status: status.team.status,
+        your_role: yourRole,
+        your_member_id: memberId,
         member_count: status.memberCount,
         members: status.team.members.map((m) => ({
           id: m.memberId,

@@ -541,6 +541,32 @@ export class InteractiveSession {
     });
   }
 
+  private async sendInitialPrompt(prompt: string): Promise<void> {
+    console.log(colors.textMuted(`\n📋 Initial prompt: ${prompt}\n`));
+
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: prompt,
+      timestamp: Date.now(),
+    };
+
+    this.conversation.push(userMessage);
+    await this.conversationManager.addMessage(userMessage);
+
+    const thinkingConfig = this.configManager.getThinkingConfig();
+    let thinkingTokens = 0;
+    if (thinkingConfig.enabled) {
+      const thinkingMode = detectThinkingKeywords(prompt);
+      thinkingTokens = getThinkingTokens(thinkingMode);
+    }
+
+    if (this.remoteAIClient) {
+      await this.generateRemoteResponse(thinkingTokens);
+    } else {
+      await this.generateResponse(thinkingTokens);
+    }
+  }
+
   private async initialize(): Promise<void> {
     logger.debug('\n[SESSION] ========== initialize() 开始 ==========\n');
 
@@ -1067,6 +1093,15 @@ export class InteractiveSession {
   private async promptLoop(): Promise<void> {
     // Check if we're shutting down
     if ((this as any)._isShuttingDown) {
+      return;
+    }
+
+    // If running in team mode with initial prompt, send it immediately and skip user input
+    if (this.spawnPrompt) {
+      const prompt = this.spawnPrompt;
+      this.spawnPrompt = null;
+      await this.sendInitialPrompt(prompt);
+      this.promptLoop();
       return;
     }
 

@@ -1,7 +1,7 @@
 import { spawn, ChildProcess, execSync } from 'child_process';
 import crypto from 'crypto';
-import { TeamStore } from './team-store.js';
-import { TeamMember, DisplayMode, TeammateConfig } from './types.js';
+import { TeamStore, getTeamStore } from './team-store.js';
+import { TeamMember, DisplayMode, TeammateConfig, TEAMMATE_PERMISSIONS } from './types.js';
 import { colors } from '../theme.js';
 
 const generateId = () => crypto.randomUUID();
@@ -11,8 +11,8 @@ export class TeammateSpawner {
   private activeProcesses: Map<string, ChildProcess> = new Map();
   private tmuxSessionName: string | null = null;
 
-  constructor(store: TeamStore) {
-    this.store = store;
+  constructor(store?: TeamStore) {
+    this.store = store || getTeamStore();
   }
 
   private isTmuxAvailable(): boolean {
@@ -47,17 +47,17 @@ export class TeammateSpawner {
     brokerPort?: number
   ): Promise<TeamMember> {
     const memberId = generateId();
-    
-    const member: TeamMember = {
+
+    const member: Omit<TeamMember, 'role' | 'permissions'> = {
       memberId,
       name: config.name,
-      role: config.role,
+      memberRole: config.role,
       model: config.model,
       status: 'spawning',
       displayMode: 'in-process'
     };
 
-    await this.store.addMember(teamId, member);
+    const savedMember = await this.store.addMember(teamId, member);
 
     const actualMode = this.resolveDisplayMode(displayMode);
 
@@ -76,33 +76,33 @@ export class TeammateSpawner {
         break;
     }
 
-    member.status = 'active';
-    member.processId = processId;
-    member.displayMode = actualMode;
-    await this.store.updateMember(teamId, memberId, { 
-      status: 'active', 
-      processId: member.processId,
+    savedMember.status = 'active';
+    savedMember.processId = processId;
+    savedMember.displayMode = actualMode;
+    await this.store.updateMember(teamId, memberId, {
+      status: 'active',
+      processId: savedMember.processId,
       displayMode: actualMode
     });
 
-    return member;
+    return savedMember;
   }
 
   private resolveDisplayMode(mode: DisplayMode): 'tmux' | 'iterm2' | 'in-process' {
     if (mode === 'in-process') return 'in-process';
-    
+
     if (mode === 'tmux' || mode === 'auto') {
       if (this.isTmuxAvailable()) {
         return 'tmux';
       }
     }
-    
+
     if (mode === 'iterm2' || mode === 'auto') {
       if (this.isIterm2Available()) {
         return 'iterm2';
       }
     }
-    
+
     return 'in-process';
   }
 
@@ -114,9 +114,9 @@ export class TeammateSpawner {
     brokerPort?: number
   ): Promise<number> {
     const paneName = `xagent-${config.name.replace(/\s+/g, '-')}`;
-    const args = this.buildCommandArgs(teamId, memberId, config, brokerPort);
+    const args = this.buildCommandArgs(teamId, memberId, config, brokerPort, false, undefined);
     const cmd = `xagent ${args.join(' ')}`;
-    
+
     try {
       if (this.isInsideTmux()) {
         execSync(`tmux split-window -v -p 50`, { cwd: workDir, stdio: 'ignore' });
@@ -146,9 +146,9 @@ export class TeammateSpawner {
     workDir: string,
     brokerPort?: number
   ): Promise<number> {
-    const args = this.buildCommandArgs(teamId, memberId, config, brokerPort);
+    const args = this.buildCommandArgs(teamId, memberId, config, brokerPort, false, undefined);
     const cmd = `xagent ${args.join(' ')}`;
-    
+
     try {
       execSync(`it2 splitpane -v`, { cwd: workDir, stdio: 'ignore' });
       execSync(`it2 send "${cmd}"`, { cwd: workDir, stdio: 'ignore' });
@@ -156,7 +156,7 @@ export class TeammateSpawner {
       console.log(colors.warning(`iTerm2 spawn failed: ${error.message}, falling back to in-process`));
       return this.spawnWithNode(teamId, memberId, config, workDir, brokerPort);
     }
-    
+
     return Date.now();
   }
 
@@ -167,7 +167,7 @@ export class TeammateSpawner {
     workDir: string,
     brokerPort?: number
   ): Promise<number> {
-    const args = this.buildCommandArgs(teamId, memberId, config, brokerPort);
+    const args = this.buildCommandArgs(teamId, memberId, config, brokerPort, false, undefined);
 
     const env: Record<string, string> = {
       ...process.env as Record<string, string>,
@@ -177,6 +177,7 @@ export class TeammateSpawner {
       XAGENT_MEMBER_NAME: config.name,
       XAGENT_SPAWN_PROMPT: config.prompt,
       XAGENT_MEMBER_ROLE: config.role,
+      XAGENT_IS_TEAM_LEAD: 'false',
     };
 
     if (brokerPort) {
@@ -211,7 +212,7 @@ export class TeammateSpawner {
 
     teammateProcess.on('exit', async (code) => {
       this.activeProcesses.delete(memberId);
-      await this.store.updateMember(teamId, memberId, { 
+      await this.store.updateMember(teamId, memberId, {
         status: 'shutdown',
         lastActivity: Date.now()
       });
@@ -225,7 +226,9 @@ export class TeammateSpawner {
     teamId: string,
     memberId: string,
     config: TeammateConfig,
-    brokerPort?: number
+    brokerPort?: number,
+    isLead: boolean = false,
+    isSdk?: boolean
   ): string[] {
     const args = [
       'start',
@@ -235,12 +238,25 @@ export class TeammateSpawner {
       '--member-name', config.name,
     ];
 
+    const useSdk = isSdk ?? (process.env.XAGENT_SDK === 'true');
+    if (useSdk) {
+      args.push('--sdk');
+    }
+
+    if (isLead) {
+      args.push('--is-team-lead');
+    }
+
     if (config.model) {
       args.push('--model', config.model);
     }
 
     if (brokerPort) {
       args.push('--broker-port', String(brokerPort));
+    }
+
+    if (config.prompt) {
+      args.push('--initial-prompt', config.prompt);
     }
 
     return args;
@@ -279,7 +295,7 @@ export class TeammateSpawner {
     if (!team) return;
 
     for (const member of team.members) {
-      if (member.status === 'active') {
+      if (member.status === 'active' && member.role !== 'lead') {
         await this.shutdownTeammate(teamId, member.memberId);
       }
     }
@@ -316,11 +332,9 @@ export class TeammateSpawner {
 
 let teammateSpawnerInstance: TeammateSpawner | null = null;
 
-export function getTeammateSpawner(): TeammateSpawner {
+export function getTeammateSpawner(store?: TeamStore): TeammateSpawner {
   if (!teammateSpawnerInstance) {
-    teammateSpawnerInstance = new TeammateSpawner(getTeamStore());
+    teammateSpawnerInstance = new TeammateSpawner(store);
   }
   return teammateSpawnerInstance;
 }
-
-import { getTeamStore } from './team-store.js';

@@ -173,47 +173,62 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       const memberId = process.env.XAGENT_MEMBER_ID || 'unknown';
       const memberName = process.env.XAGENT_MEMBER_NAME || 'Teammate';
       const memberRole = process.env.XAGENT_MEMBER_ROLE || 'Team Member';
-      const spawnPrompt = process.env.XAGENT_SPAWN_PROMPT || '';
+      const isTeamLead = process.env.XAGENT_IS_TEAM_LEAD === 'true';
 
-      enhancedPrompt += `
+      if (isTeamLead) {
+        let membersInfo = '';
+        try {
+          const { getTeamStore } = await import('./team-manager/index.js');
+          const store = getTeamStore();
+          const team = await store.getTeam(teamId);
+          if (team && team.members.length > 0) {
+            membersInfo = team.members
+              .map(m => `- **${m.name}** (ID: ${m.memberId}, Role: ${m.memberRole || m.role})`)
+              .join('\n');
+          }
+        } catch {
+          membersInfo = '- Member list not available yet';
+        }
 
-## Team Mode
+        enhancedPrompt += `
 
-You are part of an agent team. Here is your identity:
+## Agent Team Lead
+
+You are the **lead** of an agent team.
+
+### Your Identity
+- **Team ID**: ${teamId}
+- **Your Member ID**: ${memberId}
+- **Your Name**: ${memberName}
+
+### Team Members
+${membersInfo || '- No members spawned yet'}
+
+### Your Responsibilities
+1. Coordinate teammates and assign tasks
+2. Synthesize results from teammates
+3. Use the task tool to manage team (see tool description for usage)`;
+      } else {
+        enhancedPrompt += `
+
+## Team Member
+
+You are part of an agent team.
+
+### Your Identity
 - **Team ID**: ${teamId}
 - **Member ID**: ${memberId}
 - **Name**: ${memberName}
 - **Role**: ${memberRole}
 
-### Your Initial Task
-${spawnPrompt || 'No specific task was assigned. Wait for instructions from the team lead or other teammates.'}
-
-### Team Communication
-You can communicate with other teammates using the task tool:
-- Send direct message: task(team_mode=true, team_action="message", team_id="${teamId}", message={to_member_id: "target-member-id", content: "your message"})
-- Broadcast to all: task(team_mode=true, team_action="message", team_id="${teamId}", message={to_member_id: "broadcast", content: "your message"})
-
-### Shared Tasks
-You can interact with the shared task list:
-- List all tasks: task(team_mode=true, team_action="task_list", team_id="${teamId}")
-- List available tasks (ready to claim): task(team_mode=true, team_action="task_list", team_id="${teamId}", task_filter="available")
-- Create task: task(team_mode=true, team_action="task_create", team_id="${teamId}", task_config={title: "...", description: "..."})
-- Claim task: task(team_mode=true, team_action="task_update", team_id="${teamId}", task_update={task_id: "...", action: "claim"})
-- Complete task: task(team_mode=true, team_action="task_update", team_id="${teamId}", task_update={task_id: "...", action: "complete", result: "..."})
-
 ### Receiving Messages
-When you receive a <teammate-message> in your conversation, it means another teammate sent you a message. Consider it carefully and respond appropriately. You can:
-- Ask for clarification
-- Share your findings
-- Challenge their conclusions
-- Collaborate on solutions
+When you receive a <teammate-message>, another teammate sent you a message. Respond appropriately.
 
-### Best Practices
-1. Stay focused on your assigned role and tasks
-2. Communicate progress and findings with teammates
-3. Be open to feedback and collaboration
-4. Update task status when you make progress
-5. Ask for help when you encounter blockers`;
+### Responsibilities
+1. Complete assigned tasks
+2. Communicate findings with teammates
+3. Use the task tool to interact with team (see tool description for usage)`;
+      }
     }
 
     return enhancedPrompt;

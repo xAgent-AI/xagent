@@ -1433,7 +1433,12 @@ export interface ToolCallOptions {
 
 export class TaskTool implements Tool {
   name = 'task';
-  description = `Launch specialized AI subagents or agent teams to handle complex tasks autonomously.
+
+  get description(): string {
+    const isTeamLead = process.env.XAGENT_IS_TEAM_LEAD === 'true';
+
+    if (isTeamLead) {
+      return `Launch specialized AI subagents or agent teams to handle complex tasks autonomously.
 
 # Two Modes
 
@@ -1453,97 +1458,37 @@ Launch specialized AI agents. Each agent runs independently with isolated contex
 
 ### SubAgent Examples
 Single: task(description="Explore auth flow", subagent_type="explore-agent")
-Parallel: task(description="Review code", agents=[{subagent_type="code-reviewer", prompt="Check security"}, {subagent_type="frontend-tester", prompt="Test forms"}])
-
-### When to Use SubAgents
-- Code exploration and understanding
-- Independent parallel tasks
-- Specialized work (testing, security review)
+Parallel: task(description="Review code", agents=[{subagent_type:"code-reviewer", prompt:"Check security"}, {subagent_type:"frontend-tester", prompt:"Test forms"}])
 
 ---
 
 ## Mode 2: Agent Team
 Create collaborative AI teams with shared tasks and real-time messaging.
 
-### Team Architecture
-Lead Agent (you) creates a team, spawns teammates, and coordinates via messaging.
-Teammates run in separate processes (tmux/iTerm2/in-process) and communicate via TCP socket.
+### Your Role: TEAM LEAD
+As the lead, you coordinate teammates, assign tasks, and synthesize their results.
 
-### Team Actions
+#### Team Management (Lead Only)
+- **create**: Create team + spawn teammates: task(team_mode=true, team_action="create", team_name="name", teammates=[{name: "role", role: "...", prompt: "..."}])
+- **spawn**: Add teammates: task(team_mode=true, team_action="spawn", team_id="...", teammates=[{...}])
+- **shutdown**: Stop a teammate: task(team_mode=true, team_action="shutdown", team_id="...", member_id="...")
+- **cleanup**: Delete team: task(team_mode=true, team_action="cleanup", team_id="...")
 
-| Action | Purpose | Input | Output |
-|--------|---------|-------|--------|
-| **create** | Create team + spawn teammates | team_name, teammates[{name, role, prompt}], display_mode | team_id, members[{id, name}] |
-| **message** | Send message to teammate(s) | team_id, message{to_member_id: "id"|"broadcast", content} | message_id |
-| **task_create** | Create shared task | team_id, task_config{title, description, priority?, dependencies?} | task_id |
-| **task_list** | List tasks with filter | team_id, task_filter: "all"|"pending"|"available"|"in_progress"|"completed" | tasks[] |
-| **task_update** | Update task status | team_id, task_update{task_id, action: "claim"|"complete"} | status |
-| **shutdown** | Stop a teammate | team_id, member_id | - |
-| **cleanup** | Delete team resources | team_id | - |
+#### Communication
+- **broadcast**: task(team_mode=true, team_action="message", team_id="...", message={to_member_id: "broadcast", content: "..."})
+- **direct message**: task(team_mode=true, team_action="message", team_id="...", message={to_member_id: "target-id", content: "..."})
 
-### Key Parameters
+#### Task Management
+- **create task**: task(team_mode=true, team_action="task_create", team_id="...", task_config={title: "...", description: "...", priority: "high"})
+- **delete task**: task(team_mode=true, team_action="task_delete", team_id="...", task_update={task_id: "..."})
+- **list tasks**: task(team_mode=true, team_action="task_list", team_id="...", task_filter="all"|"pending"|"available"|"in_progress"|"completed")
+- **claim/complete**: task(team_mode=true, team_action="task_update", team_id="...", task_update={task_id: "...", action: "claim"|"complete"|"release", result?: "..."})
 
-**teammates[]**: Each teammate needs name, role, and prompt.
-- name: Identifier for messaging (e.g., "security", "frontend")
-- role: Description of responsibility
-- prompt: Initial instructions for the teammate
+#### View Info
+- **get_status**: task(team_mode=true, team_action="get_status", team_id="...")
+- **list_teams**: task(team_mode=true, team_action="list_teams")
 
-**display_mode**: How teammates are displayed
-- "tmux": Split panes (requires tmux)
-- "iterm2": Split panes (macOS only)
-- "in-process": Run in background (default)
-
-**message.to_member_id**:
-- Specific member_id: Direct message to that teammate
-- "broadcast": Message to all teammates
-
-**task_filter**: Filter tasks by status
-- "all": All tasks (default)
-- "pending": Tasks waiting to be claimed
-- "available": Tasks with completed dependencies (ready to work)
-- "in_progress": Tasks currently being worked on
-- "completed": Finished tasks
-
-**task_update.action**:
-- "claim": Take ownership of task
-- "complete": Mark task done
-
-### Complete Workflow Example
-
-1. Create team:
-task(team_mode=true, team_action="create", team_name="pr-review",
-     display_mode="tmux",
-     teammates=[
-       {name: "security", role: "Security Reviewer", prompt: "Review for security vulnerabilities"},
-       {name: "style", role: "Code Style", prompt: "Check code style and best practices"}
-     ])
-Returns: {team_id: "abc-123", members: [{id: "m1", name: "security"}, {id: "m2", name: "style"}]}
-
-2. Create tasks:
-task(team_mode=true, team_action="task_create", team_id="abc-123",
-     task_config={title: "Review auth module", description: "Check auth.ts", priority: "high"})
-Returns: {task_id: "t1", ...}
-
-3. List available tasks (for teammates to find work):
-task(team_mode=true, team_action="task_list", team_id="abc-123", task_filter="available")
-Returns: {tasks: [{task_id: "t1", title: "...", status: "pending", ...}]}
-
-4. Coordinate via messages:
-task(team_mode=true, team_action="message", team_id="abc-123",
-     message={to_member_id: "m1", content: "Focus on the auth module"})
-task(team_mode=true, team_action="message", team_id="abc-123",
-     message={to_member_id: "broadcast", content: "Submit findings in 5 minutes"})
-
-5. Update task status:
-task(team_mode=true, team_action="task_update", team_id="abc-123",
-     task_update={task_id: "t1", action: "claim"})
-task(team_mode=true, team_action="task_update", team_id="abc-123",
-     task_update={task_id: "t1", action: "complete"})
-
-6. Shutdown teammates and cleanup:
-task(team_mode=true, team_action="shutdown", team_id="abc-123", member_id="m1")
-task(team_mode=true, team_action="shutdown", team_id="abc-123", member_id="m2")
-task(team_mode=true, team_action="cleanup", team_id="abc-123")
+---
 
 ### When to Use Teams
 - Complex tasks needing multiple perspectives
@@ -1556,12 +1501,75 @@ task(team_mode=true, team_action="cleanup", team_id="abc-123")
 # When NOT to Use
 - Simple tasks you can handle directly
 - Single-step operations
-- Quick lookups or minor edits
+- Quick lookup or minor edits
 
 # Best Practices
 - **SubAgents**: Provide clear context in prompts, use parallel mode for truly independent tasks
-- **Teams**: Define distinct roles, use descriptive teammate names, always cleanup after work
-- **Both**: Include relevant file paths and constraints; start simple, add complexity as needed`;
+- **Teams**: Define distinct roles, use descriptive teammate names, always cleanup after work`;
+    }
+
+    return `Launch specialized AI subagents or agent teams to handle complex tasks autonomously.
+
+# Two Modes
+
+## Mode 1: SubAgent (Single/Parallel)
+Launch specialized AI agents. Each agent runs independently with isolated context.
+
+### SubAgent Types
+| Type | Use Case |
+|------|----------|
+| **plan-agent** | Task planning, risk analysis, roadmaps |
+| **explore-agent** | Codebase exploration, architecture analysis |
+| **code-reviewer** | Code review, security checks, bug detection |
+| **frontend-tester** | Frontend tests, UI validation |
+| **frontend-developer** | React, TypeScript, web development |
+| **backend-developer** | Node.js, APIs, databases |
+| **gui-subagent** | Browser automation, visual interactions |
+
+### SubAgent Examples
+Single: task(description="Explore auth flow", subagent_type="explore-agent")
+Parallel: task(description="Review code", agents=[{subagent_type:"code-reviewer", prompt:"Check security"}, {subagent_type:"frontend-tester", prompt:"Test forms"}])
+
+---
+
+## Mode 2: Agent Team
+Create collaborative AI teams with shared tasks and real-time messaging.
+
+### Your Role: TEAMMATE
+As a teammate, you work on assigned tasks and communicate with the team.
+
+#### Communication (Teammate)
+- **direct message** only: task(team_mode=true, team_action="message", team_id="...", message={to_member_id: "target-id", content: "..."})
+
+#### Task Management (Teammate)
+- **create task**: task(team_mode=true, team_action="task_create", team_id="...", task_config={title: "...", description: "..."})
+- **claim task**: task(team_mode=true, team_action="task_update", team_id="...", task_update={task_id: "...", action: "claim"})
+- **complete task**: task(team_mode=true, team_action="task_update", team_id="...", task_update={task_id: "...", action: "complete", result: "..."})
+- **list tasks**: task(team_mode=true, team_action="task_list", team_id="...", task_filter="all"|"pending"|"available"|"in_progress"|"completed")
+
+#### View Info
+- **get_status**: task(team_mode=true, team_action="get_status", team_id="...")
+
+---
+
+### When to Use Teams
+- Complex tasks needing multiple perspectives
+- Parallel work with coordination
+- Cross-layer work (frontend + backend + tests)
+- Long-running collaborative tasks
+
+---
+
+# When NOT to Use
+- Simple tasks you can handle directly
+- Single-step operations
+- Quick lookup or minor edits
+
+# Best Practices
+- **SubAgents**: Provide clear context in prompts, use parallel mode for truly independent tasks
+- **Teams**: Define distinct roles, use descriptive teammate names, always cleanup after work`;
+  }
+
   allowedModes = [
     ExecutionMode.YOLO,
     ExecutionMode.ACCEPT_EDITS,

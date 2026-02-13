@@ -1435,7 +1435,7 @@ export class TaskTool implements Tool {
   name = 'task';
 
   get description(): string {
-    const isTeamLead = process.env.XAGENT_IS_TEAM_LEAD === 'true';
+    const isTeamLead = process.env.XAGENT_IS_TEAM_LEAD !== 'false';
 
     if (isTeamLead) {
       return `Launch specialized AI subagents or agent teams to handle complex tasks autonomously.

@@ -173,7 +173,7 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
       const memberId = process.env.XAGENT_MEMBER_ID || 'unknown';
       const memberName = process.env.XAGENT_MEMBER_NAME || 'Teammate';
       const memberRole = process.env.XAGENT_MEMBER_ROLE || 'Team Member';
-      const isTeamLead = process.env.XAGENT_IS_TEAM_LEAD === 'true';
+      const isTeamLead = process.env.XAGENT_IS_TEAM_LEAD !== 'false';
 
       if (isTeamLead) {
         let membersInfo = '';

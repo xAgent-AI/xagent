@@ -64,7 +64,7 @@ export class TeamCoordinator {
     params: TeamToolParams
   ): Promise<{ success: boolean; message: string; result?: any }> {
     const memberId = process.env.XAGENT_MEMBER_ID || 'lead';
-    const isTeamLead = process.env.XAGENT_IS_TEAM_LEAD === 'true' || params.is_team_lead === true;
+    const isTeamLead = process.env.XAGENT_IS_TEAM_LEAD !== 'false' || params.is_team_lead === true;
 
     const permissions = isTeamLead ? LEAD_PERMISSIONS : TEAMMATE_PERMISSIONS;
 

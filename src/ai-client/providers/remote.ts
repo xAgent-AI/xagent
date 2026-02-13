@@ -229,7 +229,6 @@ export class RemoteProvider implements AIProvider {
 
   /**
    * Helper for task management requests - uses /chat endpoint like original implementation
-   * Note: Task management requests use minimal headers (no xagent-cli-version) to match original behavior
    */
   private async makeTaskRequest(status: string, taskId: string): Promise<void> {
     const url = `${this.agentApi}/chat`;
@@ -244,8 +243,7 @@ export class RemoteProvider implements AIProvider {
     try {
       await this.client.post(url, requestBody, {
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.authToken}`
+          ...this.getHeaders(), // Include xagent-cli-version and other headers
         },
         httpsAgent
       });

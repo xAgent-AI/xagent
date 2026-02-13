@@ -2825,7 +2825,7 @@ For agent team management (create teams, coordinate teammates, shared tasks), us
 }
 
 export class TeamTool implements Tool {
-  name = 'team';
+  name = 'Team';
 
   get description(): string {
     return `Manage AI agent teams with shared tasks and real-time messaging.
@@ -4473,7 +4473,7 @@ export class ToolRegistry {
           };
           break;
 
-        case 'team':
+        case 'Team':
           parameters = {
             type: 'object',
             properties: {

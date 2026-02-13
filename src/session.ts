@@ -286,11 +286,36 @@ export class InteractiveSession {
   private handleTeamMessage(msg: any): void {
     if (!msg || !msg.content) return;
 
-    const teamMessage: ChatMessage = {
-      role: 'user',
-      content: `<teammate-message from="${msg.fromMemberId}" type="${msg.type}">${msg.content}</teammate-message>`,
-      timestamp: msg.timestamp || Date.now()
-    };
+    let teamMessage: ChatMessage;
+
+    if (msg.type === 'task_update') {
+      let taskInfo: string;
+      try {
+        const content = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
+        taskInfo = `Task ${content.action}: ${content.title || content.taskId}`;
+        if (content.assignee) {
+          taskInfo += ` (assignee: ${content.assignee})`;
+        }
+        if (content.result) {
+          taskInfo += ` - Result: ${content.result.substring(0, 100)}...`;
+        }
+      } catch {
+        taskInfo = `Task update: ${msg.content}`;
+      }
+
+      teamMessage = {
+        role: 'user',
+        content: `<system-notification type="task_update">${taskInfo}</system-notification>`,
+        timestamp: msg.timestamp || Date.now()
+      };
+    } else {
+      teamMessage = {
+        role: 'user',
+        content: `<teammate-message from="${msg.fromMemberId}" type="${msg.type}">${msg.content}</teammate-message>`,
+        timestamp: msg.timestamp || Date.now()
+      };
+    }
+
     this.teammateMessageQueue.push(teamMessage);
 
     if (!(this as any)._isOperationInProgress) {

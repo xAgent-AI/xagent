@@ -245,7 +245,7 @@ export class TeamStore {
     return team.sharedTaskList[taskIndex];
   }
 
-  async deleteTask(teamId: string, taskId: string): Promise<boolean> {
+  async deleteTask(teamId: string, taskId: string, expectedVersion?: number): Promise<boolean> {
     const team = await this.getTeam(teamId);
     if (!team) {
       return false;
@@ -253,6 +253,10 @@ export class TeamStore {
 
     const taskIndex = team.sharedTaskList.findIndex((t) => t.taskId === taskId);
     if (taskIndex < 0) {
+      return false;
+    }
+
+    if (expectedVersion !== undefined && team.sharedTaskList[taskIndex].version !== expectedVersion) {
       return false;
     }
 

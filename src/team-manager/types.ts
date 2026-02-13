@@ -46,7 +46,7 @@ export const TEAMMATE_PERMISSIONS: MemberPermissions = {
   canClaimTask: true,
   canCompleteTask: true,
   canDeleteTask: false,
-  canMessageAll: false,
+  canMessageAll: true,
   canMessageDirect: true,
   canShutdownTeam: false,
   canShutdownMember: false,

@@ -183,7 +183,11 @@ Remember: You are in a conversational mode, not a tool-execution mode. Just talk
           const team = await store.getTeam(teamId);
           if (team && team.members.length > 0) {
             membersInfo = team.members
-              .map(m => `- **${m.name}** (ID: ${m.memberId}, Role: ${m.memberRole || m.role})`)
+              .map(m => {
+                const role = m.memberRole || m.role;
+                const leadLabel = m.role === 'lead' ? ' (Lead)' : '';
+                return `- **${m.name}**${leadLabel} (ID: ${m.memberId}, Role: ${role})`;
+              })
               .join('\n');
           }
         } catch {
@@ -209,6 +213,25 @@ ${membersInfo || '- No members spawned yet'}
 2. Synthesize results from teammates
 3. Use the task tool to manage team (see tool description for usage)`;
       } else {
+        let membersInfo = '';
+        try {
+          const { getTeamStore } = await import('./team-manager/index.js');
+          const store = getTeamStore();
+          const team = await store.getTeam(teamId);
+          if (team && team.members.length > 0) {
+            membersInfo = team.members
+              .filter(m => m.memberId !== memberId)
+              .map(m => {
+                const role = m.memberRole || m.role;
+                const leadLabel = m.role === 'lead' ? ' (Lead)' : '';
+                return `- **${m.name}**${leadLabel} (ID: ${m.memberId}, Role: ${role})`;
+              })
+              .join('\n');
+          }
+        } catch {
+          membersInfo = '- Member list not available yet';
+        }
+
         enhancedPrompt += `
 
 ## Team Member
@@ -221,8 +244,12 @@ You are part of an agent team.
 - **Name**: ${memberName}
 - **Role**: ${memberRole}
 
+### Team Members
+${membersInfo || '- No other members in team'}
+
 ### Receiving Messages
 When you receive a <teammate-message>, another teammate sent you a message. Respond appropriately.
+When you receive a <system-notification>, the team status has changed. Respond appropriately.
 
 ### Responsibilities
 1. Complete assigned tasks

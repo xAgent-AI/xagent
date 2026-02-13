@@ -36,6 +36,27 @@ export class TeamCoordinator {
     return this.brokers.get(teamId)!;
   }
 
+  private async broadcastTaskUpdate(
+    teamId: string,
+    fromMemberId: string,
+    taskId: string,
+    action: 'created' | 'claimed' | 'completed' | 'released' | 'deleted',
+    taskInfo?: { title: string; assignee?: string; result?: string }
+  ): Promise<void> {
+    try {
+      const broker = await this.getBroker(teamId);
+      const content = JSON.stringify({
+        taskId,
+        action,
+        ...taskInfo,
+        timestamp: Date.now()
+      });
+      broker.sendMessage(fromMemberId, 'broadcast', content, 'task_update');
+    } catch (error) {
+      console.warn('[Team] Failed to broadcast task update:', error);
+    }
+  }
+
   private checkPermission(
     memberPermissions: MemberPermissions,
     action: string
@@ -348,6 +369,10 @@ export class TeamCoordinator {
 
     console.log(colors.success(`✓ Task created: ${task.title} (${task.taskId})`));
 
+    await this.broadcastTaskUpdate(params.team_id!, createdBy, task.taskId, 'created', {
+      title: task.title
+    });
+
     return {
       success: true,
       message: `Task "${task.title}" created successfully`,
@@ -394,6 +419,12 @@ export class TeamCoordinator {
             message: `Task ${task_id} not found`,
           };
         }
+
+        await this.broadcastTaskUpdate(params.team_id, memberId, task_id, 'claimed', {
+          title: claimedTask.title,
+          assignee: claimedTask.assignee
+        });
+
         return {
           success: true,
           message: `Task ${task_id} claimed successfully`,
@@ -420,13 +451,24 @@ export class TeamCoordinator {
         };
       }
 
+      const existingTask = await this.store.getTask(params.team_id, task_id);
+      if (!existingTask) {
+        return { success: false, message: `Task ${task_id} not found` };
+      }
+
       const task = await this.store.updateTask(params.team_id, task_id, {
         status: 'completed',
         result,
-      });
+      }, existingTask.version);
       if (!task) {
-        throw new Error(`Task ${task_id} not found`);
+        return { success: false, message: `Task ${task_id} update failed` };
       }
+
+      await this.broadcastTaskUpdate(params.team_id, memberId, task_id, 'completed', {
+        title: task.title,
+        result: task.result
+      });
+
       return {
         success: true,
         message: `Task ${task_id} completed`,
@@ -439,13 +481,23 @@ export class TeamCoordinator {
     }
 
     if (action === 'release') {
+      const existingTask = await this.store.getTask(params.team_id, task_id);
+      if (!existingTask) {
+        return { success: false, message: `Task ${task_id} not found` };
+      }
+
       const task = await this.store.updateTask(params.team_id, task_id, {
         status: 'pending',
         assignee: undefined,
-      });
+      }, existingTask.version);
       if (!task) {
-        throw new Error(`Task ${task_id} not found`);
+        return { success: false, message: `Task ${task_id} update failed` };
       }
+
+      await this.broadcastTaskUpdate(params.team_id, memberId, task_id, 'released', {
+        title: task.title
+      });
+
       return {
         success: true,
         message: `Task ${task_id} released back to pool`,
@@ -466,17 +518,27 @@ export class TeamCoordinator {
       throw new Error('team_id is required');
     }
 
+    const memberId = process.env.XAGENT_MEMBER_ID || 'lead';
     const taskId = params.task_update?.task_id;
     if (!taskId) {
       throw new Error('task_id is required for deletion');
     }
 
-    const deleted = await this.store.deleteTask(params.team_id, taskId);
+    const existingTask = await this.store.getTask(params.team_id, taskId);
+    if (!existingTask) {
+      return { success: false, message: `Task ${taskId} not found` };
+    }
+
+    const deleted = await this.store.deleteTask(params.team_id, taskId, existingTask.version);
     if (!deleted) {
-      throw new Error(`Task ${taskId} not found`);
+      return { success: false, message: `Task ${taskId} was modified by another member` };
     }
 
     console.log(colors.success(`✓ Task ${taskId} deleted`));
+
+    await this.broadcastTaskUpdate(params.team_id, memberId, taskId, 'deleted', {
+      title: existingTask.title
+    });
 
     return {
       success: true,

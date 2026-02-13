@@ -1539,7 +1539,8 @@ Create collaborative AI teams with shared tasks and real-time messaging.
 As a teammate, you work on assigned tasks and communicate with the team.
 
 #### Communication (Teammate)
-- **direct message** only: task(team_mode=true, team_action="message", team_id="...", message={to_member_id: "target-id", content: "..."})
+- **broadcast**: task(team_mode=true, team_action="message", team_id="...", message={to_member_id: "broadcast", content: "..."})
+- **direct message**: task(team_mode=true, team_action="message", team_id="...", message={to_member_id: "target-id", content: "..."})
 
 #### Task Management (Teammate)
 - **claim task**: task(team_mode=true, team_action="task_update", team_id="...", task_update={task_id: "...", action: "claim"})

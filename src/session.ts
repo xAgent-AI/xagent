@@ -92,6 +92,7 @@ export class InteractiveSession {
   private heartbeatTimeout: NodeJS.Timeout | null = null;
   private heartbeatTimeoutMs: number = 300000; // 5 minutes timeout for long AI responses
   private lastActivityTime: number = Date.now();
+  private teammateMessageQueue: ChatMessage[] = [];
 
   // SDK response handling for approvals and questions
   private approvalPromises: Map<string, { resolve: (approved: boolean) => void; reject: (err: Error) => void }> = new Map();
@@ -285,11 +286,36 @@ export class InteractiveSession {
   private handleTeamMessage(msg: any): void {
     if (!msg || !msg.content) return;
 
-    this.conversation.push({
+    const teamMessage: ChatMessage = {
       role: 'user',
       content: `<teammate-message from="${msg.fromMemberId}" type="${msg.type}">${msg.content}</teammate-message>`,
       timestamp: msg.timestamp || Date.now()
-    });
+    };
+    this.teammateMessageQueue.push(teamMessage);
+
+    if (!(this as any)._isOperationInProgress) {
+      this.processMessageQueue();
+    }
+  }
+
+  /**
+   * Process queued teammate messages one by one.
+   */
+  private async processMessageQueue(): Promise<void> {
+    while (this.teammateMessageQueue.length > 0) {
+      const message = this.teammateMessageQueue.shift()!;
+      this.conversation.push(message);
+
+      try {
+        if (this.remoteAIClient) {
+          await this.generateRemoteResponse(0);
+        } else {
+          await this.generateResponse(0);
+        }
+      } catch (error) {
+        console.error('[Team] Failed to process teammate message:', error);
+      }
+    }
   }
 
   /**
@@ -1094,6 +1120,11 @@ export class InteractiveSession {
     // Check if we're shutting down
     if ((this as any)._isShuttingDown) {
       return;
+    }
+
+    // Check teammate message queue when agent becomes idle
+    if (this.teammateMessageQueue.length > 0) {
+      await this.processMessageQueue();
     }
 
     // If running in team mode with initial prompt, send it immediately and skip user input

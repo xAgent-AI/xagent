@@ -379,7 +379,7 @@ program
         for (const name of serverNames) {
           try {
             await mcpManager.connectServer(name);
-          } catch (error) {
+          } catch {
             // Connection failed, continue with next server
           }
         }

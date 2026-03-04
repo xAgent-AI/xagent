@@ -159,7 +159,8 @@ export class MCPServer {
       ...this.config.headers
     };
 
-    if (this.config.authToken) {
+    // Only add Authorization if not already present in headers
+    if (this.config.authToken && !headers['Authorization']) {
       if (this.config.authToken.startsWith('Bearer ')) {
         headers['Authorization'] = this.config.authToken;
       } else {
@@ -320,6 +321,8 @@ export class MCPServer {
       this.handleToolsList(message.params);
     } else if (message.method === 'notifications/initialized') {
       console.log('MCP Server initialized');
+    } else if (message.method === 'notifications/tools_changed' || message.method === 'tools/list_changed') {
+      this.handleToolsChanged();
     }
   }
 
@@ -341,6 +344,47 @@ export class MCPServer {
       } else {
         console.log(`Loaded ${result.tools.length} tools from MCP Server`);
       }
+    }
+  }
+
+  private async handleToolsChanged(): Promise<void> {
+    const session = getSingletonSession();
+    if (session && !session.getIsSdkMode()) {
+      console.log(`MCP Server tools changed, reloading...`);
+    }
+
+    const transportType = this.getTransportType();
+    if (transportType === 'http' || transportType === 'sse') {
+      try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          ...this.config.headers
+        };
+
+        if (this.config.authToken && !headers['Authorization']) {
+          if (this.config.authToken.startsWith('Bearer ')) {
+            headers['Authorization'] = this.config.authToken;
+          } else {
+            headers['Authorization'] = `Bearer ${this.config.authToken}`;
+          }
+        }
+
+        if (this.sessionId) {
+          headers['MCP-session-id'] = this.sessionId;
+        }
+
+        await this.loadTools(headers);
+
+        if (session && !session.getIsSdkMode()) {
+          console.log(`Reloaded ${this.tools.size} tools from MCP Server`);
+        }
+      } catch (error) {
+        if (session && !session.getIsSdkMode()) {
+          console.error(`Failed to reload tools: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    } else {
+      await this.connectStdio();
     }
   }
 
@@ -453,7 +497,8 @@ export class MCPServer {
         ...this.config.headers
       };
 
-      if (this.config.authToken) {
+      // Only add Authorization if not already present in headers
+      if (this.config.authToken && !headers['Authorization']) {
         if (this.config.authToken.startsWith('Bearer ')) {
           headers['Authorization'] = this.config.authToken;
         } else {

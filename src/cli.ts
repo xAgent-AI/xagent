@@ -333,8 +333,9 @@ program
 
 program
   .command('mcp')
-  .description('Add, list, or remove MCP servers')
+  .description('Add, list, get, or remove MCP servers')
   .option('-l, --list', 'List all MCP servers')
+  .option('-g, --get <name>', 'Get details of a specific MCP server')
   .option('-a, --add [name]', 'Add a new MCP server (interactive if no name provided)')
   .option('-r, --remove <name>', 'Remove an MCP server')
   .option('--scope <scope>', 'Scope (global or project)', 'global')
@@ -347,7 +348,14 @@ program
   .option('-y, --yes', 'Skip confirmation')
   .action(async (options) => {
     const configManager = getConfigManager(process.cwd());
+    configManager.load();  // Load config from file
     const mcpManager = getMCPManager();
+
+    // Register all MCP servers from config to manager (for --list and --remove)
+    const mcpServers = configManager.getMcpServers();
+    Object.entries(mcpServers).forEach(([name, config]) => {
+      mcpManager.registerServer(name, config);
+    });
 
     if (options.list) {
       const servers = mcpManager.getAllServers();
@@ -374,6 +382,58 @@ program
           console.log('');
         });
       }
+      process.exit(0);
+    } else if (options.get) {
+      const server = mcpManager.getServer(options.get);
+
+      if (!server) {
+        console.log('');
+        console.log(colors.error(`MCP server '${options.get}' not found`));
+        console.log(colors.textMuted('Use "xagent mcp --list" to see all configured servers'));
+        console.log('');
+        process.exit(1);
+      }
+
+      const config = (server as any).config;
+      const isConnected = server.isServerConnected();
+      const toolNames = server.getToolNames();
+      const tools = server.getTools();
+
+      console.log('');
+      console.log(colors.primaryBright(`${icons.tool} MCP Server: ${options.get}`));
+      console.log(colors.border(icons.separator.repeat(40)));
+      console.log('');
+
+      console.log(`  ${colors.primaryBright('Status:')} ${isConnected ? colors.success('Connected') : colors.error('Disconnected')}`);
+      console.log(`  ${colors.primaryBright('Transport:')} ${config.transport || 'stdio'}`);
+
+      if (config.url) {
+        console.log(`  ${colors.primaryBright('URL:')} ${config.url}`);
+      }
+
+      if (config.command) {
+        console.log(`  ${colors.primaryBright('Command:')} ${config.command} ${(config.args || []).join(' ')}`);
+      }
+
+      if (config.headers) {
+        console.log(`  ${colors.primaryBright('Headers:')} ${JSON.stringify(config.headers)}`);
+      }
+
+      console.log(`  ${colors.primaryBright('Tools:')} ${toolNames.length > 0 ? toolNames.join(', ') : colors.textMuted('(none)')}`);
+
+      if (tools.length > 0) {
+        console.log('');
+        console.log(colors.textMuted('  Available tools:'));
+        tools.forEach((tool: any) => {
+          console.log(`    - ${colors.primaryBright(tool.name)}`);
+          if (tool.description) {
+            console.log(`      ${colors.textDim(tool.description.substring(0, 60))}${tool.description.length > 60 ? '...' : ''}`);
+          }
+        });
+      }
+
+      console.log('');
+      process.exit(0);
     } else if (options.add !== undefined) {
       // Check if running in non-interactive mode (transport and required params provided)
       const hasTransport = options.transport;
@@ -409,12 +469,14 @@ program
             process.exit(1);
           }
           config.url = options.url;
+
+          const headers: Record<string, string> = {};
+
           if (options.token) {
-            config.authToken = options.token;
+            headers['Authorization'] = `Bearer ${options.token}`;
           }
-          // Handle multiple --header flags
+
           if (options.header) {
-            const headers: Record<string, string> = {};
             const headerArray = Array.isArray(options.header) ? options.header : [options.header];
             for (const h of headerArray) {
               const colonIndex = h.indexOf(':');
@@ -424,9 +486,10 @@ program
                 headers[key] = value;
               }
             }
-            if (Object.keys(headers).length > 0) {
-              config.headers = headers;
-            }
+          }
+
+          if (Object.keys(headers).length > 0) {
+            config.headers = headers;
           }
         } else {
           console.log('');
@@ -480,10 +543,12 @@ program
             console.log(colors.success(`✅ MCP server '${name}' added successfully`));
           }
           console.log('');
+          process.exit(0);
         } catch (error: any) {
           console.log('');
           console.log(colors.error(`Failed to add MCP server: ${error.message}`));
           console.log('');
+          process.exit(1);
         }
       } else {
         // Interactive mode
@@ -570,11 +635,17 @@ program
           }
           config.url = url;
 
+          const headers: Record<string, string> = {};
+
           // Step 4: Enter auth token (optional)
-          config.authToken = await text({
+          const authToken = await text({
             message: 'Enter Bearer token (optional):',
             defaultValue: '',
           }) as string;
+
+          if (authToken.trim()) {
+            headers['Authorization'] = `Bearer ${authToken}`;
+          }
 
           // Step 5: Enter custom headers (optional)
           const headersInput = await text({
@@ -584,10 +655,15 @@ program
 
           if (headersInput.trim()) {
             try {
-              config.headers = JSON.parse(headersInput);
+              const customHeaders = JSON.parse(headersInput);
+              Object.assign(headers, customHeaders);
             } catch {
               // Ignore invalid JSON
             }
+          }
+
+          if (Object.keys(headers).length > 0) {
+            config.headers = headers;
           }
         }
 
@@ -656,19 +732,22 @@ program
         console.log('');
         console.log(colors.success(`MCP server ${options.remove} removed successfully`));
         console.log('');
+        process.exit(0);
       } catch (error: any) {
         const { message, suggestion } = formatError(error);
         console.log('');
         console.log(colors.error(`Failed to remove MCP server: ${message}`));
         console.log(colors.textMuted(suggestion));
         console.log('');
+        process.exit(1);
       }
     } else {
       console.log('');
-      console.log(colors.warning('Please specify an action: --list, --add, or --remove'));
+      console.log(colors.warning('Please specify an action: --list, --get, --add, or --remove'));
       console.log('');
       console.log(colors.textMuted('Usage:'));
       console.log(`  ${colors.primaryBright('xagent mcp --list')}                    ${colors.textMuted('| List all MCP servers')}`);
+      console.log(`  ${colors.primaryBright('xagent mcp --get <name>')}              ${colors.textMuted('| Get MCP server details')}`);
       console.log(`  ${colors.primaryBright('xagent mcp --add')}                     ${colors.textMuted('| Add MCP server (interactive)')}`);
       console.log('');
       console.log(colors.textMuted('Non-interactive examples:'));

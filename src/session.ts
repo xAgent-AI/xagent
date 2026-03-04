@@ -1408,7 +1408,7 @@ export class InteractiveSession {
   }
 
   public async processUserMessage(message: string, _agent?: AgentConfig): Promise<void> {
-    const inputs = parseInput(message);
+    const inputs = await parseInput(message);
     const textInput = inputs.find((i) => i.type === 'text');
     const fileInputs = inputs.filter((i) => i.type === 'file');
     const commandInput = inputs.find((i) => i.type === 'command');

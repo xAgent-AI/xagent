@@ -358,27 +358,39 @@ program
     });
 
     if (options.list) {
-      const servers = mcpManager.getAllServers();
+      const mcpServers = configManager.getMcpServers();
+      const serverNames = Object.keys(mcpServers);
 
-      if (servers.length === 0) {
+      if (serverNames.length === 0) {
         console.log('');
         console.log(colors.warning('No MCP servers configured'));
         console.log(colors.textMuted('Use "xagent mcp --add" to add servers'));
         console.log('');
       } else {
+        console.log(colors.textMuted('Connecting to MCP servers...'));
+        
+        for (const name of serverNames) {
+          try {
+            await mcpManager.connectServer(name);
+          } catch (error) {
+            // Connection failed, continue with next server
+          }
+        }
+
         const separator = icons.separator.repeat(40);
         console.log('');
         console.log(colors.primaryBright(`${icons.tool} MCP Servers`));
         console.log(colors.border(separator));
         console.log('');
 
-        servers.forEach((server, index) => {
-          const connected = server.isServerConnected() ? icons.success : icons.error;
-          const status = server.isServerConnected() ? colors.success(connected) : colors.error(connected);
-          const toolNames = server.getToolNames().join(', ');
+        serverNames.forEach((name) => {
+          const server = mcpManager.getServer(name);
+          const connected = server?.isServerConnected() ? icons.success : icons.error;
+          const status = server?.isServerConnected() ? colors.success(connected) : colors.error(connected);
+          const toolNames = server?.getToolNames().join(', ') || '';
 
-          console.log(`  ${status} ${colors.primaryBright(`Server ${index + 1}`)}`);
-          console.log(`    ${colors.textDim(`  Tools: ${toolNames}`)}`);
+          console.log(`  ${status} ${colors.primaryBright(name)}`);
+          console.log(`    ${colors.textDim(`Tools: ${toolNames}`)}`);
           console.log('');
         });
       }

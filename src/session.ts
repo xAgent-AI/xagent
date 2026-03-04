@@ -308,6 +308,18 @@ export class InteractiveSession {
 
     let lastUpdateTime = 0;
 
+    // Initialize with current state to avoid triggering update on first check
+    try {
+      const { existsSync, readFileSync } = require('fs');
+      if (existsSync(stateFilePath)) {
+        const content = readFileSync(stateFilePath, 'utf-8');
+        const state = JSON.parse(content);
+        lastUpdateTime = state.lastSkillUpdate || 0;
+      }
+    } catch {
+      // Silent fail
+    }
+
     // Check for updates every 2 seconds
     const checkInterval = setInterval(async () => {
       try {

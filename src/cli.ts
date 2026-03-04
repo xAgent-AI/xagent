@@ -265,6 +265,7 @@ program
       console.log(colors.success('Authentication configured successfully!'));
       console.log(colors.textMuted('You can now run "xagent start" to begin'));
       console.log('');
+      process.exit(0);
     } else {
       console.log('');
       console.log(colors.error('Authentication failed. Please try again.'));
@@ -306,6 +307,7 @@ program
           console.log('');
         });
       }
+      process.exit(0);
     } else if (options.add) {
       console.log('');
       console.log(colors.warning('Agent creation wizard not implemented yet'));
@@ -796,6 +798,7 @@ program
       console.log(colors.success('Project initialized successfully!'));
       console.log(colors.textMuted('You can now run "xagent start" to begin'));
       console.log('');
+      process.exit(0);
     } catch (error: any) {
       const { message, suggestion } = formatError(error);
       console.log(colors.error(`Initialization failed: ${message}`));
@@ -824,6 +827,7 @@ program
         console.log(colors.warning('No workflows installed'));
         console.log(colors.textMuted('Use --add to install workflows from the marketplace'));
         console.log('');
+        process.exit(0);
       } else {
         const separator = icons.separator.repeat(40);
         console.log('');
@@ -837,6 +841,7 @@ program
           console.log(`    ${colors.textDim(`  ${workflow.description}`)}`);
           console.log('');
         });
+        process.exit(0);
       }
     } else if (options.add) {
       try {
@@ -844,6 +849,7 @@ program
         console.log('');
         console.log(colors.success(`Workflow ${options.add} added successfully!`));
         console.log('');
+        process.exit(0);
       } catch (error: any) {
         const { message, suggestion } = formatError(error);
         console.log('');
@@ -858,6 +864,7 @@ program
         console.log('');
         console.log(colors.success(`Workflow ${options.remove} removed successfully!`));
         console.log('');
+        process.exit(0);
       } catch (error: any) {
         const { message, suggestion } = formatError(error);
         console.log('');
@@ -953,6 +960,7 @@ program
           // Notify running xAgent to update system prompt
           await notifySkillUpdate(userSkillsPath);
           console.log('');
+          process.exit(0);
         } catch (error: any) {
           const { message, suggestion } = formatError(error);
           console.log(colors.error(`Failed to install skill: ${message}`));
@@ -978,6 +986,7 @@ program
             await notifySkillUpdate(userSkillsPath);
             console.log(colors.textMuted('Note: Run "xagent start" to use the new skill'));
             console.log('');
+            process.exit(0);
           } else {
             console.log(colors.error(`Failed to install skill: ${result.error}`));
             console.log('');
@@ -1032,6 +1041,7 @@ program
 
         console.log(colors.textMuted(`Skills directory: ${userSkillsPath}`));
         console.log('');
+        process.exit(0);
       } catch {
         console.log(colors.textMuted('No user skills installed'));
         console.log('');
@@ -1067,6 +1077,7 @@ program
         // Notify running xAgent to update system prompt
         await notifySkillUpdate(userSkillsPath);
         console.log('');
+        process.exit(0);
       } catch {
         console.log('');
         console.log(colors.error(`Skill not found: ${options.remove}`));
@@ -1090,6 +1101,7 @@ program
       console.log(colors.textMuted('To install a new skill, use the interactive command:'));
       console.log(`  ${colors.primaryBright('/skill add')}`);
       console.log('');
+      process.exit(0);
     }
   });
 
@@ -1117,6 +1129,7 @@ program
     console.log(`  ${colors.primaryBright('📚 Documentation:')} ${colors.primaryBright('https://platform.xagent.cn/cli/')}`);
     console.log(`  ${colors.primaryBright('💻 GitHub:')} ${colors.primaryBright('https://github.com/xagent-ai/xagent-cli')}`);
     console.log('');
+    process.exit(0);
   });
 
 program
@@ -1270,7 +1283,7 @@ program
         if (files.length === 0) {
           console.log(colors.textMuted('No memory files found.'));
           console.log('');
-          return;
+          process.exit(0);
         }
 
         const globalFile = files.find(f => f === 'global.md');
@@ -1323,7 +1336,7 @@ program
         if (projectFiles.length === 0) {
           console.log(colors.textMuted('No project memories to clean.'));
           console.log('');
-          return;
+          process.exit(0);
         }
 
         let cleaned = 0;
@@ -1387,7 +1400,7 @@ program
         if (files.length === 0) {
           console.log(colors.textMuted('No memory files to clean.'));
           console.log('');
-          return;
+          process.exit(0);
         }
 
         let cleaned = 0;
@@ -1458,10 +1471,12 @@ program
         if (shouldUpdate === true) {
           console.log('');
           await updateManager.autoUpdate();
+          process.exit(0);
         }
       } else {
         console.log(colors.success(`  ✅ You are using the latest version`));
         console.log('');
+        process.exit(0);
       }
     } catch (error: any) {
       console.log(colors.error(`  ❌ Failed to check for updates: ${error.message}`));

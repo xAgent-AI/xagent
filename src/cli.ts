@@ -349,6 +349,11 @@ program
   .option('--header <headers>', 'Custom headers (can be used multiple times)')
   .option('-y, --yes', 'Skip confirmation')
   .action(async (options) => {
+    if (options.help) {
+      program.parse(['node', 'mcp', '--help']);
+      return;
+    }
+
     const configManager = getConfigManager(process.cwd());
     configManager.load();  // Load config from file
     const mcpManager = getMCPManager();
@@ -777,6 +782,7 @@ program
       console.log(`  ${colors.primaryBright('--header')}        ${colors.textMuted('Custom header (key:value)')}`);
       console.log(`  ${colors.primaryBright('-y, --yes')}       ${colors.textMuted('Skip confirmation')}`);
       console.log('');
+      process.exit(1);
     }
   });
 
@@ -877,6 +883,7 @@ program
       console.log('');
       console.log(colors.warning('Please specify an action: --list, --add, or --remove'));
       console.log('');
+      process.exit(1);
     }
   });
 

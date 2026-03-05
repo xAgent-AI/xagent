@@ -53,6 +53,7 @@ import {
 import { getLogger } from './logger.js';
 import { ensureTtySane, setupEscKeyHandler } from './terminal.js';
 import { SdkOutputAdapter } from './sdk-output-adapter.js';
+import { initializeWindowsEncoding } from './shell.js';
 
 // Type aliases for backward compatibility
 type AIClient = AIClientInterface;
@@ -353,6 +354,9 @@ export class InteractiveSession {
   }
 
   async start(initializedCount: number = 0): Promise<void> {
+    // Initialize Windows console encoding once at startup
+    initializeWindowsEncoding();
+
     // Set this session as the singleton for access from other modules
     setSingletonSession(this);
 

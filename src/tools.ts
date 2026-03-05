@@ -14,7 +14,7 @@ import { getCancellationManager } from './cancellation.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { getSingletonSession } from './session.js';
 import { ripgrep, fdFind } from './ripgrep.js';
-import { getShellConfig, killProcessTree, quoteShellCommand } from './shell.js';
+import { getShellConfig, killProcessTree, quoteShellCommand, isWindowsEncodingInitialized } from './shell.js';
 import { truncateTail, buildTruncationNotice } from './truncate.js';
 import { createAIClient } from './ai-client-factory.js';
 
@@ -445,10 +445,11 @@ This is useful when working with skills that have local dependencies.
 
     // Set up cross-platform encoding environment for command execution
     if (process.platform === 'win32') {
-      // Windows: set code page to UTF-8 and ensure console output encoding
-      // chcp 65001 sets the console code page to UTF-8
-      // Use *>$null to suppress output (PowerShell-style, not CMD-style)
-      finalCommand = `chcp 65001 *>$null; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [System.Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${finalCommand}`;
+      // Windows: Only set encoding if not already initialized at startup
+      // This avoids repeated chcp calls that can cause screen flicker
+      if (!isWindowsEncodingInitialized()) {
+        finalCommand = `chcp 65001 *>$null; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [System.Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${finalCommand}`;
+      }
     } else {
       // Unix/macOS: set locale to UTF-8 for proper encoding handling
       finalCommand = `export LC_ALL=C.UTF-8; export LANG=C.UTF-8; export PYTHONIOENCODING=utf-8; ${finalCommand}`;

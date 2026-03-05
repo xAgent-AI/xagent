@@ -334,10 +334,6 @@ export class InteractiveSession {
 
             // Update system prompt with new skills
             await this.updateSystemPrompt();
-
-            if (!this.isSdkMode) {
-              console.log(colors.textMuted('  🔄 Skills updated from CLI'));
-            }
           }
         }
       } catch {

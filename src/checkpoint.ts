@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import crypto from 'crypto';
 import { Checkpoint, ChatMessage, ToolCall } from './types.js';
 import { output as logOutput } from './output-util.js';
+import { icons } from './theme.js';
 
 const execAsync = promisify(exec);
 
@@ -95,7 +96,7 @@ export class CheckpointManager {
     this.checkpoints.set(checkpointId, checkpoint);
     await this.cleanupOldCheckpoints();
 
-    console.log(`�?Checkpoint created: ${checkpointId}`);
+    console.log(`${icons.success} Checkpoint created: ${checkpointId}`);
     await logOutput('success', `Checkpoint created: ${checkpointId}`);
     return checkpoint;
   }
@@ -130,7 +131,7 @@ export class CheckpointManager {
 
     await this.restoreGitSnapshot(checkpointId);
 
-    console.log('�?Checkpoint restored successfully');
+    console.log(`${icons.success} Checkpoint restored successfully`);
     await logOutput('success', `Checkpoint restored successfully: ${checkpointId}`);
   }
 
@@ -172,7 +173,7 @@ export class CheckpointManager {
       }
 
       this.checkpoints.delete(checkpointId);
-      console.log(`�?Checkpoint deleted: ${checkpointId}`);
+      console.log(`${icons.success} Checkpoint deleted: ${checkpointId}`);
       await logOutput('success', `Checkpoint deleted: ${checkpointId}`);
     } catch (error) {
       console.error('Failed to delete checkpoint:', error);
@@ -215,7 +216,7 @@ export class CheckpointManager {
         this.checkpoints.delete(checkpoint.id);
       }
 
-      console.log('�?Checkpoint data cleaned up');
+      console.log(`${icons.success} Checkpoint data cleaned up`);
       await logOutput('success', 'Checkpoint data cleaned up');
     } catch (error) {
       console.error('Failed to cleanup checkpoint data:', error);
@@ -236,7 +237,7 @@ export class CheckpointManager {
       await fs.rm(this.snapshotsDir, { recursive: true, force: true });
       await fs.rm(this.checkpointsDir, { recursive: true, force: true });
       this.checkpoints.clear();
-      console.log('�?Checkpoint data cleaned up');
+      console.log(`${icons.success} Checkpoint data cleaned up`);
     } catch (error) {
       console.error('Failed to cleanup checkpoint data:', error);
     }

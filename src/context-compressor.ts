@@ -898,7 +898,7 @@ export class ContextCompressor {
       } else {
         // No user message in kept messages (rare case)
         // Insert summary as a user message, then add all kept messages
-        // This ensures valid message order: user �?assistant �?tool �?tool...
+        // This ensures valid message order: user → assistant → tool → tool...
         compressedMessages.push({
           role: 'user',
           content: `[Conversation Summary - ${messagesToSummarize.length} messages compressed]\n\n${summary}`,

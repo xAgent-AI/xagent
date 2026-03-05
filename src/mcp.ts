@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { MCPServerConfig } from './types.js';
 import { getSingletonSession } from './session.js';
 import { output as logOutput } from './output-util.js';
+import { icons } from './theme.js';
 
 export interface MCPTool {
   name: string;
@@ -50,10 +51,10 @@ export class MCPServer {
       if (session?.getIsSdkMode()) {
         // SDK 模式下不输出
       } else {
-        await logOutput('success', `�?MCP Server connected`);
+        await logOutput('success', `MCP Server connected`);
       }
     } catch (error) {
-      await logOutput('error', `�?[mcp] Failed to connect MCP Server`, { error: error instanceof Error ? error.message : String(error) });
+      await logOutput('error', `[mcp] Failed to connect MCP Server`, { error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   }
@@ -284,11 +285,11 @@ export class MCPServer {
       clearTimeout(timeoutId);
       const serverInfo = this.config.url || this.config.command || 'MCP server';
       if (error.name === 'AbortError') {
-        console.error(`\n�?SSE connection timed out`);
+        console.error(`\n${icons.error} SSE connection timed out`);
         console.error(`   Server: ${serverInfo}`);
         console.error(`   The server is not responding. Please try again later.`);
       } else {
-        console.error(`\n�?SSE connection failed`);
+        console.error(`\n${icons.error} SSE connection failed`);
         console.error(`   Server: ${serverInfo}`);
         console.error(`   ${error.message}`);
       }
@@ -448,12 +449,12 @@ export class MCPServer {
       } else if (resultData?.tools) {
         this.handleToolsList(resultData);
       } else if (resultData?.error) {
-        console.error(`\n�?MCP server returned an error`);
+        console.error(`\n${icons.error} MCP server returned an error`);
         console.error(`   ${resultData.error.message || 'Unknown error'}`);
       }
     } catch (error: any) {
       const serverInfo = this.config.url || this.config.command || 'MCP server';
-      console.error(`\n�?Failed to load MCP tools`);
+      console.error(`\n${icons.error} Failed to load MCP tools`);
       console.error(`   Server: ${serverInfo}`);
       console.error(`   ${error.message}`);
     }

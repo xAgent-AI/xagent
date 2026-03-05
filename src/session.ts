@@ -2922,8 +2922,6 @@ export async function startInteractiveSession(): Promise<void> {
   } catch {
     // Silently ignore update check failures
   }
-
-  await session.start();
 }
 
 // Singleton session instance for access from other modules

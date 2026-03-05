@@ -57,6 +57,16 @@ setConfigProvider(() => {
   };
 });
 
+// Helper function to disconnect all MCP servers and exit
+function disconnectAndExit(mcpManager: any, code: number): void {
+  try {
+    mcpManager.disconnectAllServers();
+  } catch {
+    // Ignore cleanup errors
+  }
+  process.exit(code);
+}
+
 const program = new Command();
 
 /**
@@ -401,7 +411,7 @@ program
           console.log('');
         });
       }
-      process.exit(0);
+      disconnectAndExit(mcpManager, 0);
     } else if (options.get) {
       const server = mcpManager.getServer(options.get);
 
@@ -410,7 +420,8 @@ program
         console.log(colors.error(`MCP server '${options.get}' not found`));
         console.log(colors.textMuted('Use "xagent mcp --list" to see all configured servers'));
         console.log('');
-        process.exit(1);
+        disconnectAndExit(mcpManager, 1);
+        return;
       }
 
       const config = (server as any).config;
@@ -452,7 +463,7 @@ program
       }
 
       console.log('');
-      process.exit(0);
+      disconnectAndExit(mcpManager, 0);
     } else if (options.add !== undefined) {
       // Check if running in non-interactive mode (transport and required params provided)
       const hasTransport = options.transport;
@@ -562,12 +573,12 @@ program
             console.log(colors.success(`✅ MCP server '${name}' added successfully`));
           }
           console.log('');
-          process.exit(0);
+          disconnectAndExit(mcpManager, 0);
         } catch (error: any) {
           console.log('');
           console.log(colors.error(`Failed to add MCP server: ${error.message}`));
           console.log('');
-          process.exit(1);
+          disconnectAndExit(mcpManager, 1);
         }
       } else {
         // Interactive mode
@@ -751,14 +762,14 @@ program
         console.log('');
         console.log(colors.success(`MCP server ${options.remove} removed successfully`));
         console.log('');
-        process.exit(0);
+        disconnectAndExit(mcpManager, 0);
       } catch (error: any) {
         const { message, suggestion } = formatError(error);
         console.log('');
         console.log(colors.error(`Failed to remove MCP server: ${message}`));
         console.log(colors.textMuted(suggestion));
         console.log('');
-        process.exit(1);
+        disconnectAndExit(mcpManager, 1);
       }
     } else {
       console.log('');

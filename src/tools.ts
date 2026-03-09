@@ -4478,44 +4478,6 @@ export class ToolRegistry {
     if (executionMode === ExecutionMode.SMART) {
       const debugMode = process.env.DEBUG === 'smart-approval';
 
-      // task tool bypasses smart approval entirely
-      if (toolName === 'task') {
-        if (debugMode) {
-          const { getLogger } = await import('./logger.js');
-          const logger = getLogger();
-          logger.debug(
-            `[SmartApprovalEngine] Tool '${toolName}' bypassed smart approval completely`
-          );
-        }
-        return await cancellationManager.withCancellation(
-          tool.execute(params, executionMode),
-          `tool-${toolName}`
-        );
-      }
-
-      // Remote mode (OAuth XAGENT): remote LLM has already approved the tool
-      // Auto-approve InvokeSkill tools without local AI review
-      const { getConfigManager } = await import('./config.js');
-      const configManager = getConfigManager();
-      const authConfig = configManager.getAuthConfig();
-      const isRemoteMode = authConfig.type === AuthType.OAUTH_XAGENT;
-      if (isRemoteMode && toolName === 'InvokeSkill') {
-        console.log('');
-        if (isSdkMode && sdkOutputAdapter) {
-          sdkOutputAdapter.outputInfo(`[Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`);
-        } else {
-          console.log('');
-          console.log(
-            `${indent}${colors.success(`✅ [Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`)}`
-          );
-          console.log('');
-        }
-        return await cancellationManager.withCancellation(
-          tool.execute(params, executionMode),
-          `tool-${toolName}`
-        );
-      }
-
       const { getSmartApprovalEngine } = await import('./smart-approval.js');
 
       const approvalEngine = getSmartApprovalEngine(debugMode);

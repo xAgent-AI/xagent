@@ -758,13 +758,9 @@ export class SlashCommandHandler {
       this.configManager.set(configKey, selectedModel);
       this.configManager.save('global');
 
-      // Clear conversation history to avoid tool call ID conflicts between providers
-      if (this.onClearCallback) {
-        this.onClearCallback();
-        console.log(
-          chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between models.')
-        );
-      }
+      // Note: In remote mode, we don't need to clear conversation history because
+      // all requests go to the same remote server - only the model parameter changes.
+      // Tool call IDs are managed by the remote server, not affected by model changes.
 
       // Notify InteractiveSession to update aiClient config
       if (this.onConfigUpdate) {

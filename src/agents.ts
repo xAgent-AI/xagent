@@ -283,10 +283,6 @@ Key features:
  - Support for multiple AI models
  - **GUI Subagent** for visual web and desktop automation
 
-Usage: npm start
-
-Enter /help to view all available commands.
-
 ## Your Capabilities
 
 You can:

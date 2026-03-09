@@ -3525,6 +3525,14 @@ export class InvokeSkillTool implements Tool {
   }> {
     const { skillId, taskDescription, inputFile, outputFile, options } = params;
 
+    // Validate required parameters
+    if (!skillId || skillId.trim() === '') {
+      throw new Error('Missing required parameter: skillId is required to invoke a skill');
+    }
+    if (!taskDescription || taskDescription.trim() === '') {
+      throw new Error('Missing required parameter: taskDescription is required to invoke a skill');
+    }
+
     try {
       const { getSkillInvoker } = await import('./skill-invoker.js');
       const skillInvoker = getSkillInvoker();

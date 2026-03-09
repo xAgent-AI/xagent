@@ -103,6 +103,10 @@ export class OpenAIProvider implements AIProvider {
       return this.convertResponse(response.data, model);
     }, retryConfig);
 
+    if (showDebug && result.data) {
+      this.debugResponse(result.data);
+    }
+
     if (result.success) {
       return result.data!;
     }
@@ -304,7 +308,59 @@ export class OpenAIProvider implements AIProvider {
     console.log(`📦 Model: ${model}`);
     console.log(`💬 Messages: ${messages.length}`);
     console.log('─'.repeat(60));
+    
+    // Print each message content
+    messages.forEach((msg, idx) => {
+      const role = msg.role || 'unknown';
+      const content = msg.content || '';
+      const reasoning = msg.reasoning_content ? `\n  [Reasoning] ${msg.reasoning_content}` : '';
+      const toolCalls = msg.tool_calls ? `\n  [Tool Calls] ${JSON.stringify(msg.tool_calls, null, 2)}` : '';
+      const toolCallId = msg.tool_call_id ? `\n  [Tool Call ID] ${msg.tool_call_id}` : '';
+      
+      console.log(`\n[${idx + 1}] Role: ${role}${reasoning}${toolCalls}${toolCallId}`);
+      if (content) {
+        // No truncation for system messages or any content
+        console.log(`    Content: ${content}`);
+      }
+    });
+    
     console.log('\n📤 Sending request...\n');
+  }
+
+  /**
+   * Debug response output
+   */
+  private debugResponse(response: CompletionResponse): void {
+    console.log(`\n╔══════════════════════════════════════════════════════════╗`);
+    console.log(`║             AI RESPONSE DEBUG (OpenAI)                    ║`);
+    console.log(`╚══════════════════════════════════════════════════════════╝`);
+    console.log(`🆔 ID: ${response.id}`);
+    console.log(`📦 Model: ${response.model}`);
+    console.log(`⏱️  Created: ${response.created}`);
+    console.log('─'.repeat(60));
+    
+    // Print each choice
+    response.choices?.forEach((choice, idx) => {
+      const msg = choice.message;
+      const content = msg?.content || '';
+      const reasoning = msg?.reasoning_content ? `\n  [Reasoning] ${msg.reasoning_content}` : '';
+      const toolCalls = msg?.tool_calls ? `\n  [Tool Calls] ${JSON.stringify(msg.tool_calls, null, 2)}` : '';
+      
+      console.log(`\n[Choice ${idx}] Finish Reason: ${choice.finish_reason}${reasoning}${toolCalls}`);
+      if (content) {
+        // No truncation
+        console.log(`    Content: ${content}`);
+      }
+    });
+    
+    if (response.usage) {
+      console.log('\n📊 Usage:');
+      console.log(`   Prompt tokens: ${response.usage.prompt_tokens}`);
+      console.log(`   Completion tokens: ${response.usage.completion_tokens}`);
+      console.log(`   Total tokens: ${response.usage.total_tokens}`);
+    }
+    
+    console.log('\n📥 Response received.\n');
   }
 
   /**

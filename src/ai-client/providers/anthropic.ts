@@ -121,6 +121,10 @@ export class AnthropicProvider implements AIProvider {
       return this.convertResponse(response.data, model);
     }, retryConfig);
 
+    if (showDebug && result.data) {
+      this.debugResponse(result.data);
+    }
+
     if (result.success) {
       return result.data!;
     }
@@ -425,9 +429,66 @@ export class AnthropicProvider implements AIProvider {
     console.log(`╚══════════════════════════════════════════════════════════╝`);
     console.log(`📦 Model: ${model}`);
     console.log(`💬 Messages: ${messages.length}`);
-    if (system) console.log(`📝 System: ${system.slice(0, 100)}...`);
+    if (system) {
+      console.log(`📝 System: ${system}`);
+    }
     console.log('─'.repeat(60));
+    
+    // Print each message content
+    messages.forEach((msg, idx) => {
+      const role = msg.role || 'unknown';
+      console.log(`\n[${idx + 1}] Role: ${role}`);
+      
+      if (msg.content && Array.isArray(msg.content)) {
+        msg.content.forEach((block: ContentBlock) => {
+          if (block.type === 'text') {
+            console.log(`    Text: ${block.text}`);
+          } else if (block.type === 'tool_use') {
+            console.log(`    [Tool Use] ${block.name}: ${JSON.stringify(block.input || {})}`);
+          } else if (block.type === 'tool_result') {
+            console.log(`    [Tool Result] ${block.tool_use_id}: ${block.content}`);
+          }
+        });
+      }
+    });
+    
     console.log('\n📤 Sending request...\n');
+  }
+
+  /**
+   * Debug response output
+   */
+  private debugResponse(response: CompletionResponse): void {
+    console.log(`\n╔══════════════════════════════════════════════════════════╗`);
+    console.log(`║            AI RESPONSE DEBUG (Anthropic)                   ║`);
+    console.log(`╚══════════════════════════════════════════════════════════╝`);
+    console.log(`🆔 ID: ${response.id}`);
+    console.log(`📦 Model: ${response.model}`);
+    console.log(`⏱️  Created: ${response.created}`);
+    console.log('─'.repeat(60));
+    
+    // Print each choice
+    response.choices?.forEach((choice, idx) => {
+      const msg = choice.message;
+      const content = msg?.content || '';
+      const reasoning = msg?.reasoning_content ? `\n  [Reasoning] ${msg.reasoning_content}` : '';
+      const toolCalls = msg?.tool_calls ? `\n  [Tool Calls] ${JSON.stringify(msg.tool_calls, null, 2)}` : '';
+      
+      console.log(`\n[Choice ${idx}] Finish Reason: ${choice.finish_reason}${reasoning}${toolCalls}`);
+      if (content) {
+        // No truncation
+        console.log(`    Content: ${content}`);
+      }
+    });
+    
+    if (response.usage) {
+      console.log('\n📊 Usage:');
+      console.log(`   Input tokens: ${response.usage.prompt_tokens}`);
+      console.log(`   Output tokens: ${response.usage.completion_tokens}`);
+      console.log(`   Total tokens: ${response.usage.total_tokens}`);
+    }
+    
+    console.log('\n📥 Response received.\n');
   }
 
   /**

@@ -649,14 +649,20 @@ export class TeamCoordinator {
       throw new Error('member_id is required');
     }
 
-    await this.spawner.shutdownTeammate(params.team_id, memberId);
+    const result = await this.spawner.shutdownTeammate(params.team_id, memberId);
 
-    console.log(colors.warning(`✓ Teammate ${memberId} shut down`));
+    if (result.success) {
+      console.log(colors.warning(`✓ Teammate ${memberId} shut down${result.reason ? `: ${result.reason}` : ''}`));
+    } else {
+      console.log(colors.error(`✗ Failed to shutdown ${memberId}: ${result.reason}`));
+    }
 
     return {
-      success: true,
-      message: `Teammate ${memberId} shut down`,
-      result: { member_id: memberId },
+      success: result.success,
+      message: result.success 
+        ? `Teammate ${memberId} shut down${result.reason ? `: ${result.reason}` : ''}`
+        : `Failed to shutdown ${memberId}: ${result.reason}`,
+      result: { member_id: memberId, reason: result.reason },
     };
   }
 

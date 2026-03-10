@@ -16,11 +16,133 @@ import {
 
 const generateId = () => crypto.randomUUID();
 
+// Lock timeout in milliseconds
+const LOCK_TIMEOUT_MS = 10000;
+// Maximum retries for acquiring lock
+const MAX_LOCK_RETRIES = 50;
+// Delay between lock retries in milliseconds
+const LOCK_RETRY_DELAY_MS = 100;
+
+interface LockInfo {
+  memberId: string;
+  timestamp: number;
+  pid: number;
+}
+
 export class TeamStore {
   private baseDir: string;
+  private activeLocks: Map<string, NodeJS.Timeout> = new Map();
 
   constructor() {
     this.baseDir = path.join(os.homedir(), '.xagent', 'teams');
+  }
+
+  /**
+   * Acquire a file-based lock for a task.
+   * Uses exclusive file creation for atomicity across processes.
+   */
+  private async acquireTaskLock(teamId: string, taskId: string, memberId: string): Promise<boolean> {
+    const lockDir = path.join(this.getTeamDir(teamId), 'locks');
+    await fs.mkdir(lockDir, { recursive: true });
+    const lockPath = path.join(lockDir, `${taskId}.lock`);
+
+    const lockInfo: LockInfo = {
+      memberId,
+      timestamp: Date.now(),
+      pid: process.pid,
+    };
+
+    for (let attempt = 0; attempt < MAX_LOCK_RETRIES; attempt++) {
+      try {
+        // Try to create lock file exclusively (atomic operation)
+        const handle = await fs.open(lockPath, 'wx');
+        await handle.writeFile(JSON.stringify(lockInfo));
+        await handle.close();
+
+        // Set up auto-release timeout
+        const timeoutId = setTimeout(() => {
+          this.releaseTaskLock(teamId, taskId).catch(() => {});
+        }, LOCK_TIMEOUT_MS);
+        this.activeLocks.set(`${teamId}:${taskId}`, timeoutId);
+
+        return true;
+      } catch (error: any) {
+        if (error.code === 'EEXIST') {
+          // Lock file exists, check if it's stale
+          try {
+            const content = await fs.readFile(lockPath, 'utf-8');
+            const existingLock: LockInfo = JSON.parse(content);
+
+            // Check if lock is stale (older than timeout)
+            if (Date.now() - existingLock.timestamp > LOCK_TIMEOUT_MS) {
+              // Remove stale lock and retry
+              await fs.rm(lockPath, { force: true });
+              continue;
+            }
+
+            // Lock is held by another process, wait and retry
+            await new Promise(resolve => setTimeout(resolve, LOCK_RETRY_DELAY_MS));
+            continue;
+          } catch {
+            // Failed to read lock file, try to remove it
+            await fs.rm(lockPath, { force: true });
+            continue;
+          }
+        }
+        throw error;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Release a task lock.
+   */
+  private async releaseTaskLock(teamId: string, taskId: string): Promise<void> {
+    const lockPath = path.join(this.getTeamDir(teamId), 'locks', `${taskId}.lock`);
+
+    // Clear auto-release timeout
+    const lockKey = `${teamId}:${taskId}`;
+    const timeoutId = this.activeLocks.get(lockKey);
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      this.activeLocks.delete(lockKey);
+    }
+
+    try {
+      // Verify we own the lock before releasing
+      const content = await fs.readFile(lockPath, 'utf-8');
+      const lockInfo: LockInfo = JSON.parse(content);
+
+      // Only release if we own the lock (same pid or stale)
+      if (lockInfo.pid === process.pid || Date.now() - lockInfo.timestamp > LOCK_TIMEOUT_MS) {
+        await fs.rm(lockPath, { force: true });
+      }
+    } catch {
+      // Lock file doesn't exist or is corrupted, ignore
+    }
+  }
+
+  /**
+   * Check if a task is locked by another member.
+   */
+  async isTaskLocked(teamId: string, taskId: string): Promise<boolean> {
+    const lockPath = path.join(this.getTeamDir(teamId), 'locks', `${taskId}.lock`);
+
+    try {
+      const content = await fs.readFile(lockPath, 'utf-8');
+      const lockInfo: LockInfo = JSON.parse(content);
+
+      // Check if lock is stale
+      if (Date.now() - lockInfo.timestamp > LOCK_TIMEOUT_MS) {
+        return false;
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private getTeamDir(teamId: string): string {
@@ -170,6 +292,23 @@ export class TeamStore {
       throw new Error(`Team ${teamId} not found`);
     }
 
+    // Validate that all dependencies exist
+    if (config.dependencies && config.dependencies.length > 0) {
+      const existingTasks = await this.getTasks(teamId);
+      const existingTaskIds = new Set(existingTasks.map(t => t.taskId));
+      const invalidDeps = config.dependencies.filter(depId => !existingTaskIds.has(depId));
+
+      if (invalidDeps.length > 0) {
+        throw new Error(`Invalid task dependencies: tasks not found: ${invalidDeps.join(', ')}`);
+      }
+
+      // Check for circular dependencies
+      const depCheck = this.checkCircularDependency(config.dependencies, [], existingTasks);
+      if (depCheck.hasCycle) {
+        throw new Error(`Circular dependency detected: ${depCheck.cyclePath?.join(' -> ')}`);
+      }
+    }
+
     const task: TeamTask = {
       taskId: generateId(),
       teamId,
@@ -195,6 +334,37 @@ export class TeamStore {
     await this.saveTeam(team);
 
     return task;
+  }
+
+  /**
+   * Check for circular dependencies in task graph.
+   */
+  private checkCircularDependency(
+    taskIds: string[],
+    visited: string[],
+    allTasks: TeamTask[]
+  ): { hasCycle: boolean; cyclePath?: string[] } {
+    const taskMap = new Map(allTasks.map(t => [t.taskId, t]));
+
+    for (const taskId of taskIds) {
+      if (visited.includes(taskId)) {
+        return { hasCycle: true, cyclePath: [...visited, taskId] };
+      }
+
+      const task = taskMap.get(taskId);
+      if (task && task.dependencies.length > 0) {
+        const result = this.checkCircularDependency(
+          task.dependencies,
+          [...visited, taskId],
+          allTasks
+        );
+        if (result.hasCycle) {
+          return result;
+        }
+      }
+    }
+
+    return { hasCycle: false };
   }
 
   async getTask(teamId: string, taskId: string): Promise<TeamTask | null> {
@@ -311,35 +481,49 @@ export class TeamStore {
     taskId: string,
     memberId: string
   ): Promise<TeamTask | null> {
-    const task = await this.getTask(teamId, taskId);
-    if (!task) return null;
-
-    if (task.status !== 'pending') {
-      throw new Error(`Task ${taskId} is not available (status: ${task.status})`);
+    // Acquire lock first to prevent race conditions
+    const lockAcquired = await this.acquireTaskLock(teamId, taskId, memberId);
+    if (!lockAcquired) {
+      throw new Error(`Task ${taskId} is currently being claimed by another member. Please try again.`);
     }
 
-    const tasks = await this.getTasks(teamId);
-    const taskMap = new Map(tasks.map((t) => [t.taskId, t]));
+    try {
+      // Re-read task after acquiring lock to ensure we have latest state
+      const task = await this.getTask(teamId, taskId);
+      if (!task) return null;
 
-    const uncompletedDeps = task.dependencies.filter((depId) => {
-      const dep = taskMap.get(depId);
-      return dep && dep.status !== 'completed';
-    });
+      if (task.status !== 'pending') {
+        throw new Error(`Task ${taskId} is not available (status: ${task.status})`);
+      }
 
-    if (uncompletedDeps.length > 0) {
-      throw new Error(`Task has uncompleted dependencies: ${uncompletedDeps.join(', ')}`);
+      // Re-check dependencies after acquiring lock
+      const tasks = await this.getTasks(teamId);
+      const taskMap = new Map(tasks.map((t) => [t.taskId, t]));
+
+      const uncompletedDeps = task.dependencies.filter((depId) => {
+        const dep = taskMap.get(depId);
+        return dep && dep.status !== 'completed';
+      });
+
+      if (uncompletedDeps.length > 0) {
+        throw new Error(`Task has uncompleted dependencies: ${uncompletedDeps.join(', ')}`);
+      }
+
+      // Update task with version check
+      const result = await this.updateTask(teamId, taskId, {
+        status: 'in_progress',
+        assignee: memberId,
+      }, task.version);
+
+      if (!result) {
+        throw new Error(`Task ${taskId} was already claimed by another member`);
+      }
+
+      return result;
+    } finally {
+      // Always release the lock
+      await this.releaseTaskLock(teamId, taskId);
     }
-
-    const result = await this.updateTask(teamId, taskId, {
-      status: 'in_progress',
-      assignee: memberId,
-    }, task.version);
-
-    if (!result) {
-      throw new Error(`Task ${taskId} was already claimed by another member`);
-    }
-
-    return result;
   }
 
   async sendMessage(

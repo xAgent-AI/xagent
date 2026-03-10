@@ -9,6 +9,7 @@ export interface MessageBrokerOptions {
   port?: number;
   host?: string;
   ackTimeout?: number;
+  maxDeliveryInfoAge?: number; // Max age for delivery info cleanup
 }
 
 export interface ConnectedClient {
@@ -26,6 +27,11 @@ export interface PendingAck {
   timer: NodeJS.Timeout;
 }
 
+// Default timeout for delivery info cleanup (5 minutes)
+const DEFAULT_DELIVERY_INFO_MAX_AGE = 5 * 60 * 1000;
+// Cleanup interval (1 minute)
+const CLEANUP_INTERVAL = 60 * 1000;
+
 export class MessageBroker extends EventEmitter {
   private server: net.Server | null = null;
   private clients: Map<string, ConnectedClient> = new Map();
@@ -36,6 +42,8 @@ export class MessageBroker extends EventEmitter {
   private pendingAcks: Map<string, PendingAck> = new Map();
   private ackTimeout: number;
   private deliveryInfo: Map<string, MessageDeliveryInfo> = new Map();
+  private maxDeliveryInfoAge: number;
+  private cleanupTimer: NodeJS.Timeout | null = null;
 
   constructor(teamId: string, options: MessageBrokerOptions = {}) {
     super();
@@ -43,6 +51,7 @@ export class MessageBroker extends EventEmitter {
     this.port = options.port || 0;
     this.host = options.host || '127.0.0.1';
     this.ackTimeout = options.ackTimeout || 30000;
+    this.maxDeliveryInfoAge = options.maxDeliveryInfoAge || DEFAULT_DELIVERY_INFO_MAX_AGE;
   }
 
   async start(): Promise<number> {
@@ -56,6 +65,10 @@ export class MessageBroker extends EventEmitter {
         this.port = address.port;
         this.isRunning = true;
         this.emit('started', { port: this.port, host: this.host });
+        
+        // Start cleanup timer
+        this.startCleanupTimer();
+        
         resolve(this.port);
       });
 
@@ -67,6 +80,19 @@ export class MessageBroker extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    // Stop cleanup timer
+    this.stopCleanupTimer();
+
+    // Clean up all pending ACKs
+    for (const [key, pending] of this.pendingAcks) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('Broker shutting down'));
+    }
+    this.pendingAcks.clear();
+
+    // Clean up delivery info
+    this.deliveryInfo.clear();
+
     return new Promise((resolve) => {
       for (const [memberId, client] of this.clients) {
         try {
@@ -87,6 +113,57 @@ export class MessageBroker extends EventEmitter {
         resolve();
       }
     });
+  }
+
+  /**
+   * Start periodic cleanup of stale delivery info
+   */
+  private startCleanupTimer(): void {
+    this.cleanupTimer = setInterval(() => {
+      this.cleanupStaleData();
+    }, CLEANUP_INTERVAL);
+  }
+
+  /**
+   * Stop cleanup timer
+   */
+  private stopCleanupTimer(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+  }
+
+  /**
+   * Clean up stale delivery info entries
+   */
+  private cleanupStaleData(): void {
+    const now = Date.now();
+    const staleThreshold = now - this.maxDeliveryInfoAge;
+
+    // Clean up stale delivery info
+    for (const [messageId, info] of this.deliveryInfo) {
+      if (info.sentAt < staleThreshold) {
+        this.deliveryInfo.delete(messageId);
+      }
+    }
+
+    // Clean up orphaned pending ACKs (shouldn't happen, but safety check)
+    for (const [key, pending] of this.pendingAcks) {
+      if (pending.sentAt < staleThreshold) {
+        clearTimeout(pending.timer);
+        this.pendingAcks.delete(key);
+        
+        // Resolve with failed status instead of leaving hanging
+        const info: MessageDeliveryInfo = {
+          messageId: pending.message.messageId,
+          status: 'failed',
+          sentAt: pending.sentAt,
+          failedReason: 'Stale entry cleaned up'
+        };
+        pending.resolve(info);
+      }
+    }
   }
 
   private handleConnection(socket: net.Socket): void {
@@ -117,8 +194,9 @@ export class MessageBroker extends EventEmitter {
           } else if (memberId) {
             this.handleMessage(memberId, msg);
           }
-        } catch {
-          // ignore parse errors
+        } catch (parseError) {
+          // Log parse errors for debugging but don't crash
+          this.emit('parse-error', { data: msgStr, error: parseError });
         }
       }
     });
@@ -127,14 +205,41 @@ export class MessageBroker extends EventEmitter {
       if (memberId) {
         this.clients.delete(memberId);
         this.emit('client:disconnected', { memberId });
+        
+        // Clean up pending ACKs for this member
+        this.cleanupPendingAcksForMember(memberId);
       }
     });
 
-    socket.on('error', () => {
+    socket.on('error', (error) => {
       if (memberId) {
         this.clients.delete(memberId);
+        this.emit('client:error', { memberId, error });
+        
+        // Clean up pending ACKs for this member
+        this.cleanupPendingAcksForMember(memberId);
       }
     });
+  }
+
+  /**
+   * Clean up pending ACKs for a disconnected member
+   */
+  private cleanupPendingAcksForMember(memberId: string): void {
+    for (const [key, pending] of this.pendingAcks) {
+      if (pending.targetMemberId === memberId) {
+        clearTimeout(pending.timer);
+        this.pendingAcks.delete(key);
+        
+        const info = this.deliveryInfo.get(pending.message.messageId);
+        if (info) {
+          info.status = 'failed';
+          info.failedReason = `Client ${memberId} disconnected`;
+        }
+        
+        pending.reject(new Error(`Client ${memberId} disconnected`));
+      }
+    }
   }
 
   private handleMessage(fromMemberId: string, msg: any): void {
@@ -241,6 +346,7 @@ export class MessageBroker extends EventEmitter {
         if (requiresAck) {
           const pendingKey = `${message.messageId}:${memberId}`;
           const timer = setTimeout(() => {
+            // Clean up on timeout
             this.pendingAcks.delete(pendingKey);
             info.status = 'failed';
             info.failedReason = 'ack timeout';
@@ -363,6 +469,21 @@ export class MessageBroker extends EventEmitter {
   isConnected(): boolean {
     return this.isRunning;
   }
+
+  /**
+   * Get stats about the broker state
+   */
+  getStats(): {
+    connectedClients: number;
+    pendingAcks: number;
+    deliveryInfoEntries: number;
+  } {
+    return {
+      connectedClients: this.clients.size,
+      pendingAcks: this.pendingAcks.size,
+      deliveryInfoEntries: this.deliveryInfo.size
+    };
+  }
 }
 
 export class MessageClient extends EventEmitter {
@@ -372,6 +493,8 @@ export class MessageClient extends EventEmitter {
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 5;
   private reconnectDelay: number = 1000;
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private isShuttingDown: boolean = false;
 
   constructor(
     private teamId: string,
@@ -383,6 +506,10 @@ export class MessageClient extends EventEmitter {
   }
 
   async connect(): Promise<void> {
+    if (this.isShuttingDown) {
+      throw new Error('Client is shutting down');
+    }
+
     return new Promise((resolve, reject) => {
       this.socket = new net.Socket();
 
@@ -409,9 +536,16 @@ export class MessageClient extends EventEmitter {
         }
       };
 
+      // Set connection timeout
+      this.socket.setTimeout(10000);
+      
       this.socket.connect(this.port, this.host, connectHandler);
       this.socket.on('error', errorHandler);
       this.socket.on('close', () => this.handleDisconnect());
+      this.socket.on('timeout', () => {
+        this.socket?.destroy();
+        reject(new Error('Connection timeout'));
+      });
       this.socket.on('data', (data) => this.handleData(data));
     });
   }
@@ -422,15 +556,32 @@ export class MessageClient extends EventEmitter {
     
     if (wasConnected) {
       this.emit('disconnected');
+    }
+    
+    // Don't reconnect if we're shutting down
+    if (this.isShuttingDown) {
+      return;
+    }
+    
+    // Attempt reconnection
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
       
-      if (this.reconnectAttempts < this.maxReconnectAttempts) {
-        this.reconnectAttempts++;
-        setTimeout(() => {
-          this.connect().catch(() => {
-            this.emit('reconnect:failed', { attempt: this.reconnectAttempts });
-          });
-        }, this.reconnectDelay * this.reconnectAttempts);
+      // Clear any existing reconnect timer
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
       }
+      
+      const delay = this.reconnectDelay * this.reconnectAttempts;
+      this.reconnectTimer = setTimeout(() => {
+        this.connect().catch(() => {
+          this.emit('reconnect:failed', { attempt: this.reconnectAttempts });
+        });
+      }, delay);
+      
+      this.emit('reconnecting', { attempt: this.reconnectAttempts, delay });
+    } else {
+      this.emit('reconnect:exhausted', { attempts: this.reconnectAttempts });
     }
   }
 
@@ -454,8 +605,8 @@ export class MessageClient extends EventEmitter {
           }
           this.emit('message', msg);
         }
-      } catch {
-        // ignore parse errors
+      } catch (parseError) {
+        this.emit('parse-error', { data: msgStr, error: parseError });
       }
     }
   }
@@ -504,13 +655,23 @@ export class MessageClient extends EventEmitter {
     if (this.socket && this.connected) {
       try {
         this.socket.write(JSON.stringify(msg) + '\n');
-      } catch {
-        this.emit('send:failed', msg);
+      } catch (error) {
+        this.emit('send:failed', { message: msg, error });
       }
+    } else {
+      this.emit('send:failed', { message: msg, error: new Error('Not connected') });
     }
   }
 
   async disconnect(): Promise<void> {
+    this.isShuttingDown = true;
+    
+    // Clear any pending reconnect timer
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    
     return new Promise((resolve) => {
       if (this.socket) {
         this.socket.destroy();
@@ -524,6 +685,13 @@ export class MessageClient extends EventEmitter {
   isConnected(): boolean {
     return this.connected;
   }
+
+  /**
+   * Reset reconnection attempts (useful after successful operation)
+   */
+  resetReconnectAttempts(): void {
+    this.reconnectAttempts = 0;
+  }
 }
 
 let brokerInstances: Map<string, MessageBroker> = new Map();
@@ -536,5 +704,9 @@ export function getMessageBroker(teamId: string): MessageBroker {
 }
 
 export function removeMessageBroker(teamId: string): void {
+  const broker = brokerInstances.get(teamId);
+  if (broker) {
+    broker.stop().catch(() => {});
+  }
   brokerInstances.delete(teamId);
 }

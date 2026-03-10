@@ -110,6 +110,14 @@ export class InteractiveSession {
   private spawnPrompt: string | null = null;
   private brokerPort: number | null = null;
 
+  // Operation lock for preventing concurrent operations
+  private _isOperationInProgress: boolean = false;
+  private _shutdownResolver: ((value: void) => void) | null = null;
+  
+  // Queue processing lock to prevent race conditions
+  private isProcessingQueue: boolean = false;
+  private queueProcessingPromise: Promise<void> | null = null;
+
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
       input: process.stdin,
@@ -323,16 +331,49 @@ export class InteractiveSession {
 
     this.teammateMessageQueue.push(teamMessage);
 
-    if (!(this as any)._isOperationInProgress) {
-      this.processMessageQueue();
+    // Only start processing if not already processing
+    // Use proper lock instead of (this as any)._isOperationInProgress
+    if (!this.isProcessingQueue && !this._isOperationInProgress) {
+      this.startQueueProcessing();
     }
   }
 
   /**
+   * Start queue processing with proper locking.
+   */
+  private startQueueProcessing(): void {
+    // Prevent multiple queue processing coroutines
+    if (this.isProcessingQueue) {
+      return;
+    }
+
+    this.isProcessingQueue = true;
+    this.queueProcessingPromise = this.processMessageQueue();
+    
+    // Handle completion and errors
+    this.queueProcessingPromise
+      .catch((error) => {
+        console.error('[Team] Queue processing error:', error);
+      })
+      .finally(() => {
+        this.isProcessingQueue = false;
+        this.queueProcessingPromise = null;
+      });
+  }
+
+  /**
    * Process queued teammate messages one by one.
+   * This method should only be called from startQueueProcessing.
    */
   private async processMessageQueue(): Promise<void> {
     while (this.teammateMessageQueue.length > 0) {
+      // Check if operation is in progress (e.g., user is typing or another operation)
+      if (this._isOperationInProgress) {
+        // Wait a bit and retry
+        await new Promise(resolve => setTimeout(resolve, 100));
+        continue;
+      }
+
       const message = this.teammateMessageQueue.shift()!;
       this.conversation.push(message);
 
@@ -344,6 +385,7 @@ export class InteractiveSession {
         }
       } catch (error) {
         console.error('[Team] Failed to process teammate message:', error);
+        // Continue processing remaining messages even if one fails
       }
     }
   }
@@ -589,7 +631,7 @@ export class InteractiveSession {
     let _escCleanup: (() => void) | undefined;
     if (process.stdin.isTTY) {
       _escCleanup = setupEscKeyHandler(() => {
-        if ((this as any)._isOperationInProgress) {
+        if (this._isOperationInProgress) {
           // An operation is running, let it be cancelled
           this.cancellationManager.cancel();
         }
@@ -598,13 +640,13 @@ export class InteractiveSession {
     }
 
     // Track if an operation is in progress
-    (this as any)._isOperationInProgress = false;
+    this._isOperationInProgress = false;
 
     this.promptLoop();
 
     // Keep the promise pending until shutdown
     return new Promise((resolve) => {
-      (this as any)._shutdownResolver = resolve;
+      this._shutdownResolver = resolve;
     });
   }
 
@@ -2022,7 +2064,7 @@ export class InteractiveSession {
     }
 
     // Mark that an operation is in progress
-    (this as any)._isOperationInProgress = true;
+    this._isOperationInProgress = true;
 
     const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
     const icon = colors.primary(icons.brain);
@@ -2147,13 +2189,13 @@ export class InteractiveSession {
       }
 
       // Operation completed successfully, clear the flag
-      (this as any)._isOperationInProgress = false;
+      this._isOperationInProgress = false;
     } catch (error: any) {
       if (spinnerInterval) clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
 
       // Clear the operation flag
-      (this as any)._isOperationInProgress = false;
+      this._isOperationInProgress = false;
 
       // Signal request completion to SDK
       if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
@@ -2229,7 +2271,7 @@ export class InteractiveSession {
       }
     } catch (error: any) {
       // Clear the operation flag
-      (this as any)._isOperationInProgress = false;
+      this._isOperationInProgress = false;
 
       if (error.message === 'Operation cancelled by user') {
         // Notify backend to cancel the task
@@ -2318,7 +2360,7 @@ export class InteractiveSession {
     onComplete?: () => Promise<void>
   ): Promise<void> {
     // Mark that tool execution is in progress
-    (this as any)._isOperationInProgress = true;
+    this._isOperationInProgress = true;
 
     const toolRegistry = getToolRegistry();
     const showToolDetails = this.configManager.get('showToolDetails') || false;
@@ -2397,7 +2439,7 @@ export class InteractiveSession {
           // 清理 conversation 中未完成的 tool_call
           this.cleanupIncompleteToolCalls();
 
-          (this as any)._isOperationInProgress = false;
+          this._isOperationInProgress = false;
           return;
         }
 
@@ -2670,7 +2712,7 @@ export class InteractiveSession {
     // If GUI agent was cancelled by user, don't continue generating response
     // This avoids wasting API calls and tokens on cancelled tasks
     if (guiSubagentCancelled) {
-      (this as any)._isOperationInProgress = false;
+      this._isOperationInProgress = false;
       return;
     }
 

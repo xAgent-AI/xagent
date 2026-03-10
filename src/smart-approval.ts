@@ -80,7 +80,8 @@ export class WhitelistChecker {
     'ask_user_question',
     'save_memory',
     'xml_escape',
-    'Skill',
+    'InvokeSkill',
+    'task',
   ]);
 
   /**

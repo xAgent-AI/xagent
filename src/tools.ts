@@ -14,7 +14,7 @@ import { getCancellationManager } from './cancellation.js';
 import { SystemPromptGenerator } from './system-prompt-generator.js';
 import { getSingletonSession } from './session.js';
 import { ripgrep, fdFind } from './ripgrep.js';
-import { getShellConfig, killProcessTree, quoteShellCommand } from './shell.js';
+import { getShellConfig, killProcessTree, quoteShellCommand, isWindowsEncodingInitialized } from './shell.js';
 import { truncateTail, buildTruncationNotice } from './truncate.js';
 import { createAIClient } from './ai-client-factory.js';
 
@@ -445,10 +445,11 @@ This is useful when working with skills that have local dependencies.
 
     // Set up cross-platform encoding environment for command execution
     if (process.platform === 'win32') {
-      // Windows: set code page to UTF-8 and ensure console output encoding
-      // chcp 65001 sets the console code page to UTF-8
-      // Use *>$null to suppress output (PowerShell-style, not CMD-style)
-      finalCommand = `chcp 65001 *>$null; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [System.Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${finalCommand}`;
+      // Windows: Only set encoding if not already initialized at startup
+      // This avoids repeated chcp calls that can cause screen flicker
+      if (!isWindowsEncodingInitialized()) {
+        finalCommand = `chcp 65001 *>$null; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; [System.Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${finalCommand}`;
+      }
     } else {
       // Unix/macOS: set locale to UTF-8 for proper encoding handling
       finalCommand = `export LC_ALL=C.UTF-8; export LANG=C.UTF-8; export PYTHONIOENCODING=utf-8; ${finalCommand}`;
@@ -3118,8 +3119,6 @@ export class AskUserQuestionTool implements Tool {
       multiSelect?: boolean;
     }>;
   }): Promise<{ answers: string[] }> {
-    const { questions } = params;
-
     // Check if in SDK mode
     const sdkMode = (this as any)._sdkMode;
     const sdkAdapter = (this as any)._sdkOutputAdapter;
@@ -3637,6 +3636,14 @@ export class InvokeSkillTool implements Tool {
     skillPath?: string;
   }> {
     const { skillId, taskDescription, inputFile, outputFile, options } = params;
+
+    // Validate required parameters
+    if (!skillId || skillId.trim() === '') {
+      throw new Error('Missing required parameter: skillId is required to invoke a skill');
+    }
+    if (!taskDescription || taskDescription.trim() === '') {
+      throw new Error('Missing required parameter: taskDescription is required to invoke a skill');
+    }
 
     try {
       const { getSkillInvoker } = await import('./skill-invoker.js');
@@ -4664,44 +4671,6 @@ export class ToolRegistry {
     // Smart approval mode
     if (executionMode === ExecutionMode.SMART) {
       const debugMode = process.env.DEBUG === 'smart-approval';
-
-      // task tool bypasses smart approval entirely
-      if (toolName === 'task') {
-        if (debugMode) {
-          const { getLogger } = await import('./logger.js');
-          const logger = getLogger();
-          logger.debug(
-            `[SmartApprovalEngine] Tool '${toolName}' bypassed smart approval completely`
-          );
-        }
-        return await cancellationManager.withCancellation(
-          tool.execute(params, executionMode),
-          `tool-${toolName}`
-        );
-      }
-
-      // Remote mode (OAuth XAGENT): remote LLM has already approved the tool
-      // Auto-approve InvokeSkill tools without local AI review
-      const { getConfigManager } = await import('./config.js');
-      const configManager = getConfigManager();
-      const authConfig = configManager.getAuthConfig();
-      const isRemoteMode = authConfig.type === AuthType.OAUTH_XAGENT;
-      if (isRemoteMode && toolName === 'InvokeSkill') {
-        console.log('');
-        if (isSdkMode && sdkOutputAdapter) {
-          sdkOutputAdapter.outputInfo(`[Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`);
-        } else {
-          console.log('');
-          console.log(
-            `${indent}${colors.success(`✅ [Smart Mode] Remote mode: tool '${toolName}' auto-approved (remote LLM already approved)`)}`
-          );
-          console.log('');
-        }
-        return await cancellationManager.withCancellation(
-          tool.execute(params, executionMode),
-          `tool-${toolName}`
-        );
-      }
 
       const { getSmartApprovalEngine } = await import('./smart-approval.js');
 

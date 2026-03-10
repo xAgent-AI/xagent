@@ -45,11 +45,13 @@ const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'glm-4': 128000,
   'glm-4-plus': 128000,
   'glm-4-air': 128000,
-  'glm-4.7': 128000,
+  'glm-4.7': 200000,
+  'glm-5': 200000,
 
   // MiniMax
-  'MiniMax-M2': 1000000,
-  'MiniMax-M2.1': 1000000,
+  'MiniMax-M2': 200000,
+  'MiniMax-M2.1': 200000,
+  'MiniMax-M2.5': 200000,
 
   // Moonshot (Kimi)
   'moonshot-v1-8k': 8192,
@@ -896,7 +898,7 @@ export class ContextCompressor {
       } else {
         // No user message in kept messages (rare case)
         // Insert summary as a user message, then add all kept messages
-        // This ensures valid message order: user �?assistant �?tool �?tool...
+        // This ensures valid message order: user → assistant → tool → tool...
         compressedMessages.push({
           role: 'user',
           content: `[Conversation Summary - ${messagesToSummarize.length} messages compressed]\n\n${summary}`,

@@ -758,13 +758,9 @@ export class SlashCommandHandler {
       this.configManager.set(configKey, selectedModel);
       this.configManager.save('global');
 
-      // Clear conversation history to avoid tool call ID conflicts between providers
-      if (this.onClearCallback) {
-        this.onClearCallback();
-        console.log(
-          chalk.cyan('   Conversation cleared to avoid tool call ID conflicts between models.')
-        );
-      }
+      // Note: In remote mode, we don't need to clear conversation history because
+      // all requests go to the same remote server - only the model parameter changes.
+      // Tool call IDs are managed by the remote server, not affected by model changes.
 
       // Notify InteractiveSession to update aiClient config
       if (this.onConfigUpdate) {
@@ -2134,10 +2130,11 @@ export class SlashCommandHandler {
   }
 }
 
-export function parseInput(input: string): InputType[] {
+export async function parseInput(input: string): Promise<InputType[]> {
   const inputs: InputType[] = [];
   let remaining = input;
 
+  // Match @ followed by any non-whitespace sequence
   const fileRefRegex = /@([^\s]+)/g;
   let match;
   while ((match = fileRefRegex.exec(remaining)) !== null) {
@@ -2149,7 +2146,14 @@ export function parseInput(input: string): InputType[] {
       inputs.push({ type: 'text', content: beforeMatch.trim() });
     }
 
-    inputs.push({ type: 'file', content: filePath });
+    // Only treat as file reference if the file actually exists
+    const exists = await fileExists(filePath);
+    if (exists) {
+      inputs.push({ type: 'file', content: filePath });
+    } else {
+      // Not a file, treat as regular text (preserving the @ symbol)
+      inputs.push({ type: 'text', content: '@' + filePath });
+    }
     remaining = afterMatch;
   }
 
@@ -2162,6 +2166,18 @@ export function parseInput(input: string): InputType[] {
   }
 
   return inputs;
+}
+
+// Helper function to check if a file path exists
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    // Resolve to absolute path
+    const absolutePath = path.resolve(filePath);
+    await fs.access(absolutePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function detectImageInput(input: string): boolean {

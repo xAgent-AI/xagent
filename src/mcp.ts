@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { MCPServerConfig } from './types.js';
 import { getSingletonSession } from './session.js';
 import { output as logOutput } from './output-util.js';
+import { icons } from './theme.js';
 
 export interface MCPTool {
   name: string;
@@ -50,10 +51,10 @@ export class MCPServer {
       if (session?.getIsSdkMode()) {
         // SDK 模式下不输出
       } else {
-        await logOutput('success', `�?MCP Server connected`);
+        await logOutput('success', `MCP Server connected`);
       }
     } catch (error) {
-      await logOutput('error', `�?[mcp] Failed to connect MCP Server`, { error: error instanceof Error ? error.message : String(error) });
+      await logOutput('error', `[mcp] Failed to connect MCP Server`, { error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
   }
@@ -159,7 +160,8 @@ export class MCPServer {
       ...this.config.headers
     };
 
-    if (this.config.authToken) {
+    // Only add Authorization if not already present in headers
+    if (this.config.authToken && !headers['Authorization']) {
       if (this.config.authToken.startsWith('Bearer ')) {
         headers['Authorization'] = this.config.authToken;
       } else {
@@ -283,11 +285,11 @@ export class MCPServer {
       clearTimeout(timeoutId);
       const serverInfo = this.config.url || this.config.command || 'MCP server';
       if (error.name === 'AbortError') {
-        console.error(`\n�?SSE connection timed out`);
+        console.error(`\n${icons.error} SSE connection timed out`);
         console.error(`   Server: ${serverInfo}`);
         console.error(`   The server is not responding. Please try again later.`);
       } else {
-        console.error(`\n�?SSE connection failed`);
+        console.error(`\n${icons.error} SSE connection failed`);
         console.error(`   Server: ${serverInfo}`);
         console.error(`   ${error.message}`);
       }
@@ -320,6 +322,8 @@ export class MCPServer {
       this.handleToolsList(message.params);
     } else if (message.method === 'notifications/initialized') {
       console.log('MCP Server initialized');
+    } else if (message.method === 'notifications/tools_changed' || message.method === 'tools/list_changed') {
+      this.handleToolsChanged();
     }
   }
 
@@ -341,6 +345,47 @@ export class MCPServer {
       } else {
         console.log(`Loaded ${result.tools.length} tools from MCP Server`);
       }
+    }
+  }
+
+  private async handleToolsChanged(): Promise<void> {
+    const session = getSingletonSession();
+    if (session && !session.getIsSdkMode()) {
+      console.log(`MCP Server tools changed, reloading...`);
+    }
+
+    const transportType = this.getTransportType();
+    if (transportType === 'http' || transportType === 'sse') {
+      try {
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          ...this.config.headers
+        };
+
+        if (this.config.authToken && !headers['Authorization']) {
+          if (this.config.authToken.startsWith('Bearer ')) {
+            headers['Authorization'] = this.config.authToken;
+          } else {
+            headers['Authorization'] = `Bearer ${this.config.authToken}`;
+          }
+        }
+
+        if (this.sessionId) {
+          headers['MCP-session-id'] = this.sessionId;
+        }
+
+        await this.loadTools(headers);
+
+        if (session && !session.getIsSdkMode()) {
+          console.log(`Reloaded ${this.tools.size} tools from MCP Server`);
+        }
+      } catch (error) {
+        if (session && !session.getIsSdkMode()) {
+          console.error(`Failed to reload tools: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    } else {
+      await this.connectStdio();
     }
   }
 
@@ -404,12 +449,12 @@ export class MCPServer {
       } else if (resultData?.tools) {
         this.handleToolsList(resultData);
       } else if (resultData?.error) {
-        console.error(`\n�?MCP server returned an error`);
+        console.error(`\n${icons.error} MCP server returned an error`);
         console.error(`   ${resultData.error.message || 'Unknown error'}`);
       }
     } catch (error: any) {
       const serverInfo = this.config.url || this.config.command || 'MCP server';
-      console.error(`\n�?Failed to load MCP tools`);
+      console.error(`\n${icons.error} Failed to load MCP tools`);
       console.error(`   Server: ${serverInfo}`);
       console.error(`   ${error.message}`);
     }
@@ -453,7 +498,8 @@ export class MCPServer {
         ...this.config.headers
       };
 
-      if (this.config.authToken) {
+      // Only add Authorization if not already present in headers
+      if (this.config.authToken && !headers['Authorization']) {
         if (this.config.authToken.startsWith('Bearer ')) {
           headers['Authorization'] = this.config.authToken;
         } else {

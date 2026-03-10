@@ -57,6 +57,16 @@ setConfigProvider(() => {
   };
 });
 
+// Helper function to disconnect all MCP servers and exit
+function disconnectAndExit(mcpManager: any, code: number): void {
+  try {
+    mcpManager.disconnectAllServers();
+  } catch {
+    // Ignore cleanup errors
+  }
+  process.exit(code);
+}
+
 const program = new Command();
 
 /**
@@ -281,6 +291,7 @@ program
       console.log(colors.success('Authentication configured successfully!'));
       console.log(colors.textMuted('You can now run "xagent start" to begin'));
       console.log('');
+      process.exit(0);
     } else {
       console.log('');
       console.log(colors.error('Authentication failed. Please try again.'));
@@ -322,6 +333,7 @@ program
           console.log('');
         });
       }
+      process.exit(0);
     } else if (options.add) {
       console.log('');
       console.log(colors.warning('Agent creation wizard not implemented yet'));
@@ -349,8 +361,9 @@ program
 
 program
   .command('mcp')
-  .description('Add, list, or remove MCP servers')
+  .description('Add, list, get, or remove MCP servers')
   .option('-l, --list', 'List all MCP servers')
+  .option('-g, --get <name>', 'Get details of a specific MCP server')
   .option('-a, --add [name]', 'Add a new MCP server (interactive if no name provided)')
   .option('-r, --remove <name>', 'Remove an MCP server')
   .option('--scope <scope>', 'Scope (global or project)', 'global')
@@ -362,34 +375,111 @@ program
   .option('--header <headers>', 'Custom headers (can be used multiple times)')
   .option('-y, --yes', 'Skip confirmation')
   .action(async (options) => {
+    if (options.help) {
+      program.parse(['node', 'mcp', '--help']);
+      return;
+    }
+
     const configManager = getConfigManager(process.cwd());
+    configManager.load();  // Load config from file
     const mcpManager = getMCPManager();
 
-    if (options.list) {
-      const servers = mcpManager.getAllServers();
+    // Register all MCP servers from config to manager (for --list and --remove)
+    const mcpServers = configManager.getMcpServers();
+    Object.entries(mcpServers).forEach(([name, config]) => {
+      mcpManager.registerServer(name, config);
+    });
 
-      if (servers.length === 0) {
+    if (options.list) {
+      const mcpServers = configManager.getMcpServers();
+      const serverNames = Object.keys(mcpServers);
+
+      if (serverNames.length === 0) {
         console.log('');
         console.log(colors.warning('No MCP servers configured'));
         console.log(colors.textMuted('Use "xagent mcp --add" to add servers'));
         console.log('');
       } else {
+        console.log(colors.textMuted('Connecting to MCP servers...'));
+        
+        for (const name of serverNames) {
+          try {
+            await mcpManager.connectServer(name);
+          } catch {
+            // Connection failed, continue with next server
+          }
+        }
+
         const separator = icons.separator.repeat(40);
         console.log('');
         console.log(colors.primaryBright(`${icons.tool} MCP Servers`));
         console.log(colors.border(separator));
         console.log('');
 
-        servers.forEach((server, index) => {
-          const connected = server.isServerConnected() ? icons.success : icons.error;
-          const status = server.isServerConnected() ? colors.success(connected) : colors.error(connected);
-          const toolNames = server.getToolNames().join(', ');
+        serverNames.forEach((name) => {
+          const server = mcpManager.getServer(name);
+          const connected = server?.isServerConnected() ? icons.success : icons.error;
+          const status = server?.isServerConnected() ? colors.success(connected) : colors.error(connected);
+          const toolNames = server?.getToolNames().join(', ') || '';
 
-          console.log(`  ${status} ${colors.primaryBright(`Server ${index + 1}`)}`);
-          console.log(`    ${colors.textDim(`  Tools: ${toolNames}`)}`);
+          console.log(`  ${status} ${colors.primaryBright(name)}`);
+          console.log(`    ${colors.textDim(`Tools: ${toolNames}`)}`);
           console.log('');
         });
       }
+      disconnectAndExit(mcpManager, 0);
+    } else if (options.get) {
+      const server = mcpManager.getServer(options.get);
+
+      if (!server) {
+        console.log('');
+        console.log(colors.error(`MCP server '${options.get}' not found`));
+        console.log(colors.textMuted('Use "xagent mcp --list" to see all configured servers'));
+        console.log('');
+        disconnectAndExit(mcpManager, 1);
+        return;
+      }
+
+      const config = (server as any).config;
+      const isConnected = server.isServerConnected();
+      const toolNames = server.getToolNames();
+      const tools = server.getTools();
+
+      console.log('');
+      console.log(colors.primaryBright(`${icons.tool} MCP Server: ${options.get}`));
+      console.log(colors.border(icons.separator.repeat(40)));
+      console.log('');
+
+      console.log(`  ${colors.primaryBright('Status:')} ${isConnected ? colors.success('Connected') : colors.error('Disconnected')}`);
+      console.log(`  ${colors.primaryBright('Transport:')} ${config.transport || 'stdio'}`);
+
+      if (config.url) {
+        console.log(`  ${colors.primaryBright('URL:')} ${config.url}`);
+      }
+
+      if (config.command) {
+        console.log(`  ${colors.primaryBright('Command:')} ${config.command} ${(config.args || []).join(' ')}`);
+      }
+
+      if (config.headers) {
+        console.log(`  ${colors.primaryBright('Headers:')} ${JSON.stringify(config.headers)}`);
+      }
+
+      console.log(`  ${colors.primaryBright('Tools:')} ${toolNames.length > 0 ? toolNames.join(', ') : colors.textMuted('(none)')}`);
+
+      if (tools.length > 0) {
+        console.log('');
+        console.log(colors.textMuted('  Available tools:'));
+        tools.forEach((tool: any) => {
+          console.log(`    - ${colors.primaryBright(tool.name)}`);
+          if (tool.description) {
+            console.log(`      ${colors.textDim(tool.description.substring(0, 60))}${tool.description.length > 60 ? '...' : ''}`);
+          }
+        });
+      }
+
+      console.log('');
+      disconnectAndExit(mcpManager, 0);
     } else if (options.add !== undefined) {
       // Check if running in non-interactive mode (transport and required params provided)
       const hasTransport = options.transport;
@@ -425,12 +515,14 @@ program
             process.exit(1);
           }
           config.url = options.url;
+
+          const headers: Record<string, string> = {};
+
           if (options.token) {
-            config.authToken = options.token;
+            headers['Authorization'] = `Bearer ${options.token}`;
           }
-          // Handle multiple --header flags
+
           if (options.header) {
-            const headers: Record<string, string> = {};
             const headerArray = Array.isArray(options.header) ? options.header : [options.header];
             for (const h of headerArray) {
               const colonIndex = h.indexOf(':');
@@ -440,9 +532,10 @@ program
                 headers[key] = value;
               }
             }
-            if (Object.keys(headers).length > 0) {
-              config.headers = headers;
-            }
+          }
+
+          if (Object.keys(headers).length > 0) {
+            config.headers = headers;
           }
         } else {
           console.log('');
@@ -496,10 +589,12 @@ program
             console.log(colors.success(`✅ MCP server '${name}' added successfully`));
           }
           console.log('');
+          disconnectAndExit(mcpManager, 0);
         } catch (error: any) {
           console.log('');
           console.log(colors.error(`Failed to add MCP server: ${error.message}`));
           console.log('');
+          disconnectAndExit(mcpManager, 1);
         }
       } else {
         // Interactive mode
@@ -586,11 +681,17 @@ program
           }
           config.url = url;
 
+          const headers: Record<string, string> = {};
+
           // Step 4: Enter auth token (optional)
-          config.authToken = await text({
+          const authToken = await text({
             message: 'Enter Bearer token (optional):',
             defaultValue: '',
           }) as string;
+
+          if (authToken.trim()) {
+            headers['Authorization'] = `Bearer ${authToken}`;
+          }
 
           // Step 5: Enter custom headers (optional)
           const headersInput = await text({
@@ -600,10 +701,15 @@ program
 
           if (headersInput.trim()) {
             try {
-              config.headers = JSON.parse(headersInput);
+              const customHeaders = JSON.parse(headersInput);
+              Object.assign(headers, customHeaders);
             } catch {
               // Ignore invalid JSON
             }
+          }
+
+          if (Object.keys(headers).length > 0) {
+            config.headers = headers;
           }
         }
 
@@ -672,19 +778,22 @@ program
         console.log('');
         console.log(colors.success(`MCP server ${options.remove} removed successfully`));
         console.log('');
+        disconnectAndExit(mcpManager, 0);
       } catch (error: any) {
         const { message, suggestion } = formatError(error);
         console.log('');
         console.log(colors.error(`Failed to remove MCP server: ${message}`));
         console.log(colors.textMuted(suggestion));
         console.log('');
+        disconnectAndExit(mcpManager, 1);
       }
     } else {
       console.log('');
-      console.log(colors.warning('Please specify an action: --list, --add, or --remove'));
+      console.log(colors.warning('Please specify an action: --list, --get, --add, or --remove'));
       console.log('');
       console.log(colors.textMuted('Usage:'));
       console.log(`  ${colors.primaryBright('xagent mcp --list')}                    ${colors.textMuted('| List all MCP servers')}`);
+      console.log(`  ${colors.primaryBright('xagent mcp --get <name>')}              ${colors.textMuted('| Get MCP server details')}`);
       console.log(`  ${colors.primaryBright('xagent mcp --add')}                     ${colors.textMuted('| Add MCP server (interactive)')}`);
       console.log('');
       console.log(colors.textMuted('Non-interactive examples:'));
@@ -700,6 +809,7 @@ program
       console.log(`  ${colors.primaryBright('--header')}        ${colors.textMuted('Custom header (key:value)')}`);
       console.log(`  ${colors.primaryBright('-y, --yes')}       ${colors.textMuted('Skip confirmation')}`);
       console.log('');
+      process.exit(1);
     }
   });
 
@@ -721,6 +831,7 @@ program
       console.log(colors.success('Project initialized successfully!'));
       console.log(colors.textMuted('You can now run "xagent start" to begin'));
       console.log('');
+      process.exit(0);
     } catch (error: any) {
       const { message, suggestion } = formatError(error);
       console.log(colors.error(`Initialization failed: ${message}`));
@@ -749,6 +860,7 @@ program
         console.log(colors.warning('No workflows installed'));
         console.log(colors.textMuted('Use --add to install workflows from the marketplace'));
         console.log('');
+        process.exit(0);
       } else {
         const separator = icons.separator.repeat(40);
         console.log('');
@@ -762,6 +874,7 @@ program
           console.log(`    ${colors.textDim(`  ${workflow.description}`)}`);
           console.log('');
         });
+        process.exit(0);
       }
     } else if (options.add) {
       try {
@@ -769,6 +882,7 @@ program
         console.log('');
         console.log(colors.success(`Workflow ${options.add} added successfully!`));
         console.log('');
+        process.exit(0);
       } catch (error: any) {
         const { message, suggestion } = formatError(error);
         console.log('');
@@ -783,6 +897,7 @@ program
         console.log('');
         console.log(colors.success(`Workflow ${options.remove} removed successfully!`));
         console.log('');
+        process.exit(0);
       } catch (error: any) {
         const { message, suggestion } = formatError(error);
         console.log('');
@@ -795,6 +910,7 @@ program
       console.log('');
       console.log(colors.warning('Please specify an action: --list, --add, or --remove'));
       console.log('');
+      process.exit(1);
     }
   });
 
@@ -878,6 +994,7 @@ program
           // Notify running xAgent to update system prompt
           await notifySkillUpdate(userSkillsPath);
           console.log('');
+          process.exit(0);
         } catch (error: any) {
           const { message, suggestion } = formatError(error);
           console.log(colors.error(`Failed to install skill: ${message}`));
@@ -903,6 +1020,7 @@ program
             await notifySkillUpdate(userSkillsPath);
             console.log(colors.textMuted('Note: Run "xagent start" to use the new skill'));
             console.log('');
+            process.exit(0);
           } else {
             console.log(colors.error(`Failed to install skill: ${result.error}`));
             console.log('');
@@ -957,6 +1075,7 @@ program
 
         console.log(colors.textMuted(`Skills directory: ${userSkillsPath}`));
         console.log('');
+        process.exit(0);
       } catch {
         console.log(colors.textMuted('No user skills installed'));
         console.log('');
@@ -992,6 +1111,7 @@ program
         // Notify running xAgent to update system prompt
         await notifySkillUpdate(userSkillsPath);
         console.log('');
+        process.exit(0);
       } catch {
         console.log('');
         console.log(colors.error(`Skill not found: ${options.remove}`));
@@ -1015,6 +1135,7 @@ program
       console.log(colors.textMuted('To install a new skill, use the interactive command:'));
       console.log(`  ${colors.primaryBright('/skill add')}`);
       console.log('');
+      process.exit(0);
     }
   });
 
@@ -1042,6 +1163,7 @@ program
     console.log(`  ${colors.primaryBright('📚 Documentation:')} ${colors.primaryBright('https://platform.xagent.cn/cli/')}`);
     console.log(`  ${colors.primaryBright('💻 GitHub:')} ${colors.primaryBright('https://github.com/xagent-ai/xagent-cli')}`);
     console.log('');
+    process.exit(0);
   });
 
 program
@@ -1195,7 +1317,7 @@ program
         if (files.length === 0) {
           console.log(colors.textMuted('No memory files found.'));
           console.log('');
-          return;
+          process.exit(0);
         }
 
         const globalFile = files.find(f => f === 'global.md');
@@ -1248,7 +1370,7 @@ program
         if (projectFiles.length === 0) {
           console.log(colors.textMuted('No project memories to clean.'));
           console.log('');
-          return;
+          process.exit(0);
         }
 
         let cleaned = 0;
@@ -1312,7 +1434,7 @@ program
         if (files.length === 0) {
           console.log(colors.textMuted('No memory files to clean.'));
           console.log('');
-          return;
+          process.exit(0);
         }
 
         let cleaned = 0;
@@ -1383,10 +1505,12 @@ program
         if (shouldUpdate === true) {
           console.log('');
           await updateManager.autoUpdate();
+          process.exit(0);
         }
       } else {
         console.log(colors.success(`  ✅ You are using the latest version`));
         console.log('');
+        process.exit(0);
       }
     } catch (error: any) {
       console.log(colors.error(`  ❌ Failed to check for updates: ${error.message}`));

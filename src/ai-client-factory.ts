@@ -150,6 +150,7 @@ export function createAIClient(authConfig: AuthConfig): AIClientInterface {
       type: 'remote',
       authToken: authConfig.apiKey || '',
       baseUrl: authConfig.xagentApiBaseUrl || 'https://app.xagent.cn',
+      showDebugInfo: authConfig.showAIDebugInfo,
     };
   } else if (authConfig.baseUrl?.includes('anthropic') || 
              authConfig.baseUrl?.includes('minimax') ||
@@ -160,6 +161,7 @@ export function createAIClient(authConfig: AuthConfig): AIClientInterface {
       apiKey: authConfig.apiKey || '',
       baseUrl: authConfig.baseUrl || 'https://api.anthropic.com',
       model: authConfig.modelName || 'claude-sonnet-4-20250514',
+      showDebugInfo: authConfig.showAIDebugInfo,
     };
   } else {
     // Default to OpenAI compatible mode
@@ -168,6 +170,7 @@ export function createAIClient(authConfig: AuthConfig): AIClientInterface {
       apiKey: authConfig.apiKey || '',
       baseUrl: authConfig.baseUrl || 'https://api.openai.com/v1',
       model: authConfig.modelName || 'gpt-4o',
+      showDebugInfo: authConfig.showAIDebugInfo,
     };
   }
 

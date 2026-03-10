@@ -2,6 +2,37 @@ import { existsSync } from 'fs';
 import { spawn, spawnSync } from 'child_process';
 import { output as logOutput } from './output-util.js';
 
+// Track if Windows console encoding has been initialized
+let windowsEncodingInitialized = false;
+
+/**
+ * Initialize Windows console encoding to UTF-8.
+ * This should be called once at startup to avoid repeated chcp calls.
+ */
+export function initializeWindowsEncoding(): void {
+	if (process.platform !== 'win32' || windowsEncodingInitialized) {
+		return;
+	}
+
+	try {
+		// Set code page to UTF-8 and configure console output encoding
+		spawnSync('chcp', ['65001'], {
+			encoding: 'utf-8',
+			stdio: ['ignore', 'ignore', 'ignore'] // Suppress all output
+		});
+		windowsEncodingInitialized = true;
+	} catch {
+		// Ignore errors - encoding setup is not critical
+	}
+}
+
+/**
+ * Check if Windows encoding has been initialized.
+ */
+export function isWindowsEncodingInitialized(): boolean {
+	return windowsEncodingInitialized;
+}
+
 /**
  * Find bash executable on PATH (Windows).
  */

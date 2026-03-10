@@ -229,7 +229,6 @@ export class RemoteProvider implements AIProvider {
 
   /**
    * Helper for task management requests - uses /chat endpoint like original implementation
-   * Note: Task management requests use minimal headers (no xagent-cli-version) to match original behavior
    */
   private async makeTaskRequest(status: string, taskId: string): Promise<void> {
     const url = `${this.agentApi}/chat`;
@@ -244,8 +243,7 @@ export class RemoteProvider implements AIProvider {
     try {
       await this.client.post(url, requestBody, {
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.authToken}`
+          ...this.getHeaders(), // Include xagent-cli-version and other headers
         },
         httpsAgent
       });
@@ -277,6 +275,22 @@ export class RemoteProvider implements AIProvider {
     console.log(`🌐 Base URL: ${this.webBaseUrl}`);
     console.log(`💬 Messages: ${messages.length}`);
     console.log('─'.repeat(60));
+    
+    // Print each message content
+    messages.forEach((msg, idx) => {
+      const role = msg.role || 'unknown';
+      const content = msg.content || '';
+      const reasoning = msg.reasoning_content ? `\n  [Reasoning] ${msg.reasoning_content}` : '';
+      const toolCalls = msg.tool_calls ? `\n  [Tool Calls] ${JSON.stringify(msg.tool_calls, null, 2)}` : '';
+      const toolCallId = msg.tool_call_id ? `\n  [Tool Call ID] ${msg.tool_call_id}` : '';
+      
+      console.log(`\n[${idx + 1}] Role: ${role}${reasoning}${toolCalls}${toolCallId}`);
+      if (content) {
+        // No truncation
+        console.log(`    Content: ${content}`);
+      }
+    });
+    
     console.log('\n📤 Sending request to Remote API...\n');
   }
 
@@ -287,11 +301,34 @@ export class RemoteProvider implements AIProvider {
     console.log('\n╔══════════════════════════════════════════════════════════╗');
     console.log('║             AI RESPONSE DEBUG (REMOTE)                   ║');
     console.log('╚══════════════════════════════════════════════════════════╝');
-    console.log(`🆔 ID: remote-${Date.now()}`);
-    console.log(`📏 Content length: ${data.content?.length || 0}`);
-    if (data.tool_calls?.length) {
-      console.log(`🔧 Tool calls: ${data.tool_calls.length}`);
+    console.log(`🆔 ID: ${data.id || `remote-${Date.now()}`}`);
+    
+    const content = data?.message || data?.content || '';
+    const reasoning = data?.reasoning_content || data?.reasoningContent || '';
+    const toolCalls = data?.tool_calls || data?.toolCalls || [];
+    
+    if (reasoning) {
+      console.log(`\n💭 Reasoning: ${reasoning}`);
     }
+    
+    if (content) {
+      console.log(`\n📝 Content: ${content}`);
+    }
+    
+    if (toolCalls?.length) {
+      console.log(`\n🔧 Tool calls: ${toolCalls.length}`);
+      toolCalls.forEach((tc: any, idx: number) => {
+        console.log(`   [${idx + 1}] ${tc.function?.name || tc.name}: ${tc.function?.arguments || tc.arguments}`);
+      });
+    }
+    
+    if (data?.usage) {
+      console.log('\n📊 Usage:');
+      console.log(`   Prompt tokens: ${data.usage.prompt_tokens}`);
+      console.log(`   Completion tokens: ${data.usage.completion_tokens}`);
+      console.log(`   Total tokens: ${data.usage.total_tokens}`);
+    }
+    
     console.log('\n📥 Response received.\n');
   }
 

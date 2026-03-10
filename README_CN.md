@@ -129,7 +129,7 @@ xAgent 提供**完全免费**的多种认证方式：
 |--------|-------------|
 | 🔐 **xAgent 账号** | 浏览器登录（推荐） |
 | 🔑 **API Key** | 服务器环境 |
-| 🌐 **第三方 API** | GLM-4、DeepSeek、通义千问、月之暗面等 |
+| 🌐 **第三方 API** | GLM-5、DeepSeek、通义千问、月之暗面等 |
 
 ---
 
@@ -187,7 +187,7 @@ npm run typecheck # TypeScript
   "selectedAuthType": "openai_compatible",
   "apiKey": "your-api-key",
   "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
-  "modelName": "glm-4.7",
+  "modelName": "glm-5",
   "guiSubagentModel": "doubao-1-5-ui-tars-250428",
   "guiSubagentBaseUrl": "https://ark.cn-beijing.volces.com/api/v3",
   "guiSubagentApiKey": "your-api-key",

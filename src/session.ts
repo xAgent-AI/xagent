@@ -53,6 +53,7 @@ import {
 import { getLogger } from './logger.js';
 import { ensureTtySane, setupEscKeyHandler } from './terminal.js';
 import { SdkOutputAdapter } from './sdk-output-adapter.js';
+import { initializeWindowsEncoding } from './shell.js';
 
 // Type aliases for backward compatibility
 type AIClient = AIClientInterface;
@@ -488,6 +489,18 @@ export class InteractiveSession {
 
     let lastUpdateTime = 0;
 
+    // Initialize with current state to avoid triggering update on first check
+    try {
+      const { existsSync, readFileSync } = require('fs');
+      if (existsSync(stateFilePath)) {
+        const content = readFileSync(stateFilePath, 'utf-8');
+        const state = JSON.parse(content);
+        lastUpdateTime = state.lastSkillUpdate || 0;
+      }
+    } catch {
+      // Silent fail
+    }
+
     // Check for updates every 2 seconds
     const checkInterval = setInterval(async () => {
       try {
@@ -501,10 +514,6 @@ export class InteractiveSession {
 
             // Update system prompt with new skills
             await this.updateSystemPrompt();
-
-            if (!this.isSdkMode) {
-              console.log(colors.textMuted('  🔄 Skills updated from CLI'));
-            }
           }
         }
       } catch {
@@ -521,6 +530,9 @@ export class InteractiveSession {
   }
 
   async start(initializedCount: number = 0): Promise<void> {
+    // Initialize Windows console encoding once at startup
+    initializeWindowsEncoding();
+
     // Set this session as the singleton for access from other modules
     setSingletonSession(this);
 
@@ -1616,7 +1628,7 @@ export class InteractiveSession {
   }
 
   public async processUserMessage(message: string, _agent?: AgentConfig): Promise<void> {
-    const inputs = parseInput(message);
+    const inputs = await parseInput(message);
     const textInput = inputs.find((i) => i.type === 'text');
     const fileInputs = inputs.filter((i) => i.type === 'file');
     const commandInput = inputs.find((i) => i.type === 'command');
@@ -3130,8 +3142,6 @@ export async function startInteractiveSession(): Promise<void> {
   } catch {
     // Silently ignore update check failures
   }
-
-  await session.start();
 }
 
 // Singleton session instance for access from other modules

@@ -59,14 +59,13 @@ export interface ThirdPartyProvider {
 
 export const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
   {
-    name: 'Zhipu AI (GLM-4)',
+    name: 'Zhipu AI (GLM-5)',
     baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4/',
-    defaultModel: 'glm-4.7',
-    description: 'Zhipu AI GLM-4 series models',
+    defaultModel: 'glm-5',
+    description: 'Zhipu AI GLM-5 series models',
     models: [
+      'glm-5',
       'glm-4.7',
-      'glm-4',
-      'glm-4-plus',
       'glm-4-0520',
       'glm-4-air',
       'glm-4-airx',
@@ -105,9 +104,9 @@ export const THIRD_PARTY_PROVIDERS: ThirdPartyProvider[] = [
   {
     name: 'MiniMax',
     baseUrl: 'https://api.minimax.chat/anthropic',
-    defaultModel: 'MiniMax-M2.1',
+    defaultModel: 'MiniMax-M2.5',
     description: 'MiniMax (Anthropic-compatible format)',
-    models: ['MiniMax-M2.1', 'MiniMax-M2.1-lightning', 'MiniMax-M2', 'MiniMax-M2-Stable'],
+    models: ['MiniMax-M2.5', 'MiniMax-M2.1', 'MiniMax-M2.1-lightning', 'MiniMax-M2', 'MiniMax-M2-Stable'],
   },
   {
     name: '01.AI (Yi)',
@@ -322,7 +321,7 @@ export class AuthService {
         const response = await axios.post(
           `${this.authConfig.baseUrl}/v1/messages`,
           {
-            model: 'MiniMax-M2',
+            model: 'MiniMax-M2.5',
             max_tokens: 1,
             messages: [{ role: 'user', content: 'test' }],
           },
@@ -653,7 +652,7 @@ export async function selectAuthType(): Promise<AuthType> {
       { value: AuthType.OAUTH_XAGENT, label: 'Log in with xAgent – Start your free trial' },
       {
         value: AuthType.OPENAI_COMPATIBLE,
-        label: 'Use third-party model APIs (e.g., Zhipu GLM-4.7, MiniMax)',
+        label: 'Use third-party model APIs (e.g., Zhipu glm-5, MiniMax)',
       },
     ],
   })) as AuthType;

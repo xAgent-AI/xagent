@@ -14,7 +14,7 @@
 //     baseUrl: 'https://api.minimax.chat/anthropic',  // MiniMax example
 //   });
 //
-//   const response = await provider.complete(messages, { model: 'MiniMax-M2' });
+//   const response = await provider.complete(messages, { model: 'MiniMax-M2.5' });
 //
 // ============================================================================
 

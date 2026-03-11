@@ -2859,9 +2859,8 @@ export class TeamTool implements Tool {
 - **Claim tasks**: Use task_update with action="claim" to take ownership of available tasks
 
 # Your Role
-After calling team actions, check the \`your_role\` field in the response:
 - \`your_role: "lead"\` - You can create teams, manage members, assign tasks
-- \`your_role: "teammate"\` - You execute assigned tasks, communicate with team
+- \`your_role: "teammate"\` - You execute assigned tasks, communicate with lead and teammate
 
 # Team Actions
 

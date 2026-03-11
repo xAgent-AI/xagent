@@ -2828,11 +2828,27 @@ export class TeamTool implements Tool {
   get description(): string {
     return `Manage AI agent teams with shared tasks and real-time messaging.
 
-# When to Use Team Tool
-- Complex tasks needing multiple perspectives
-- Parallel work with coordination
-- Cross-layer work (frontend + backend + tests)
-- Long-running collaborative tasks
+# When to Use
+- **Complex multi-step projects**: Tasks requiring different expertise (frontend, backend, testing)
+- **Parallel execution**: Multiple independent subtasks that can run simultaneously
+- **Long-running operations**: Tasks that benefit from persistent agent instances
+- **Cross-layer coordination**: Work spanning multiple system layers or components
+- **Collaborative problem-solving**: Tasks needing different perspectives or skill sets
+
+# When NOT to Use
+- **Simple single-step tasks**: Use direct tool calls or Task tool instead
+- **Sequential dependencies**: When each step must complete before the next starts
+- **Quick one-off queries**: Team setup has overhead, not worth it for simple tasks
+- **Single expertise required**: When one agent can handle the entire task efficiently
+- **Tight resource constraints**: Each teammate consumes additional API calls and memory
+
+# Best Practices
+- **Clear role definitions**: Give each teammate a specific role and focused prompt
+- **Small teams first**: Start with 2-3 teammates; add more only if needed
+- **Explicit task assignments**: Use task_create with clear descriptions and priorities
+- **Regular check-ins**: Use broadcast messages to coordinate progress
+- **Clean shutdown**: Always call cleanup when team work is complete
+- **Monitor status**: Use get_status to check teammate activity and task progress
 
 # Your Role
 After calling team actions, check the \`your_role\` field in the response:

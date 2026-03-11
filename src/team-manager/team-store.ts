@@ -6,7 +6,6 @@ import {
   Team,
   TeamMember,
   TeamTask,
-  TeamMessage,
   TaskCreateConfig,
   MemberRole,
   LEAD_PERMISSIONS,
@@ -182,8 +181,6 @@ export class TeamStore {
 
     const teamDir = this.getTeamDir(teamId);
     await fs.mkdir(teamDir, { recursive: true });
-    await fs.mkdir(path.join(teamDir, 'inbox'), { recursive: true });
-    await fs.mkdir(path.join(teamDir, 'inbox', leadMemberId), { recursive: true });
     await fs.mkdir(path.join(teamDir, 'tasks'), { recursive: true });
 
     await this.saveTeam(team);
@@ -227,9 +224,6 @@ export class TeamStore {
     } else {
       team.members.push(newMember);
     }
-
-    const memberInboxDir = path.join(this.getTeamDir(teamId), 'inbox', member.memberId);
-    await fs.mkdir(memberInboxDir, { recursive: true });
 
     await this.saveTeam(team);
     return newMember;
@@ -523,100 +517,6 @@ export class TeamStore {
     } finally {
       // Always release the lock
       await this.releaseTaskLock(teamId, taskId);
-    }
-  }
-
-  async sendMessage(
-    teamId: string,
-    fromMemberId: string,
-    toMemberId: string | 'broadcast',
-    content: string,
-    type: TeamMessage['type'] = 'direct'
-  ): Promise<TeamMessage> {
-    const team = await this.getTeam(teamId);
-    if (!team) {
-      throw new Error(`Team ${teamId} not found`);
-    }
-
-    const fromMember = team.members.find((m) => m.memberId === fromMemberId);
-
-    const message: TeamMessage = {
-      messageId: generateId(),
-      teamId,
-      fromMemberId,
-      fromMemberName: fromMember?.name,
-      toMemberId,
-      content,
-      timestamp: Date.now(),
-      type,
-      read: false,
-    };
-
-    if (toMemberId === 'broadcast') {
-      for (const member of team.members) {
-        if (member.memberId !== fromMemberId) {
-          await this.deliverMessage(teamId, member.memberId, message);
-        }
-      }
-    } else {
-      await this.deliverMessage(teamId, toMemberId, message);
-    }
-
-    return message;
-  }
-
-  private async deliverMessage(
-    teamId: string,
-    memberId: string,
-    message: TeamMessage
-  ): Promise<void> {
-    const inboxPath = path.join(this.getTeamDir(teamId), 'inbox', memberId);
-    await fs.mkdir(inboxPath, { recursive: true });
-    const messagePath = path.join(inboxPath, `${message.messageId}.json`);
-    await fs.writeFile(messagePath, JSON.stringify(message, null, 2));
-  }
-
-  async getMessages(teamId: string, memberId: string): Promise<TeamMessage[]> {
-    const inboxPath = path.join(this.getTeamDir(teamId), 'inbox', memberId);
-    const messages: TeamMessage[] = [];
-
-    try {
-      const files = await fs.readdir(inboxPath);
-      for (const file of files) {
-        if (file.endsWith('.json')) {
-          const content = await fs.readFile(path.join(inboxPath, file), 'utf-8');
-          messages.push(JSON.parse(content));
-        }
-      }
-    } catch {
-      // directory doesn't exist
-    }
-
-    return messages.sort((a, b) => a.timestamp - b.timestamp);
-  }
-
-  async clearMessages(teamId: string, memberId: string): Promise<void> {
-    const inboxPath = path.join(this.getTeamDir(teamId), 'inbox', memberId);
-    await fs.rm(inboxPath, { recursive: true, force: true });
-    await fs.mkdir(inboxPath, { recursive: true });
-  }
-
-  async markMessagesRead(teamId: string, memberId: string): Promise<void> {
-    const inboxPath = path.join(this.getTeamDir(teamId), 'inbox', memberId);
-
-    try {
-      const files = await fs.readdir(inboxPath);
-      for (const file of files) {
-        if (file.endsWith('.json')) {
-          const filePath = path.join(inboxPath, file);
-          const content = await fs.readFile(filePath, 'utf-8');
-          const message: TeamMessage = JSON.parse(content);
-          message.read = true;
-          await fs.writeFile(filePath, JSON.stringify(message, null, 2));
-        }
-      }
-    } catch {
-      // ignore
     }
   }
 

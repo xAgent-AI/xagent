@@ -2847,16 +2847,17 @@ export class TeamTool implements Tool {
 ## For Lead
 - **Clear role definitions**: Give each teammate a specific role and focused prompt
 - **Small teams first**: Start with 2-3 teammates; add more only if needed
-- **Monitor progress**: check task status before assigning new work
-- **Coordinate via messages**: Use broadcast for team-wide updates, direct messages for specific teammates
+- **Monitor progress**: Check task status before assigning new work
+- **Coordinate via messages**: Send message only necessary. Use broadcast for team-wide updates, direct messages for specific teammates
+- **After completing work**: Always check message queue before complete the tasks
 - **Clean shutdown**: Always call cleanup when team work is complete
 
-## For teammate
+## For Teammate
 - **Complete assigned tasks**: Execute the task described in your initial prompt or assigned via messages
-- **Send result to lead**: After completing a task, use message to send your result directly to lead:
-- **Update task status**: Also call task_update with action="complete" to mark the task done
-- **Communicate proactively**: Send messages to lead when you need guidance or encounter blockers
-- **Claim tasks**: Use task_update with action="claim" to take ownership of available tasks
+- **Send result to lead**: After completing a task, use message to send your result directly to lead
+- **Update task status**: Call task_update with action="complete" to mark the task done
+- **Coordinate via messages**: Send message only necessary. Use broadcast for team-wide updates, direct messages for specific teammates
+- **After completing work**: Always check message queue before becoming idle
 
 # Your Role
 - \`your_role: "lead"\` - You can create teams, manage members, assign tasks
@@ -2879,6 +2880,9 @@ export class TeamTool implements Tool {
   - team(action="message", team_id="xxx", message={to_member_id: "broadcast", content: "..."})
 - **message**: Send direct message to specific teammate
   - team(action="message", team_id="xxx", message={to_member_id: "target-id", content: "..."})
+- **message_queue**: Get teammate message queue status or retrieve messages
+  - team(action="message_queue") // Returns: { length }
+  - team(action="message_queue", pop=true) // Returns and clears all messages: { count, messages }
 
 ## Task Management
 - **task_create**: Create a new task (Lead)
@@ -2895,20 +2899,7 @@ export class TeamTool implements Tool {
   - team(action="get_status", team_id="xxx")
 - **list_teams**: List all teams
   - team(action="list_teams")
-
-# Examples
-Create a team with 2 members:
-team(action="create", team_name="Code Review Team", teammates=[{name: "coder", role: "developer", prompt: "Write and review code"}, {name: "tester", role: "QA", prompt: "Test and validate"}])
-
-Check team status and your role:
-team(action="get_status", team_id="xxx")
-// Response includes: your_role, your_member_id
-
-List available tasks:
-team(action="task_list", team_id="xxx", task_filter="available")
-
-Send broadcast message:
-team(action="message", team_id="xxx", message={to_member_id: "broadcast", content: "Good progress everyone!"})`;
+`;
   }
 
   allowedModes = [
@@ -2919,7 +2910,7 @@ team(action="message", team_id="xxx", message={to_member_id: "broadcast", conten
   ];
 
   async execute(params: {
-    action: 'create' | 'spawn' | 'message' | 'shutdown' | 'cleanup' | 'task_create' | 'task_update' | 'task_delete' | 'task_list' | 'get_status' | 'list_teams';
+    action: 'create' | 'spawn' | 'message' | 'shutdown' | 'cleanup' | 'task_create' | 'task_update' | 'task_delete' | 'task_list' | 'get_status' | 'list_teams' | 'message_queue';
     team_name?: string;
     team_id?: string;
     member_id?: string;
@@ -2929,7 +2920,41 @@ team(action="message", team_id="xxx", message={to_member_id: "broadcast", conten
     task_update?: { task_id: string; action: 'claim' | 'complete' | 'release'; result?: string };
     task_id?: string;
     task_filter?: 'all' | 'pending' | 'available' | 'in_progress' | 'completed';
+    pop?: boolean;
   }): Promise<{ success: boolean; message: string; result?: any }> {
+    // Handle message_queue action separately (doesn't need coordinator)
+    if (params.action === 'message_queue') {
+      const session = getSingletonSession();
+      if (!session) {
+        return { success: false, message: 'No active session found' };
+      }
+
+      if (params.pop) {
+        // Pop and return all messages, clearing the queue
+        const messages = session.popTeammateMessages();
+        return {
+          success: true,
+          message: `Retrieved ${messages.length} messages from queue`,
+          result: {
+            count: messages.length,
+            messages: messages.map(m => ({
+              role: m.role,
+              content: m.content,
+              timestamp: m.timestamp,
+            })),
+          },
+        };
+      }
+
+      // Just return queue info
+      const queueInfo = session.getTeammateMessageQueueInfo();
+      return {
+        success: true,
+        message: `Message queue: ${queueInfo.length} messages`,
+        result: queueInfo,
+      };
+    }
+
     const { getTeamCoordinator } = await import('./team-manager/index.js');
     const coordinator = getTeamCoordinator();
 
@@ -4537,7 +4562,7 @@ export class ToolRegistry {
             properties: {
               action: {
                 type: 'string',
-                enum: ['create', 'spawn', 'message', 'shutdown', 'cleanup', 'task_create', 'task_update', 'task_delete', 'task_list', 'get_status', 'list_teams'],
+                enum: ['create', 'spawn', 'message', 'shutdown', 'cleanup', 'task_create', 'task_update', 'task_delete', 'task_list', 'get_status', 'list_teams', 'message_queue'],
                 description: 'The team action to perform',
               },
               team_name: {
@@ -4606,6 +4631,10 @@ export class ToolRegistry {
                 type: 'string',
                 enum: ['all', 'pending', 'available', 'in_progress', 'completed'],
                 description: 'Task filter (for task_list)',
+              },
+              pop: {
+                type: 'boolean',
+                description: 'For message_queue: if true, retrieve and clear all messages from queue',
               },
             },
             required: ['action'],

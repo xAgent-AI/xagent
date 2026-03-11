@@ -6,7 +6,6 @@ import {
   Team,
   TeamMember,
   TeamTask,
-  TeamMessage,
   MessageDeliveryInfo,
   MemberRole,
   LEAD_PERMISSIONS,

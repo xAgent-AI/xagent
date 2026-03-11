@@ -170,18 +170,23 @@ export class MessageBroker extends EventEmitter {
     let memberId: string | null = null;
     let buffer = '';
 
+    // Log new connection
+    const remoteAddress = socket.remoteAddress || 'unknown';
+    const remotePort = socket.remotePort || 'unknown';
+    console.log(`[Broker] New connection from ${remoteAddress}:${remotePort}`);
+
     socket.on('data', (data) => {
       buffer += data.toString();
-      
+
       const messages = buffer.split('\n');
       buffer = messages.pop() || '';
 
       for (const msgStr of messages) {
         if (!msgStr.trim()) continue;
-        
+
         try {
           const msg = JSON.parse(msgStr);
-          
+
           if (msg.type === 'register' && msg.memberId) {
             memberId = msg.memberId;
             this.clients.set(memberId as string, {
@@ -205,7 +210,7 @@ export class MessageBroker extends EventEmitter {
       if (memberId) {
         this.clients.delete(memberId);
         this.emit('client:disconnected', { memberId });
-        
+
         // Clean up pending ACKs for this member
         this.cleanupPendingAcksForMember(memberId);
       }
@@ -215,7 +220,7 @@ export class MessageBroker extends EventEmitter {
       if (memberId) {
         this.clients.delete(memberId);
         this.emit('client:error', { memberId, error });
-        
+
         // Clean up pending ACKs for this member
         this.cleanupPendingAcksForMember(memberId);
       }
@@ -516,12 +521,19 @@ export class MessageClient extends EventEmitter {
       const connectHandler = () => {
         this.connected = true;
         this.reconnectAttempts = 0;
-        
-        this.socket?.write(JSON.stringify({
+
+        // Disable idle timeout after connection - we want persistent connections
+        // for real-time team communication
+        this.socket?.setTimeout(0);
+
+        const registerMsg = JSON.stringify({
           type: 'register',
           memberId: this.memberId,
           teamId: this.teamId
-        }) + '\n');
+        }) + '\n';
+
+        console.log(`[MessageClient] Sending registration: memberId=${this.memberId}, teamId=${this.teamId}`);
+        this.socket?.write(registerMsg);
 
         this.emit('connected');
         resolve();
@@ -536,15 +548,20 @@ export class MessageClient extends EventEmitter {
         }
       };
 
-      // Set connection timeout
+      // Set initial connection timeout (10 seconds to establish connection)
       this.socket.setTimeout(10000);
-      
+
       this.socket.connect(this.port, this.host, connectHandler);
       this.socket.on('error', errorHandler);
       this.socket.on('close', () => this.handleDisconnect());
+      // Remove timeout handler since we disable timeout after connection
       this.socket.on('timeout', () => {
-        this.socket?.destroy();
-        reject(new Error('Connection timeout'));
+        // This should only fire during initial connection phase
+        // After connection, timeout is disabled (setTimeout(0))
+        if (!this.connected) {
+          this.socket?.destroy();
+          reject(new Error('Connection timeout'));
+        }
       });
       this.socket.on('data', (data) => this.handleData(data));
     });
@@ -695,6 +712,7 @@ export class MessageClient extends EventEmitter {
 }
 
 let brokerInstances: Map<string, MessageBroker> = new Map();
+let teammateClientInstance: MessageClient | null = null;
 
 export function getMessageBroker(teamId: string): MessageBroker {
   if (!brokerInstances.has(teamId)) {
@@ -709,4 +727,20 @@ export function removeMessageBroker(teamId: string): void {
     broker.stop().catch(() => {});
   }
   brokerInstances.delete(teamId);
+}
+
+/**
+ * Set the persistent MessageClient for teammate process
+ * This is called once during teammate initialization
+ */
+export function setTeammateClient(client: MessageClient): void {
+  teammateClientInstance = client;
+}
+
+/**
+ * Get the persistent MessageClient for teammate process
+ * Returns null if not a teammate process or not initialized
+ */
+export function getTeammateClient(): MessageClient | null {
+  return teammateClientInstance;
 }

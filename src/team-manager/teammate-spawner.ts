@@ -120,7 +120,8 @@ export class TeammateSpawner {
     workDir: string,
     displayMode: DisplayMode = 'auto',
     brokerPort?: number,
-    initialTaskId?: string
+    initialTaskId?: string,
+    leadId?: string
   ): Promise<TeamMember> {
     // Validate required fields with clear error messages
     if (!config.name || config.name.trim() === '') {
@@ -166,14 +167,14 @@ export class TeammateSpawner {
     try {
       switch (actualMode) {
         case 'tmux':
-          processInfo = await this.spawnWithTmux(teamId, memberId, config, workDir, brokerPort, initialTaskId);
+          processInfo = await this.spawnWithTmux(teamId, memberId, config, workDir, brokerPort, initialTaskId, leadId);
           break;
         case 'iterm2':
-          processInfo = await this.spawnWithIterm2(teamId, memberId, config, workDir, brokerPort, initialTaskId);
+          processInfo = await this.spawnWithIterm2(teamId, memberId, config, workDir, brokerPort, initialTaskId, leadId);
           break;
         case 'in-process':
         default:
-          processInfo = await this.spawnWithNode(teamId, memberId, config, workDir, brokerPort, initialTaskId);
+          processInfo = await this.spawnWithNode(teamId, memberId, config, workDir, brokerPort, initialTaskId, leadId);
           break;
       }
     } catch (error: any) {
@@ -226,10 +227,11 @@ export class TeammateSpawner {
     config: TeammateConfig,
     workDir: string,
     brokerPort?: number,
-    initialTaskId?: string
+    initialTaskId?: string,
+    leadId?: string
   ): Promise<{ processId: number; external?: ExternalProcessInfo }> {
     const paneName = `xagent-${config.name.replace(/\s+/g, '-')}`;
-    const args = this.buildCommandArgs(teamId, memberId, config, brokerPort, false, undefined, initialTaskId);
+    const args = this.buildCommandArgs(teamId, memberId, config, brokerPort, false, undefined, initialTaskId, leadId);
     const cliPath = getXagentCommand();
     const cmd = `node "${cliPath}" ${args.join(' ')}`;
 
@@ -288,7 +290,7 @@ export class TeammateSpawner {
       return { processId, external };
     } catch (error: any) {
       console.log(colors.warning(`tmux spawn failed: ${error.message}, falling back to in-process`));
-      return this.spawnWithNode(teamId, memberId, config, workDir, brokerPort, initialTaskId);
+      return this.spawnWithNode(teamId, memberId, config, workDir, brokerPort, initialTaskId, leadId);
     }
   }
 
@@ -298,9 +300,10 @@ export class TeammateSpawner {
     config: TeammateConfig,
     workDir: string,
     brokerPort?: number,
-    initialTaskId?: string
+    initialTaskId?: string,
+    leadId?: string
   ): Promise<{ processId: number; external?: ExternalProcessInfo }> {
-    const args = this.buildCommandArgs(teamId, memberId, config, brokerPort, false, undefined, initialTaskId);
+    const args = this.buildCommandArgs(teamId, memberId, config, brokerPort, false, undefined, initialTaskId, leadId);
     const cliPath = getXagentCommand();
     const cmd = `node "${cliPath}" ${args.join(' ')}`;
 
@@ -331,7 +334,7 @@ export class TeammateSpawner {
       return { processId, external };
     } catch (error: any) {
       console.log(colors.warning(`iTerm2 spawn failed: ${error.message}, falling back to in-process`));
-      return this.spawnWithNode(teamId, memberId, config, workDir, brokerPort);
+      return this.spawnWithNode(teamId, memberId, config, workDir, brokerPort, initialTaskId, leadId);
     }
   }
 
@@ -341,9 +344,10 @@ export class TeammateSpawner {
     config: TeammateConfig,
     workDir: string,
     brokerPort?: number,
-    initialTaskId?: string
+    initialTaskId?: string,
+    leadId?: string
   ): Promise<{ processId: number; external?: ExternalProcessInfo }> {
-    const args = this.buildCommandArgs(teamId, memberId, config, brokerPort, false, undefined, initialTaskId);
+    const args = this.buildCommandArgs(teamId, memberId, config, brokerPort, false, undefined, initialTaskId, leadId);
     const cliPath = getXagentCommand();
 
     const env: Record<string, string> = {
@@ -361,6 +365,10 @@ export class TeammateSpawner {
 
     if (initialTaskId) {
       env.XAGENT_INITIAL_TASK_ID = initialTaskId;
+    }
+
+    if (leadId) {
+      env.XAGENT_LEAD_ID = leadId;
     }
 
     let childProcess: ChildProcess;
@@ -436,7 +444,8 @@ export class TeammateSpawner {
     brokerPort?: number,
     isLead: boolean = false,
     isSdk?: boolean,
-    initialTaskId?: string
+    initialTaskId?: string,
+    leadId?: string
   ): string[] {
     const args = [
       'start',
@@ -469,6 +478,10 @@ export class TeammateSpawner {
 
     if (initialTaskId) {
       args.push('--initial-task-id', initialTaskId);
+    }
+
+    if (leadId) {
+      args.push('--lead-id', leadId);
     }
 
     return args;

@@ -178,6 +178,7 @@ program
   .option('--team-id <id>', 'Team ID for team mode')
   .option('--member-id <id>', 'Member ID for team mode')
   .option('--member-name <name>', 'Member name for team mode')
+  .option('--lead-id <id>', 'Lead member ID for team mode')
   .option('--broker-port <port>', 'Message broker port for team mode')
   .option('--initial-prompt <prompt>', 'Initial prompt to send to AI (for team mode)')
   .option('--initial-task-id <id>', 'Initial task ID to complete (for team mode)')
@@ -188,6 +189,7 @@ program
       if (options.teamId) process.env.XAGENT_TEAM_ID = options.teamId;
       if (options.memberId) process.env.XAGENT_MEMBER_ID = options.memberId;
       if (options.memberName) process.env.XAGENT_MEMBER_NAME = options.memberName;
+      if (options.leadId) process.env.XAGENT_LEAD_ID = options.leadId;
       if (options.brokerPort) process.env.XAGENT_BROKER_PORT = options.brokerPort;
       if (options.initialPrompt) process.env.XAGENT_SPAWN_PROMPT = options.initialPrompt;
       if (options.initialTaskId) process.env.XAGENT_INITIAL_TASK_ID = options.initialTaskId;

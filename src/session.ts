@@ -105,6 +105,7 @@ export class InteractiveSession {
   private memberId: string | null = null;
   private memberName: string | null = null;
   private memberRole: string | null = null;
+  private leadId: string | null = null;
   private teamStore: any = null;
   private messageClient: any = null;
   private spawnPrompt: string | null = null;
@@ -141,21 +142,22 @@ export class InteractiveSession {
       this.memberId = process.env.XAGENT_MEMBER_ID || null;
       this.memberName = process.env.XAGENT_MEMBER_NAME || null;
       this.memberRole = 'teammate'; // Role is now determined by tool response, not env var
+      this.leadId = process.env.XAGENT_LEAD_ID || null;
       this.spawnPrompt = process.env.XAGENT_SPAWN_PROMPT || null;
       this.brokerPort = process.env.XAGENT_BROKER_PORT ? parseInt(process.env.XAGENT_BROKER_PORT, 10) : null;
       this.initialTaskId = process.env.XAGENT_INITIAL_TASK_ID || null;
       
       // Show team role info in welcome message
       console.log(colors.info(`[Team] Running as: ${this.memberName} (${this.memberRole})`));
-      console.log(colors.info(`[Team] Team ID: ${this.teamId}, Member ID: ${this.memberId}`));
+      console.log(colors.info(`[Team] Team ID: ${this.teamId}, Member ID: ${this.memberId}, Lead ID: ${this.leadId}`));
       if (this.initialTaskId) {
         console.log(colors.info(`[Team] Initial Task ID: ${this.initialTaskId}`));
       }
       
       // Import and initialize team components
-      import('./team-manager/index.js').then(async ({ getTeamStore, MessageClient }) => {
+      import('./team-manager/index.js').then(async ({ getTeamStore, MessageClient, setTeammateClient }) => {
         this.teamStore = getTeamStore();
-        
+
         // Connect to message broker if port is available
         if (this.brokerPort && this.teamId && this.memberId) {
           this.messageClient = new MessageClient(
@@ -163,19 +165,22 @@ export class InteractiveSession {
             this.memberId,
             this.brokerPort
           );
-          
+
+          // Save to global singleton for TeamCoordinator to use
+          setTeammateClient(this.messageClient);
+
           this.messageClient.on('message', (msg: any) => {
             this.handleTeamMessage(msg);
           });
-          
+
           this.messageClient.on('connected', () => {
             console.log(`[Team] Connected to message broker on port ${this.brokerPort}`);
           });
-          
+
           this.messageClient.on('disconnected', () => {
             console.log('[Team] Disconnected from message broker');
           });
-          
+
           try {
             await this.messageClient.connect();
           } catch (err) {
@@ -424,6 +429,13 @@ export class InteractiveSession {
   }
 
   /**
+   * Get lead ID.
+   */
+  getLeadId(): string | null {
+    return this.leadId;
+  }
+
+  /**
    * Get spawn prompt (for team mode).
    */
   getSpawnPrompt(): string | null {
@@ -437,8 +449,14 @@ export class InteractiveSession {
   async connectToTeamBroker(teamId: string, memberId: string, brokerPort: number): Promise<void> {
     // Skip if already connected
     if (this.messageClient) {
+      console.log(colors.info(`[Team] Lead already connected to broker, skipping reconnection`));
       return;
     }
+
+    console.log(colors.info(`[Team] Connecting lead to message broker...`));
+    console.log(colors.info(`[Team]   Team ID: ${teamId}`));
+    console.log(colors.info(`[Team]   Member ID: ${memberId}`));
+    console.log(colors.info(`[Team]   Broker Port: ${brokerPort}`));
 
     this.isTeamMode = true;
     this.teamId = teamId;
@@ -457,16 +475,17 @@ export class InteractiveSession {
       });
 
       this.messageClient.on('connected', () => {
-        console.log(`[Team] Lead connected to message broker on port ${brokerPort}`);
+        console.log(colors.success(`[Team] ✓ Lead connected to message broker on port ${brokerPort}`));
       });
 
       this.messageClient.on('disconnected', () => {
-        console.log('[Team] Lead disconnected from message broker');
+        console.log(colors.warning('[Team] Lead disconnected from message broker'));
       });
 
       await this.messageClient.connect();
     } catch (err) {
-      console.error('[Team] Failed to connect lead to message broker:', err);
+      console.error(colors.error('[Team] Failed to connect lead to message broker:'), err);
+      throw err;  // Re-throw to let caller handle it
     }
   }
 
@@ -535,11 +554,24 @@ export class InteractiveSession {
     await skillInvoker.reload();
 
     const toolRegistry = getToolRegistry();
+
+    // Build team context if running in team mode
+    const teamContext = this.isTeamMode ? {
+      teamId: this.teamId!,
+      memberId: this.memberId!,
+      memberName: this.memberName!,
+      memberRole: this.memberRole!,
+      leadId: this.leadId || undefined,
+      brokerPort: this.brokerPort || undefined,
+      initialTaskId: this.initialTaskId || undefined,
+    } : undefined;
+
     const promptGenerator = new SystemPromptGenerator(
       toolRegistry,
       this.executionMode,
       undefined,
-      this.mcpManager
+      this.mcpManager,
+      teamContext
     );
 
     // Use the current agent's original system prompt as base
@@ -1886,7 +1918,25 @@ export class InteractiveSession {
 
     const toolRegistry = getToolRegistry();
     const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
-    const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+
+    // Build team context if running in team mode
+    const teamContext = this.isTeamMode ? {
+      teamId: this.teamId!,
+      memberId: this.memberId!,
+      memberName: this.memberName!,
+      memberRole: this.memberRole!,
+      leadId: this.leadId || undefined,
+      brokerPort: this.brokerPort || undefined,
+      initialTaskId: this.initialTaskId || undefined,
+    } : undefined;
+
+    const systemPromptGenerator = new SystemPromptGenerator(
+      toolRegistry,
+      this.executionMode,
+      undefined,
+      undefined,
+      teamContext
+    );
     const enhancedSystemPrompt =
       await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
@@ -2153,11 +2203,24 @@ export class InteractiveSession {
           : toolDefinitions;
 
       const baseSystemPrompt = this.currentAgent?.systemPrompt ?? '';
+
+      // Build team context if running in team mode
+      const teamContext = this.isTeamMode ? {
+        teamId: this.teamId!,
+        memberId: this.memberId!,
+        memberName: this.memberName!,
+        memberRole: this.memberRole!,
+        leadId: this.leadId || undefined,
+        brokerPort: this.brokerPort || undefined,
+        initialTaskId: this.initialTaskId || undefined,
+      } : undefined;
+
       const systemPromptGenerator = new SystemPromptGenerator(
         toolRegistry,
         this.executionMode,
         undefined,
-        this.mcpManager
+        this.mcpManager,
+        teamContext
       );
       const enhancedSystemPrompt =
         await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);

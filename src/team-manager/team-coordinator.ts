@@ -1,6 +1,6 @@
 import { TeamStore, getTeamStore } from './team-store.js';
 import { TeammateSpawner, getTeammateSpawner } from './teammate-spawner.js';
-import { MessageBroker, getMessageBroker, removeMessageBroker } from './message-broker.js';
+import { MessageBroker, MessageClient, getMessageBroker, removeMessageBroker, getTeammateClient } from './message-broker.js';
 import {
   TeamToolParams,
   Team,
@@ -43,18 +43,117 @@ export class TeamCoordinator {
     action: 'created' | 'claimed' | 'completed' | 'released' | 'deleted',
     taskInfo?: { title: string; assignee?: string; result?: string }
   ): Promise<void> {
+    const envBrokerPort = process.env.XAGENT_BROKER_PORT;
+    const content = JSON.stringify({
+      taskId,
+      action,
+      ...taskInfo,
+      timestamp: Date.now()
+    });
+
+    // Teammate processes use MessageClient to broadcast
+    if (envBrokerPort && fromMemberId === process.env.XAGENT_MEMBER_ID) {
+      await this.broadcastAsTeammate(teamId, fromMemberId, parseInt(envBrokerPort, 10), content, 'task_update');
+      return;
+    }
+
+    // Lead processes use broker directly
     try {
       const broker = await this.getBroker(teamId);
-      const content = JSON.stringify({
-        taskId,
-        action,
-        ...taskInfo,
-        timestamp: Date.now()
-      });
       broker.sendMessage(fromMemberId, 'broadcast', content, 'task_update');
     } catch (error) {
       console.warn('[Team] Failed to broadcast task update:', error);
     }
+  }
+
+  /**
+   * Broadcast message as teammate using persistent MessageClient
+   */
+  private async broadcastAsTeammate(
+    teamId: string,
+    memberId: string,
+    brokerPort: number,
+    content: string,
+    type: string
+  ): Promise<void> {
+    // Try to use the persistent client first
+    const persistentClient = getTeammateClient();
+
+    if (persistentClient && persistentClient.isConnected()) {
+      if (type === 'task_update') {
+        persistentClient.sendTaskUpdate('', '', content);
+      } else {
+        persistentClient.broadcast(content);
+      }
+      return;
+    }
+
+    // Fallback: create temporary connection
+    return this.broadcastWithTempClient(teamId, memberId, brokerPort, content, type);
+  }
+
+  /**
+   * Fallback: broadcast with temporary MessageClient connection
+   */
+  private async broadcastWithTempClient(
+    teamId: string,
+    memberId: string,
+    brokerPort: number,
+    content: string,
+    type: string
+  ): Promise<void> {
+    return new Promise((resolve) => {
+      const client = new MessageClient(teamId, memberId, brokerPort);
+      let resolved = false;
+
+      const cleanup = () => {
+        if (!resolved) {
+          resolved = true;
+          client.disconnect().catch(() => {});
+        }
+      };
+
+      // Timeout after 5 seconds
+      const timeout = setTimeout(() => {
+        cleanup();
+        resolve(); // Resolve anyway, broadcast is fire-and-forget
+      }, 5000);
+
+      client.on('connected', () => {
+        if (type === 'task_update') {
+          client.sendTaskUpdate('', '', content);
+        } else {
+          client.broadcast(content);
+        }
+
+        // Small delay before closing
+        setTimeout(() => {
+          clearTimeout(timeout);
+          cleanup();
+          resolve();
+        }, 300);
+      });
+
+      client.on('error', () => {
+        clearTimeout(timeout);
+        cleanup();
+        resolve(); // Resolve anyway, broadcast is fire-and-forget
+      });
+
+      client.on('disconnected', () => {
+        if (!resolved) {
+          clearTimeout(timeout);
+          cleanup();
+          resolve();
+        }
+      });
+
+      client.connect().catch(() => {
+        clearTimeout(timeout);
+        cleanup();
+        resolve();
+      });
+    });
   }
 
   private checkPermission(
@@ -234,6 +333,10 @@ export class TeamCoordinator {
     const spawnedMembers: TeamMember[] = [];
     const initialTasks: { taskId: string; title: string; assignee: string }[] = [];
 
+    const leadMember = team.members[0];
+    const leadMemberId = leadMember?.memberId;
+
+    // Spawn teammates with lead ID
     if (params.teammates && params.teammates.length > 0) {
       for (const teammateConfig of params.teammates) {
         // Create initial task BEFORE spawning, so we can pass task ID to teammate
@@ -249,14 +352,15 @@ export class TeamCoordinator {
           assignee: '', // Will be set after spawn
         });
 
-        // Spawn teammate with initial task ID
+        // Spawn teammate with initial task ID and lead ID
         const member = await this.spawner.spawnTeammate(
           team.teamId,
           teammateConfig,
           team.workDir,
           displayMode,
           brokerPort,
-          task.taskId  // Pass initial task ID
+          task.taskId,  // Pass initial task ID
+          leadMemberId   // Pass lead member ID
         );
         spawnedMembers.push(member);
         const displayName = member.name || member.memberId.slice(0, 8);
@@ -279,8 +383,6 @@ export class TeamCoordinator {
       }
     }
 
-    const leadMember = team.members[0];
-
     return {
       success: true,
       message: `Team "${team.teamName}" created successfully with ${initialTasks.length} initial tasks`,
@@ -288,9 +390,9 @@ export class TeamCoordinator {
         team_id: team.teamId,
         team_name: team.teamName,
         display_mode: displayMode,
-        lead_id: leadMember?.memberId,
+        lead_id: leadMemberId,
         your_role: 'lead',
-        your_member_id: leadMember?.memberId,
+        your_member_id: leadMemberId,
         broker_port: brokerPort,
         is_team_lead: true,
         members: spawnedMembers.map((m) => ({
@@ -334,6 +436,7 @@ export class TeamCoordinator {
     const displayMode = 'auto';
     const broker = await this.getBroker(params.team_id);
     const brokerPort = broker.getPort();
+    const leadMemberId = team.leadMemberId;
 
     // 只 spawn 一个 teammate
     const teammateConfig = params.teammates[0];
@@ -342,7 +445,9 @@ export class TeamCoordinator {
       teammateConfig,
       team.workDir,
       displayMode,
-      brokerPort
+      brokerPort,
+      undefined,  // No initial task ID for dynamic spawn
+      leadMemberId
     );
 
     const displayName = member.name || member.memberId.slice(0, 8);
@@ -381,14 +486,29 @@ export class TeamCoordinator {
 
     // Determine fromMemberId: use env var for teammates, or team.leadMemberId for lead
     const envMemberId = process.env.XAGENT_MEMBER_ID;
+    const envBrokerPort = process.env.XAGENT_BROKER_PORT;
     const fromMemberId = envMemberId || team.leadMemberId;
-    const broker = await this.getBroker(params.team_id);
 
     // Resolve target: convert 'lead' to actual leadMemberId for direct messages
     let targetMemberId = params.message.to_member_id || 'broadcast';
     if (targetMemberId === 'lead') {
       targetMemberId = team.leadMemberId;
     }
+
+    // Check if this is a teammate process (has broker port env var)
+    // Teammate should use MessageClient to connect to lead's broker
+    if (envBrokerPort && envMemberId) {
+      return this.sendMessageAsTeammate(
+        params.team_id,
+        envMemberId,
+        parseInt(envBrokerPort, 10),
+        targetMemberId,
+        params.message.content
+      );
+    }
+
+    // Lead process: use broker directly
+    const broker = await this.getBroker(params.team_id);
 
     try {
       const { message, deliveryInfo } = await broker.sendMessageWithAck(
@@ -429,6 +549,135 @@ export class TeamCoordinator {
         result: undefined,
       };
     }
+  }
+
+  /**
+   * Send message as teammate using persistent MessageClient
+   */
+  private async sendMessageAsTeammate(
+    teamId: string,
+    memberId: string,
+    brokerPort: number,
+    targetMemberId: string,
+    content: string
+  ): Promise<{ success: boolean; message: string; result?: any }> {
+    // Try to use the persistent client first
+    const persistentClient = getTeammateClient();
+
+    if (persistentClient && persistentClient.isConnected()) {
+      // Send message using appropriate method
+      if (targetMemberId === 'broadcast') {
+        persistentClient.broadcast(content);
+      } else {
+        persistentClient.sendDirect(targetMemberId, content);
+      }
+
+      const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+      return {
+        success: true,
+        message: `Message sent to ${targetMemberId}`,
+        result: {
+          message_id: messageId,
+          delivered_to: targetMemberId,
+          delivery_status: { status: 'sent' },
+        },
+      };
+    }
+
+    // Fallback: create temporary connection if persistent client not available
+    return this.sendMessageWithTempClient(teamId, memberId, brokerPort, targetMemberId, content);
+  }
+
+  /**
+   * Fallback: send message with temporary MessageClient connection
+   */
+  private async sendMessageWithTempClient(
+    teamId: string,
+    memberId: string,
+    brokerPort: number,
+    targetMemberId: string,
+    content: string
+  ): Promise<{ success: boolean; message: string; result?: any }> {
+    return new Promise((resolve) => {
+      const client = new MessageClient(teamId, memberId, brokerPort);
+      let resolved = false;
+
+      const cleanup = () => {
+        if (!resolved) {
+          resolved = true;
+          client.disconnect().catch(() => {});
+        }
+      };
+
+      // Timeout after 10 seconds
+      const timeout = setTimeout(() => {
+        cleanup();
+        resolve({
+          success: false,
+          message: 'Failed to send message: timeout',
+          result: undefined,
+        });
+      }, 10000);
+
+      client.on('connected', () => {
+        // Send message using appropriate method
+        if (targetMemberId === 'broadcast') {
+          client.broadcast(content);
+        } else {
+          client.sendDirect(targetMemberId, content);
+        }
+
+        const messageId = `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+        // Give a small delay for the message to be sent before closing
+        setTimeout(() => {
+          clearTimeout(timeout);
+          cleanup();
+          resolve({
+            success: true,
+            message: `Message sent to ${targetMemberId}`,
+            result: {
+              message_id: messageId,
+              delivered_to: targetMemberId,
+              delivery_status: { status: 'sent' },
+            },
+          });
+        }, 500);
+      });
+
+      client.on('error', (err: Error) => {
+        clearTimeout(timeout);
+        cleanup();
+        resolve({
+          success: false,
+          message: `Failed to send message: ${err.message}`,
+          result: undefined,
+        });
+      });
+
+      client.on('disconnected', () => {
+        if (!resolved) {
+          clearTimeout(timeout);
+          cleanup();
+          resolve({
+            success: false,
+            message: 'Failed to send message: disconnected from broker',
+            result: undefined,
+          });
+        }
+      });
+
+      client.connect().catch((err) => {
+        clearTimeout(timeout);
+        cleanup();
+        resolve({
+          success: false,
+          message: `Failed to connect to broker: ${err.message}`,
+          result: undefined,
+        });
+      });
+    });
   }
 
   async getMessageDeliveryInfo(

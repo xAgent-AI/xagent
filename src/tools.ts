@@ -2953,11 +2953,21 @@ team(action="message", team_id="xxx", message={to_member_id: "broadcast", conten
     // After successful team creation, connect lead agent to broker
     if (params.action === 'create' && result.success && result.result) {
       const { team_id, your_member_id, broker_port } = result.result;
+      console.log(`[Team] Attempting to connect lead to broker - team_id: ${team_id}, member_id: ${your_member_id}, port: ${broker_port}`);
       if (team_id && your_member_id && broker_port) {
         const session = getSingletonSession();
         if (session) {
-          await session.connectToTeamBroker(team_id, your_member_id, broker_port);
+          try {
+            await session.connectToTeamBroker(team_id, your_member_id, broker_port);
+            console.log(`[Team] Lead broker connection completed`);
+          } catch (err) {
+            console.error('[Team] Failed to connect lead to message broker:', err);
+          }
+        } else {
+          console.warn('[Team] Warning: No active session found, lead will not receive messages from teammates');
         }
+      } else {
+        console.warn('[Team] Warning: Missing connection parameters:', { team_id, your_member_id, broker_port });
       }
     }
 

@@ -16,6 +16,11 @@ export class MCPServer {
   private tools: Map<string, MCPTool> = new Map();
   private isConnected: boolean = false;
   private sessionId: string | null = null;  // Save MCP session-id
+  private hasLoggedParseWarning: boolean = false;  // Whether parse failure warning has been logged
+  private connectionAttempted: boolean = false;  // Whether connection has been attempted
+  private toolsCheckInterval: NodeJS.Timeout | null = null;  // Timer ID for tools check
+  private toolsCheckStartTime: number = 0;  // Start time of tools check
+  private pendingToolsPromise: Promise<boolean> | null = null;  // Pending promise for tools check
 
   constructor(config: MCPServerConfig) {
     this.config = config;
@@ -30,10 +35,18 @@ export class MCPServer {
   }
 
   async connect(): Promise<void> {
-    if (this.isConnected) {
-      return;
-    }
-
+        // If already connected, return early
+        if (this.isConnected) {
+          return;
+        }
+    
+        // If connection attempt is in progress (waitForTools not completed), don't start another
+        if (this.connectionAttempted) {
+          return;
+        }
+    
+        // Mark as connection attempt started
+        this.connectionAttempted = true;
     const transportType = this.getTransportType();
 
     try {
@@ -44,14 +57,22 @@ export class MCPServer {
       }
 
       // Wait for tools to be loaded (max 10 seconds)
-      await this.waitForTools(10000);
-
-      this.isConnected = true;
+      const toolsLoaded = await this.waitForTools(10000);
       const session = getSingletonSession();
-      if (session?.getIsSdkMode()) {
-        // SDK 模式下不输出
+      const isSdkMode = session?.getIsSdkMode();
+      const serverInfo = this.config.command || this.config.url || 'unknown';
+
+      if (toolsLoaded) {
+        this.isConnected = true;
+        if (!isSdkMode) {
+          await logOutput('success', `MCP Server connected`);
+        }
       } else {
-        await logOutput('success', `MCP Server connected`);
+        // Disconnect after timeout
+        this.disconnect();
+        if (!isSdkMode) {
+          await logOutput('warning', `[MCP] Server '${serverInfo}' timed out, skipping`);
+        }
       }
     } catch (error) {
       await logOutput('error', `[mcp] Failed to connect MCP Server`, { error: error instanceof Error ? error.message : String(error) });
@@ -62,32 +83,48 @@ export class MCPServer {
   /**
    * Wait for tools to be loaded from MCP server
    * @param timeoutMs Maximum time to wait in milliseconds
+   * @returns Promise<boolean> - true if tools loaded, false if timeout
    */
-  async waitForTools(timeoutMs: number = 10000): Promise<void> {
+  async waitForTools(timeoutMs: number = 10000): Promise<boolean> {
     if (this.tools.size > 0) {
-      return;  // Tools already loaded
+      return true;
     }
 
-    return new Promise((resolve, _reject) => {
+    // If there's already a pending Promise, reuse the previous startTime
+    if (this.pendingToolsPromise) {
+      return this.pendingToolsPromise;
+    }
+
+    this.toolsCheckStartTime = Date.now();
+
+    this.pendingToolsPromise = new Promise((resolve) => {
       const checkInterval = 100;
-      const startTime = Date.now();
 
       const check = () => {
         if (this.tools.size > 0) {
-          clearInterval(checkInterval);
-          resolve();
-        } else if (Date.now() - startTime > timeoutMs) {
-          clearInterval(checkInterval);
-          logOutput('warning', `[MCP] Timeout waiting for tools (${timeoutMs}ms), proceeding anyway`);
-          resolve();  // Don't reject, just proceed without tools
-        } else {
-          // Continue checking
+          this.cleanupToolsCheck();
+          resolve(true);
+        } else if (Date.now() - this.toolsCheckStartTime > timeoutMs) {
+          this.cleanupToolsCheck();
+          const serverInfo = this.config.command || this.config.url || 'unknown';
+          logOutput('warning', `[MCP] Server '${serverInfo}' timed out(${timeoutMs}ms), skipping`);
+          resolve(false);
         }
       };
 
-      const _intervalId = setInterval(check, checkInterval);
-      check();  // Check immediately first
+      this.toolsCheckInterval = setInterval(check, checkInterval);
+      check();
     });
+
+    return this.pendingToolsPromise;
+  }
+
+  private cleanupToolsCheck(): void {
+    if (this.toolsCheckInterval) {
+      clearInterval(this.toolsCheckInterval);
+      this.toolsCheckInterval = null;
+    }
+    this.pendingToolsPromise = null;
   }
 
   private async connectStdio(): Promise<void> {
@@ -341,7 +378,7 @@ export class MCPServer {
       }
       const session = getSingletonSession();
       if (session?.getIsSdkMode()) {
-        // SDK 模式下不输出
+        // Skip output in SDK mode
       } else {
         console.log(`Loaded ${result.tools.length} tools from MCP Server`);
       }
@@ -654,7 +691,9 @@ export class MCPServer {
       this.process = null;
     }
     this.isConnected = false;
+    this.connectionAttempted = false;
     this.tools.clear();
+    this.cleanupToolsCheck();
   }
 
   isServerConnected(): boolean {

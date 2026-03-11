@@ -138,14 +138,28 @@ export class TeamCoordinator {
         if (!params.team_id) {
           return { success: false, message: 'team_id is required for shutdown' };
         }
-        if (params.member_id === 'self') {
-          // For 'self', resolve actual memberId from team config for lead
+        {
           const team = await this.store.getTeam(params.team_id);
           if (!team) {
             return { success: false, message: `Team ${params.team_id} not found` };
           }
           const actualMemberId = memberId || team.leadMemberId;
-          return this.shutdownTeammate(params, actualMemberId);
+
+          // Prevent shutting down self - use cleanup to shutdown entire team
+          if (params.member_id === 'self' || params.member_id === actualMemberId) {
+            return {
+              success: false,
+              message: 'Cannot shutdown yourself.',
+            };
+          }
+
+          // Prevent shutting down lead - lead should only be removed via cleanup
+          if (params.member_id === team.leadMemberId) {
+            return {
+              success: false,
+              message: 'Cannot shutdown team lead.',
+            };
+          }
         }
         if (!params.member_id) {
           return {

@@ -212,14 +212,31 @@ export class TeamCoordinator {
     console.log(colors.textMuted(`   Message broker: port ${brokerPort}`));
 
     const spawnedMembers: TeamMember[] = [];
+    const initialTasks: { taskId: string; title: string; assignee: string }[] = [];
+
     if (params.teammates && params.teammates.length > 0) {
       for (const teammateConfig of params.teammates) {
+        // Create initial task BEFORE spawning, so we can pass task ID to teammate
+        const task = await this.store.createTask(team.teamId, {
+          title: `Initial task for ${teammateConfig.name}`,
+          description: teammateConfig.prompt,
+          priority: 'high',
+        }, 'lead');
+
+        initialTasks.push({
+          taskId: task.taskId,
+          title: task.title,
+          assignee: '', // Will be set after spawn
+        });
+
+        // Spawn teammate with initial task ID
         const member = await this.spawner.spawnTeammate(
           team.teamId,
           teammateConfig,
           team.workDir,
           displayMode,
-          brokerPort
+          brokerPort,
+          task.taskId  // Pass initial task ID
         );
         spawnedMembers.push(member);
         const displayName = member.name || member.memberId.slice(0, 8);
@@ -228,6 +245,17 @@ export class TeamCoordinator {
             `  ✓ Spawned: ${displayName} (${member.memberRole || member.role}) [${member.displayMode}]`
           )
         );
+
+        // Mark task as in_progress and assign to the teammate
+        await this.store.updateTask(team.teamId, task.taskId, {
+          status: 'in_progress',
+          assignee: member.memberId,
+        }, task.version);
+
+        // Update initialTasks with assignee
+        initialTasks[initialTasks.length - 1].assignee = member.memberId;
+
+        console.log(colors.textMuted(`    → Created initial task: ${task.title}`));
       }
     }
 
@@ -235,7 +263,7 @@ export class TeamCoordinator {
 
     return {
       success: true,
-      message: `Team "${team.teamName}" created successfully`,
+      message: `Team "${team.teamName}" created successfully with ${initialTasks.length} initial tasks`,
       result: {
         team_id: team.teamId,
         team_name: team.teamName,
@@ -244,13 +272,14 @@ export class TeamCoordinator {
         your_role: 'lead',
         your_member_id: leadMember?.memberId,
         broker_port: brokerPort,
-        is_team_lead: true, // Pass this in subsequent calls
+        is_team_lead: true,
         members: spawnedMembers.map((m) => ({
           id: m.memberId,
           name: m.name,
           role: m.memberRole || m.role,
           display_mode: m.displayMode,
         })),
+        initial_tasks: initialTasks,
       },
     };
   }

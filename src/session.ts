@@ -109,6 +109,7 @@ export class InteractiveSession {
   private messageClient: any = null;
   private spawnPrompt: string | null = null;
   private brokerPort: number | null = null;
+  private initialTaskId: string | null = null;
 
   // Operation lock for preventing concurrent operations
   private _isOperationInProgress: boolean = false;
@@ -142,10 +143,14 @@ export class InteractiveSession {
       this.memberRole = 'teammate'; // Role is now determined by tool response, not env var
       this.spawnPrompt = process.env.XAGENT_SPAWN_PROMPT || null;
       this.brokerPort = process.env.XAGENT_BROKER_PORT ? parseInt(process.env.XAGENT_BROKER_PORT, 10) : null;
+      this.initialTaskId = process.env.XAGENT_INITIAL_TASK_ID || null;
       
       // Show team role info in welcome message
       console.log(colors.info(`[Team] Running as: ${this.memberName} (${this.memberRole})`));
       console.log(colors.info(`[Team] Team ID: ${this.teamId}, Member ID: ${this.memberId}`));
+      if (this.initialTaskId) {
+        console.log(colors.info(`[Team] Initial Task ID: ${this.initialTaskId}`));
+      }
       
       // Import and initialize team components
       import('./team-manager/index.js').then(async ({ getTeamStore, MessageClient }) => {

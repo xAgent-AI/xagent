@@ -180,6 +180,7 @@ program
   .option('--member-name <name>', 'Member name for team mode')
   .option('--broker-port <port>', 'Message broker port for team mode')
   .option('--initial-prompt <prompt>', 'Initial prompt to send to AI (for team mode)')
+  .option('--initial-task-id <id>', 'Initial task ID to complete (for team mode)')
   .action(async (options) => {
     // Set team mode environment variables
     if (options.teamMode) {
@@ -189,6 +190,7 @@ program
       if (options.memberName) process.env.XAGENT_MEMBER_NAME = options.memberName;
       if (options.brokerPort) process.env.XAGENT_BROKER_PORT = options.brokerPort;
       if (options.initialPrompt) process.env.XAGENT_SPAWN_PROMPT = options.initialPrompt;
+      if (options.initialTaskId) process.env.XAGENT_INITIAL_TASK_ID = options.initialTaskId;
     }
 
     // Check if running in SDK mode

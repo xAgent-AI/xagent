@@ -2843,12 +2843,20 @@ export class TeamTool implements Tool {
 - **Tight resource constraints**: Each teammate consumes additional API calls and memory
 
 # Best Practices
+
+## For Lead
 - **Clear role definitions**: Give each teammate a specific role and focused prompt
 - **Small teams first**: Start with 2-3 teammates; add more only if needed
-- **Explicit task assignments**: Use task_create with clear descriptions and priorities
-- **Regular check-ins**: Use broadcast messages to coordinate progress
+- **Monitor progress**: check task status before assigning new work
+- **Coordinate via messages**: Use broadcast for team-wide updates, direct messages for specific teammates
 - **Clean shutdown**: Always call cleanup when team work is complete
-- **Monitor status**: Use get_status to check teammate activity and task progress
+
+## For teammate
+- **Complete assigned tasks**: Execute the task described in your initial prompt or assigned via messages
+- **Send result to lead**: After completing a task, use message to send your result directly to lead:
+- **Update task status**: Also call task_update with action="complete" to mark the task done
+- **Communicate proactively**: Send messages to lead when you need guidance or encounter blockers
+- **Claim tasks**: Use task_update with action="claim" to take ownership of available tasks
 
 # Your Role
 After calling team actions, check the \`your_role\` field in the response:

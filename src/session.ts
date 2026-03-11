@@ -115,6 +115,10 @@ export class InteractiveSession {
   // Operation lock for preventing concurrent operations
   private _isOperationInProgress: boolean = false;
   private _shutdownResolver: ((value: void) => void) | null = null;
+  
+  // Queue processing lock to prevent race conditions
+  private isProcessingQueue: boolean = false;
+  private queueProcessingPromise: Promise<void> | null = null;
 
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
@@ -337,7 +341,63 @@ export class InteractiveSession {
     }
 
     this.teammateMessageQueue.push(teamMessage);
-    // Agent will explicitly process messages via TeamTool
+
+    // Only start processing if not already processing
+    if (!this.isProcessingQueue && !this._isOperationInProgress) {
+      this.startQueueProcessing();
+    }
+  }
+
+  /**
+   * Start queue processing with proper locking.
+   */
+  private startQueueProcessing(): void {
+    // Prevent multiple queue processing coroutines
+    if (this.isProcessingQueue) {
+      return;
+    }
+
+    this.isProcessingQueue = true;
+    this.queueProcessingPromise = this.processMessageQueue();
+    
+    // Handle completion and errors
+    this.queueProcessingPromise
+      .catch((error) => {
+        console.error('[Team] Queue processing error:', error);
+      })
+      .finally(() => {
+        this.isProcessingQueue = false;
+        this.queueProcessingPromise = null;
+      });
+  }
+
+  /**
+   * Process queued teammate messages one by one.
+   * This method should only be called from startQueueProcessing.
+   */
+  private async processMessageQueue(): Promise<void> {
+    while (this.teammateMessageQueue.length > 0) {
+      // Check if operation is in progress (e.g., user is typing or another operation)
+      if (this._isOperationInProgress) {
+        // Wait a bit and retry
+        await new Promise(resolve => setTimeout(resolve, 100));
+        continue;
+      }
+
+      const message = this.teammateMessageQueue.shift()!;
+      this.conversation.push(message);
+
+      try {
+        if (this.remoteAIClient) {
+          await this.generateRemoteResponse(0);
+        } else {
+          await this.generateResponse(0);
+        }
+      } catch (error) {
+        console.error('[Team] Failed to process teammate message:', error);
+        // Continue processing remaining messages even if one fails
+      }
+    }
   }
 
   /**
@@ -1243,6 +1303,11 @@ export class InteractiveSession {
     // Check if we're shutting down
     if ((this as any)._isShuttingDown) {
       return;
+    }
+
+    // Check teammate message queue when agent becomes idle
+    if (this.teammateMessageQueue.length > 0) {
+      await this.processMessageQueue();
     }
 
     // If running in team mode with initial prompt, send it immediately and skip user input

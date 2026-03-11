@@ -1471,10 +1471,7 @@ task(description="Review code", agents=[{subagent_type:"code-reviewer", prompt:"
 # Best Practices
 - **Clear Prompts**: Provide detailed context and specific goals
 - **Parallel Mode**: Use for independent tasks to save time
-- **Type Selection**: Choose appropriate subagent type for the task
-
-# Note
-For agent team management (create teams, coordinate teammates, shared tasks), use the separate \`team\` tool instead.`;
+- **Type Selection**: Choose appropriate subagent type for the task`;
   }
 
   allowedModes = [

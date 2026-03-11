@@ -84,11 +84,11 @@ export class TeamCoordinator {
   async execute(
     params: TeamToolParams
   ): Promise<{ success: boolean; message: string; result?: any }> {
-    const memberId = process.env.XAGENT_MEMBER_ID || 'lead';
+    const memberId = process.env.XAGENT_MEMBER_ID;
     // Role determined by action type:
     // - create: caller is lead
-    // - other actions: use process.env.XAGENT_MEMBER_ID to determine
-    const isTeamLead = params.team_action === 'create' || memberId === 'lead';
+    // - other actions: if XAGENT_MEMBER_ID is not set, caller is lead
+    const isTeamLead = params.team_action === 'create' || !memberId;
 
     const permissions = isTeamLead ? LEAD_PERMISSIONS : TEAMMATE_PERMISSIONS;
 
@@ -139,7 +139,13 @@ export class TeamCoordinator {
           return { success: false, message: 'team_id is required for shutdown' };
         }
         if (params.member_id === 'self') {
-          return this.shutdownTeammate(params, memberId);
+          // For 'self', resolve actual memberId from team config for lead
+          const team = await this.store.getTeam(params.team_id);
+          if (!team) {
+            return { success: false, message: `Team ${params.team_id} not found` };
+          }
+          const actualMemberId = memberId || team.leadMemberId;
+          return this.shutdownTeammate(params, actualMemberId);
         }
         if (!params.member_id) {
           return {
@@ -359,13 +365,21 @@ export class TeamCoordinator {
       throw new Error(`Team ${params.team_id} not found`);
     }
 
-    const fromMemberId = process.env.XAGENT_MEMBER_ID || 'lead';
+    // Determine fromMemberId: use env var for teammates, or team.leadMemberId for lead
+    const envMemberId = process.env.XAGENT_MEMBER_ID;
+    const fromMemberId = envMemberId || team.leadMemberId;
     const broker = await this.getBroker(params.team_id);
+
+    // Resolve target: convert 'lead' to actual leadMemberId for direct messages
+    let targetMemberId = params.message.to_member_id || 'broadcast';
+    if (targetMemberId === 'lead') {
+      targetMemberId = team.leadMemberId;
+    }
 
     try {
       const { message, deliveryInfo } = await broker.sendMessageWithAck(
         fromMemberId,
-        params.message.to_member_id || 'broadcast',
+        targetMemberId,
         params.message.content
       );
 
@@ -416,7 +430,7 @@ export class TeamCoordinator {
 
   private async createTeamTask(
     params: TeamToolParams,
-    createdBy: string
+    createdBy: string | undefined
   ): Promise<{ success: boolean; message: string; result?: any }> {
     if (!params.team_id) {
       throw new Error('team_id is required');
@@ -425,11 +439,18 @@ export class TeamCoordinator {
       throw new Error('task_config is required');
     }
 
-    const task = await this.store.createTask(params.team_id, params.task_config, createdBy);
+    // Get team to resolve leadMemberId if createdBy is not provided
+    const team = await this.store.getTeam(params.team_id);
+    if (!team) {
+      throw new Error(`Team ${params.team_id} not found`);
+    }
+    const actualCreatedBy = createdBy || team.leadMemberId;
+
+    const task = await this.store.createTask(params.team_id, params.task_config, actualCreatedBy);
 
     console.log(colors.success(`✓ Task created: ${task.title} (${task.taskId})`));
 
-    await this.broadcastTaskUpdate(params.team_id!, createdBy, task.taskId, 'created', {
+    await this.broadcastTaskUpdate(params.team_id!, actualCreatedBy, task.taskId, 'created', {
       title: task.title
     });
 
@@ -451,7 +472,7 @@ export class TeamCoordinator {
 
   private async updateTeamTask(
     params: TeamToolParams,
-    memberId: string,
+    memberId: string | undefined,
     permissions: MemberPermissions
   ): Promise<{ success: boolean; message: string; result?: any }> {
     if (!params.team_id) {
@@ -460,6 +481,13 @@ export class TeamCoordinator {
     if (!params.task_update) {
       throw new Error('task_update is required');
     }
+
+    // Get team to resolve leadMemberId if memberId is not provided
+    const team = await this.store.getTeam(params.team_id);
+    if (!team) {
+      throw new Error(`Team ${params.team_id} not found`);
+    }
+    const actualMemberId = memberId || team.leadMemberId;
 
     const { task_id, action, result } = params.task_update;
 
@@ -472,7 +500,7 @@ export class TeamCoordinator {
       }
 
       try {
-        const claimedTask = await this.store.claimTask(params.team_id, task_id, memberId);
+        const claimedTask = await this.store.claimTask(params.team_id, task_id, actualMemberId);
         if (!claimedTask) {
           return {
             success: false,
@@ -480,7 +508,7 @@ export class TeamCoordinator {
           };
         }
 
-        await this.broadcastTaskUpdate(params.team_id, memberId, task_id, 'claimed', {
+        await this.broadcastTaskUpdate(params.team_id, actualMemberId, task_id, 'claimed', {
           title: claimedTask.title,
           assignee: claimedTask.assignee
         });
@@ -524,7 +552,7 @@ export class TeamCoordinator {
         return { success: false, message: `Task ${task_id} update failed` };
       }
 
-      await this.broadcastTaskUpdate(params.team_id, memberId, task_id, 'completed', {
+      await this.broadcastTaskUpdate(params.team_id, actualMemberId, task_id, 'completed', {
         title: task.title,
         result: task.result
       });
@@ -554,7 +582,7 @@ export class TeamCoordinator {
         return { success: false, message: `Task ${task_id} update failed` };
       }
 
-      await this.broadcastTaskUpdate(params.team_id, memberId, task_id, 'released', {
+      await this.broadcastTaskUpdate(params.team_id, actualMemberId, task_id, 'released', {
         title: task.title
       });
 
@@ -578,7 +606,12 @@ export class TeamCoordinator {
       throw new Error('team_id is required');
     }
 
-    const memberId = process.env.XAGENT_MEMBER_ID || 'lead';
+    const team = await this.store.getTeam(params.team_id);
+    if (!team) {
+      throw new Error(`Team ${params.team_id} not found`);
+    }
+
+    const memberId = process.env.XAGENT_MEMBER_ID || team.leadMemberId;
     const taskId = params.task_update?.task_id;
     if (!taskId) {
       throw new Error('task_id is required for deletion');
@@ -783,9 +816,10 @@ export class TeamCoordinator {
       throw new Error(`Team ${params.team_id} not found`);
     }
 
-    const memberId = process.env.XAGENT_MEMBER_ID || 'lead';
-    const isTeamLead = memberId === 'lead';
+    const envMemberId = process.env.XAGENT_MEMBER_ID;
+    const isTeamLead = !envMemberId;
     const yourRole = isTeamLead ? 'lead' : 'teammate';
+    const yourMemberId = envMemberId || status.team.leadMemberId;
 
     return {
       success: true,
@@ -795,7 +829,7 @@ export class TeamCoordinator {
         team_name: status.team.teamName,
         status: status.team.status,
         your_role: yourRole,
-        your_member_id: memberId,
+        your_member_id: yourMemberId,
         member_count: status.memberCount,
         members: status.team.members.map((m) => ({
           id: m.memberId,

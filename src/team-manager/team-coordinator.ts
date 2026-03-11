@@ -679,13 +679,27 @@ export class TeamCoordinator {
       throw new Error(`Team ${params.team_id} not found`);
     }
 
-    const activeMembers = team.members.filter((m) => m.status === 'active');
-    if (activeMembers.length > 0) {
-      throw new Error(
-        `Cannot cleanup: ${activeMembers.length} active teammates. Shutdown first.`
-      );
+    // Auto-shutdown all active teammates (role !== 'lead')
+    const activeTeammates = team.members.filter(
+      (m) => m.status === 'active' && m.role !== 'lead'
+    );
+    const shutdownResults: { memberId: string; success: boolean; reason?: string }[] = [];
+
+    for (const teammate of activeTeammates) {
+      const result = await this.spawner.shutdownTeammate(params.team_id, teammate.memberId);
+      shutdownResults.push({
+        memberId: teammate.memberId,
+        success: result.success,
+        reason: result.reason,
+      });
+      if (result.success) {
+        console.log(colors.warning(`  ✓ Auto-shutdown: ${teammate.name || teammate.memberId.slice(0, 8)}`));
+      } else {
+        console.log(colors.error(`  ✗ Failed to shutdown ${teammate.name || teammate.memberId.slice(0, 8)}: ${result.reason}`));
+      }
     }
 
+    // Stop the message broker
     const broker = this.brokers.get(params.team_id);
     if (broker) {
       await broker.stop();
@@ -699,8 +713,11 @@ export class TeamCoordinator {
 
     return {
       success: true,
-      message: `Team ${params.team_id} cleaned up`,
-      result: { team_id: params.team_id },
+      message: `Team ${params.team_id} cleaned up (${shutdownResults.filter(r => r.success).length}/${activeTeammates.length} teammates auto-shutdown)`,
+      result: {
+        team_id: params.team_id,
+        auto_shutdown: shutdownResults,
+      },
     };
   }
 

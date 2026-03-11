@@ -2953,6 +2953,14 @@ team(action="message", team_id="xxx", message={to_member_id: "broadcast", conten
       }
     }
 
+    // After successful team cleanup, disconnect lead agent from broker
+    if (params.action === 'cleanup' && result.success) {
+      const session = getSingletonSession();
+      if (session) {
+        await session.cleanupTeamMode();
+      }
+    }
+
     return result;
   }
 }

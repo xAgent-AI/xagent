@@ -744,3 +744,14 @@ export function setTeammateClient(client: MessageClient): void {
 export function getTeammateClient(): MessageClient | null {
   return teammateClientInstance;
 }
+
+/**
+ * Clear the persistent MessageClient for teammate process
+ * Called during cleanup to properly disconnect
+ */
+export function clearTeammateClient(): void {
+  if (teammateClientInstance) {
+    teammateClientInstance.disconnect().catch(() => {});
+    teammateClientInstance = null;
+  }
+}

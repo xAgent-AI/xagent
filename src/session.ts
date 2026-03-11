@@ -493,6 +493,10 @@ export class InteractiveSession {
    * Cleanup team mode resources.
    */
   async cleanupTeamMode(): Promise<void> {
+    // Clear teammate's persistent MessageClient if exists
+    const { clearTeammateClient } = await import('./team-manager/index.js');
+    clearTeammateClient();
+
     if (this.messageClient) {
       await this.messageClient.disconnect();
       this.messageClient = null;

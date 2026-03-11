@@ -2927,7 +2927,20 @@ team(action="message", team_id="xxx", message={to_member_id: "broadcast", conten
       task_filter: params.task_filter,
     };
 
-    return coordinator.execute(teamParams);
+    const result = await coordinator.execute(teamParams);
+
+    // After successful team creation, connect lead agent to broker
+    if (params.action === 'create' && result.success && result.result) {
+      const { team_id, your_member_id, broker_port } = result.result;
+      if (team_id && your_member_id && broker_port) {
+        const session = getSingletonSession();
+        if (session) {
+          await session.connectToTeamBroker(team_id, your_member_id, broker_port);
+        }
+      }
+    }
+
+    return result;
   }
 }
 

@@ -426,6 +426,46 @@ export class InteractiveSession {
   }
 
   /**
+   * Connect to team message broker (for lead agent after creating a team).
+   * This allows the lead agent to receive real-time messages from teammates.
+   */
+  async connectToTeamBroker(teamId: string, memberId: string, brokerPort: number): Promise<void> {
+    // Skip if already connected
+    if (this.messageClient) {
+      return;
+    }
+
+    this.isTeamMode = true;
+    this.teamId = teamId;
+    this.memberId = memberId;
+    this.memberRole = 'lead';
+    this.brokerPort = brokerPort;
+
+    try {
+      const { getTeamStore, MessageClient } = await import('./team-manager/index.js');
+      this.teamStore = getTeamStore();
+
+      this.messageClient = new MessageClient(teamId, memberId, brokerPort);
+
+      this.messageClient.on('message', (msg: any) => {
+        this.handleTeamMessage(msg);
+      });
+
+      this.messageClient.on('connected', () => {
+        console.log(`[Team] Lead connected to message broker on port ${brokerPort}`);
+      });
+
+      this.messageClient.on('disconnected', () => {
+        console.log('[Team] Lead disconnected from message broker');
+      });
+
+      await this.messageClient.connect();
+    } catch (err) {
+      console.error('[Team] Failed to connect lead to message broker:', err);
+    }
+  }
+
+  /**
    * Cleanup team mode resources.
    */
   async cleanupTeamMode(): Promise<void> {

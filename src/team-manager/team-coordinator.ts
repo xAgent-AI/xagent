@@ -243,6 +243,7 @@ export class TeamCoordinator {
         lead_id: leadMember?.memberId,
         your_role: 'lead',
         your_member_id: leadMember?.memberId,
+        broker_port: brokerPort,
         is_team_lead: true, // Pass this in subsequent calls
         members: spawnedMembers.map((m) => ({
           id: m.memberId,

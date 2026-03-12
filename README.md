@@ -36,6 +36,7 @@
 |------|------------------------|
 | 🏠 | **Life Automation** - From file organization to smart scheduling |
 | 💻 | **Professional Development** - Code, debug, and deploy with AI |
+| 👥 | **Multi-Agent Team** - Collaborate with specialized AI teammates |
 | 🌐 | **Multi-Model Support** - Free access to Kimi K2, Qwen3 Coder, DeepSeek v3 |
 | 🔧 | **GUI Automation** - Precise mouse/keyboard control for any task |
 | 🔒 | **Flexible Security** - 5 execution modes from YOLO to DEFAULT |
@@ -62,6 +63,7 @@ xagent start
 |:--------|:----------:|:-----------:|:----------:|
 | **Life Automation** | ✅ | ❌ | ❌ |
 | **PC Smart Management** | ✅ | ❌ | ❌ |
+| **Multi-Agent Team** | ✅ | ❌ | ❌ |
 | Todo Planning | ✅ | ✅ | ❌ |
 | SubAgent System | ✅ | ✅ | ❌ |
 | Plan Mode | ✅ | ✅ | ❌ |
@@ -98,6 +100,13 @@ xagent start
 > Find and fix bug root causes
 > Create RESTful APIs with auth
 > Code review PRs automatically
+```
+
+### 👥 Multi-Agent Team
+```text
+> Create a team with developer and reviewer to implement user authentication
+> Spawn a QA teammate to test the login flow while I work on the dashboard
+> Have 3 teammates work in parallel: coding, testing, and documentation
 ```
 
 ### 🔄 Automation Expert

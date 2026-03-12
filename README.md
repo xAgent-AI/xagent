@@ -63,7 +63,7 @@ xagent start
 |:--------|:----------:|:-----------:|:----------:|
 | **Life Automation** | ✅ | ❌ | ❌ |
 | **PC Smart Management** | ✅ | ❌ | ❌ |
-| **Multi-Agent Team** | ✅ | ❌ | ❌ |
+| **Multi-Agent Team** | ✅ | ✅ | ❌ |
 | Todo Planning | ✅ | ✅ | ❌ |
 | SubAgent System | ✅ | ✅ | ❌ |
 | Plan Mode | ✅ | ✅ | ❌ |

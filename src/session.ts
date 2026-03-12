@@ -2189,8 +2189,8 @@ export class InteractiveSession {
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let frameIndex = 0;
 
-    // SDK 模式下不显示 spinner
-    const showThinkingSpinner = !this.isSdkMode;
+    // SDK 模式和 Team 模式下不显示 spinner (team 模式下 teammate 输出会与 spinner 混淆)
+    const showThinkingSpinner = !this.isSdkMode && !this.isTeamMode;
     let spinnerInterval: NodeJS.Timeout | null = null;
 
     // Custom spinner: only icon rotates, text stays static

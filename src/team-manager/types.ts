@@ -1,5 +1,3 @@
-import { ExecutionMode } from '../types.js';
-
 export type DisplayMode = 'auto' | 'tmux' | 'iterm2' | 'in-process';
 
 export type TeamStatus = 'active' | 'completed' | 'cancelled';

@@ -3,16 +3,14 @@ import { TeammateSpawner, getTeammateSpawner } from './teammate-spawner.js';
 import { MessageBroker, MessageClient, getMessageBroker, removeMessageBroker, getTeammateClient } from './message-broker.js';
 import {
   TeamToolParams,
-  Team,
   TeamMember,
   TeamTask,
   MessageDeliveryInfo,
-  MemberRole,
   LEAD_PERMISSIONS,
   TEAMMATE_PERMISSIONS,
   MemberPermissions,
 } from './types.js';
-import { colors, icons, styleHelpers } from '../theme.js';
+import { colors, icons } from '../theme.js';
 
 export class TeamCoordinator {
   private store: TeamStore;
@@ -201,7 +199,7 @@ export class TeamCoordinator {
           };
         }
         return this.spawnTeammate(params);
-      case 'message':
+      case 'message': {
         const canMessage = params.message?.to_member_id === 'broadcast'
           ? this.checkPermission(permissions, 'messageAll')
           : this.checkPermission(permissions, 'messageDirect');
@@ -212,6 +210,7 @@ export class TeamCoordinator {
           };
         }
         return this.sendTeamMessage(params);
+      }
       case 'task_create':
         if (!this.checkPermission(permissions, 'createTask')) {
           return {

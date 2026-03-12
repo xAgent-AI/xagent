@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { TeamStore, getTeamStore } from './team-store.js';
-import { TeamMember, DisplayMode, TeammateConfig, TEAMMATE_PERMISSIONS } from './types.js';
+import { TeamMember, DisplayMode, TeammateConfig } from './types.js';
 import { colors, icons } from '../theme.js';
 
 const generateId = () => crypto.randomUUID();

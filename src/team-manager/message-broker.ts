@@ -84,7 +84,7 @@ export class MessageBroker extends EventEmitter {
     this.stopCleanupTimer();
 
     // Clean up all pending ACKs
-    for (const [key, pending] of this.pendingAcks) {
+    for (const [_key, pending] of this.pendingAcks) {
       clearTimeout(pending.timer);
       pending.reject(new Error('Broker shutting down'));
     }
@@ -94,7 +94,7 @@ export class MessageBroker extends EventEmitter {
     this.deliveryInfo.clear();
 
     return new Promise((resolve) => {
-      for (const [memberId, client] of this.clients) {
+      for (const [_memberId, client] of this.clients) {
         try {
           client.socket.destroy();
         } catch {
@@ -434,7 +434,7 @@ export class MessageBroker extends EventEmitter {
   private async broadcastWithAck(message: TeamMessage, excludeMemberId?: string): Promise<MessageDeliveryInfo[]> {
     const promises: Promise<MessageDeliveryInfo>[] = [];
     
-    for (const [memberId, client] of this.clients) {
+    for (const [memberId, _client] of this.clients) {
       if (memberId !== excludeMemberId) {
         promises.push(this.sendToMember(memberId, { ...message }, true));
       }
@@ -705,7 +705,7 @@ export class MessageClient extends EventEmitter {
   }
 }
 
-let brokerInstances: Map<string, MessageBroker> = new Map();
+const brokerInstances: Map<string, MessageBroker> = new Map();
 let teammateClientInstance: MessageClient | null = null;
 
 export function getMessageBroker(teamId: string): MessageBroker {

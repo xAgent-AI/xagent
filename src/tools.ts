@@ -2958,6 +2958,21 @@ export class TeamTool implements Tool {
     const { getTeamCoordinator } = await import('./team-manager/index.js');
     const coordinator = getTeamCoordinator();
 
+    // Check message queue before cleanup
+    if (params.action === 'cleanup') {
+      const session = getSingletonSession();
+      if (session) {
+        const queueInfo = session.getTeammateMessageQueueInfo();
+        if (queueInfo.length > 0) {
+          return {
+            success: false,
+            message: `Cannot cleanup: message queue has ${queueInfo.length} unprocessed messages. Process them first with team(action="message_queue", pop=true)`,
+            result: { queue_length: queueInfo.length },
+          };
+        }
+      }
+    }
+
     // Map team tool params to TeamToolParams
     const teamParams = {
       team_action: params.action,

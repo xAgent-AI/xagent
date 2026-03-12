@@ -531,6 +531,9 @@ export class InteractiveSession {
         // Ignore cleanup errors
       }
     }
+
+    // Reset team mode flag to restore thinking spinner
+    this.isTeamMode = false;
   }
 
   /**

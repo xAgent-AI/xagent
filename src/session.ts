@@ -93,10 +93,32 @@ export class InteractiveSession {
   private heartbeatTimeout: NodeJS.Timeout | null = null;
   private heartbeatTimeoutMs: number = 300000; // 5 minutes timeout for long AI responses
   private lastActivityTime: number = Date.now();
+  private teammateMessageQueue: ChatMessage[] = [];
 
   // SDK response handling for approvals and questions
   private approvalPromises: Map<string, { resolve: (approved: boolean) => void; reject: (err: Error) => void }> = new Map();
   private questionPromises: Map<string, { resolve: (answers: string[]) => void; reject: (err: Error) => void }> = new Map();
+
+  // Team mode properties
+  private isTeamMode: boolean = false;
+  private teamId: string | null = null;
+  private memberId: string | null = null;
+  private memberName: string | null = null;
+  private memberRole: string | null = null;
+  private leadId: string | null = null;
+  private teamStore: any = null;
+  private messageClient: any = null;
+  private spawnPrompt: string | null = null;
+  private brokerPort: number | null = null;
+  private initialTaskId: string | null = null;
+
+  // Operation lock for preventing concurrent operations
+  private _isOperationInProgress: boolean = false;
+  private _shutdownResolver: ((value: void) => void) | null = null;
+  
+  // Queue processing lock to prevent race conditions
+  private isProcessingQueue: boolean = false;
+  private queueProcessingPromise: Promise<void> | null = null;
 
   constructor(indentLevel: number = 0) {
     this.rl = readline.createInterface({
@@ -112,6 +134,59 @@ export class InteractiveSession {
     this.conversationManager = getConversationManager();
     this.sessionManager = getSessionManager(process.cwd());
     this.slashCommandHandler = new SlashCommandHandler();
+
+    // Check if running in Team Mode
+    if (process.env.XAGENT_TEAM_MODE === 'true') {
+      this.isTeamMode = true;
+      this.teamId = process.env.XAGENT_TEAM_ID || null;
+      this.memberId = process.env.XAGENT_MEMBER_ID || null;
+      this.memberName = process.env.XAGENT_MEMBER_NAME || null;
+      this.memberRole = 'teammate'; // Role is now determined by tool response, not env var
+      this.leadId = process.env.XAGENT_LEAD_ID || null;
+      this.spawnPrompt = process.env.XAGENT_SPAWN_PROMPT || null;
+      this.brokerPort = process.env.XAGENT_BROKER_PORT ? parseInt(process.env.XAGENT_BROKER_PORT, 10) : null;
+      this.initialTaskId = process.env.XAGENT_INITIAL_TASK_ID || null;
+      
+      // Show team role info in welcome message (compact format)
+      console.log(colors.textMuted(`[Team] ${this.memberName} (${this.memberRole})`));
+      
+      // Import and initialize team components
+      import('./team-manager/index.js').then(async ({ getTeamStore, MessageClient, setTeammateClient }) => {
+        this.teamStore = getTeamStore();
+
+        // Connect to message broker if port is available
+        if (this.brokerPort && this.teamId && this.memberId) {
+          this.messageClient = new MessageClient(
+            this.teamId,
+            this.memberId,
+            this.brokerPort
+          );
+
+          // Save to global singleton for TeamCoordinator to use
+          setTeammateClient(this.messageClient);
+
+          this.messageClient.on('message', (msg: any) => {
+            this.handleTeamMessage(msg);
+          });
+
+          this.messageClient.on('connected', () => {
+            // Silently connected - no output needed
+          });
+
+          this.messageClient.on('disconnected', () => {
+            // Silently disconnected - no output needed
+          });
+
+          try {
+            await this.messageClient.connect();
+          } catch (err) {
+            console.error('[Team] Failed to connect to message broker:', err);
+          }
+        }
+      }).catch(() => {
+        // Ignore import errors
+      });
+    }
 
     // Register /clear callback, clear local conversation when clearing dialogue
     this.slashCommandHandler.setClearCallback(() => {
@@ -225,6 +300,233 @@ export class InteractiveSession {
   }
 
   /**
+   * Handle incoming team message from socket.
+   * Messages are queued and must be explicitly processed by the agent.
+   */
+  private handleTeamMessage(msg: any): void {
+    if (!msg || !msg.content) return;
+
+    let teamMessage: ChatMessage;
+
+    if (msg.type === 'task_update') {
+      let taskInfo: string;
+      try {
+        const content = typeof msg.content === 'string' ? JSON.parse(msg.content) : msg.content;
+        taskInfo = `Task ${content.action}: ${content.title || content.taskId}`;
+        if (content.assignee) {
+          taskInfo += ` (assignee: ${content.assignee})`;
+        }
+        if (content.result) {
+          taskInfo += ` - Result: ${content.result.substring(0, 100)}...`;
+        }
+      } catch {
+        taskInfo = `Task update: ${msg.content}`;
+      }
+
+      teamMessage = {
+        role: 'user',
+        content: `<system-notification type="task_update">${taskInfo}</system-notification>`,
+        timestamp: msg.timestamp || Date.now()
+      };
+    } else {
+      teamMessage = {
+        role: 'user',
+        content: `<teammate-message from="${msg.fromMemberId}" type="${msg.type}">${msg.content}</teammate-message>`,
+        timestamp: msg.timestamp || Date.now()
+      };
+    }
+
+    this.teammateMessageQueue.push(teamMessage);
+
+    // Only start processing if not already processing
+    if (!this.isProcessingQueue && !this._isOperationInProgress) {
+      this.startQueueProcessing();
+    }
+  }
+
+  /**
+   * Start queue processing with proper locking.
+   */
+  private startQueueProcessing(): void {
+    // Prevent multiple queue processing coroutines
+    if (this.isProcessingQueue) {
+      return;
+    }
+
+    this.isProcessingQueue = true;
+    this.queueProcessingPromise = this.processMessageQueue();
+    
+    // Handle completion and errors
+    this.queueProcessingPromise
+      .catch((error) => {
+        console.error('[Team] Queue processing error:', error);
+      })
+      .finally(() => {
+        this.isProcessingQueue = false;
+        this.queueProcessingPromise = null;
+      });
+  }
+
+  /**
+   * Process queued teammate messages one by one.
+   * This method should only be called from startQueueProcessing.
+   */
+  private async processMessageQueue(): Promise<void> {
+    while (this.teammateMessageQueue.length > 0) {
+      // Check if operation is in progress (e.g., user is typing or another operation)
+      if (this._isOperationInProgress) {
+        // Wait a bit and retry
+        await new Promise(resolve => setTimeout(resolve, 100));
+        continue;
+      }
+
+      const message = this.teammateMessageQueue.shift()!;
+      this.conversation.push(message);
+
+      try {
+        if (this.remoteAIClient) {
+          await this.generateRemoteResponse(0);
+        } else {
+          await this.generateResponse(0);
+        }
+      } catch (error) {
+        console.error('[Team] Failed to process teammate message:', error);
+        // Continue processing remaining messages even if one fails
+      }
+    }
+  }
+
+  /**
+   * Get team mode status.
+   */
+  getIsTeamMode(): boolean {
+    return this.isTeamMode;
+  }
+
+  /**
+   * Get team ID.
+   */
+  getTeamId(): string | null {
+    return this.teamId;
+  }
+
+  /**
+   * Get member ID.
+   */
+  getMemberId(): string | null {
+    return this.memberId;
+  }
+
+  /**
+   * Get member name.
+   */
+  getMemberName(): string | null {
+    return this.memberName;
+  }
+
+  /**
+   * Get lead ID.
+   */
+  getLeadId(): string | null {
+    return this.leadId;
+  }
+
+  /**
+   * Get spawn prompt (for team mode).
+   */
+  getSpawnPrompt(): string | null {
+    return this.spawnPrompt;
+  }
+
+  /**
+   * Get teammate message queue info.
+   */
+  getTeammateMessageQueueInfo(): { length: number } {
+    return {
+      length: this.teammateMessageQueue.length,
+    };
+  }
+
+  /**
+   * Get and clear all teammate messages from queue.
+   * Returns all pending messages and clears the queue.
+   */
+  popTeammateMessages(): ChatMessage[] {
+    const messages = [...this.teammateMessageQueue];
+    this.teammateMessageQueue = [];
+    return messages;
+  }
+
+  /**
+   * Connect to team message broker (for lead agent after creating a team).
+   * This allows the lead agent to receive real-time messages from teammates.
+   */
+  async connectToTeamBroker(teamId: string, memberId: string, brokerPort: number): Promise<void> {
+    // Skip if already connected
+    if (this.messageClient) {
+      return;
+    }
+
+    this.isTeamMode = true;
+    this.teamId = teamId;
+    this.memberId = memberId;
+    this.memberRole = 'lead';
+    this.brokerPort = brokerPort;
+
+    try {
+      const { getTeamStore, MessageClient } = await import('./team-manager/index.js');
+      this.teamStore = getTeamStore();
+
+      this.messageClient = new MessageClient(teamId, memberId, brokerPort);
+
+      this.messageClient.on('message', (msg: any) => {
+        this.handleTeamMessage(msg);
+      });
+
+      this.messageClient.on('connected', () => {
+        // Silently connected - no output needed
+      });
+
+      this.messageClient.on('disconnected', () => {
+        // Silently disconnected - no output needed
+      });
+
+      await this.messageClient.connect();
+    } catch (err) {
+      console.error(colors.error('[Team] Failed to connect to message broker:'), err);
+      throw err;  // Re-throw to let caller handle it
+    }
+  }
+
+  /**
+   * Cleanup team mode resources.
+   */
+  async cleanupTeamMode(): Promise<void> {
+    // Clear teammate's persistent MessageClient if exists
+    const { clearTeammateClient } = await import('./team-manager/index.js');
+    clearTeammateClient();
+
+    if (this.messageClient) {
+      await this.messageClient.disconnect();
+      this.messageClient = null;
+    }
+    
+    if (this.teamStore && this.teamId && this.memberId) {
+      try {
+        await this.teamStore.updateMember(this.teamId, this.memberId, {
+          status: 'shutdown',
+          lastActivity: Date.now()
+        });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+
+    // Reset team mode flag to restore thinking spinner
+    this.isTeamMode = false;
+  }
+
+  /**
    * Get SDK mode status.
    */
   getIsSdkMode(): boolean {
@@ -268,11 +570,24 @@ export class InteractiveSession {
     await skillInvoker.reload();
 
     const toolRegistry = getToolRegistry();
+
+    // Build team context if running in team mode
+    const teamContext = this.isTeamMode ? {
+      teamId: this.teamId!,
+      memberId: this.memberId!,
+      memberName: this.memberName!,
+      memberRole: this.memberRole!,
+      leadId: this.leadId || undefined,
+      brokerPort: this.brokerPort || undefined,
+      initialTaskId: this.initialTaskId || undefined,
+    } : undefined;
+
     const promptGenerator = new SystemPromptGenerator(
       toolRegistry,
       this.executionMode,
       undefined,
-      this.mcpManager
+      this.mcpManager,
+      teamContext
     );
 
     // Use the current agent's original system prompt as base
@@ -409,7 +724,7 @@ export class InteractiveSession {
     let _escCleanup: (() => void) | undefined;
     if (process.stdin.isTTY) {
       _escCleanup = setupEscKeyHandler(() => {
-        if ((this as any)._isOperationInProgress) {
+        if (this._isOperationInProgress) {
           // An operation is running, let it be cancelled
           this.cancellationManager.cancel();
         }
@@ -418,14 +733,40 @@ export class InteractiveSession {
     }
 
     // Track if an operation is in progress
-    (this as any)._isOperationInProgress = false;
+    this._isOperationInProgress = false;
 
     this.promptLoop();
 
     // Keep the promise pending until shutdown
     return new Promise((resolve) => {
-      (this as any)._shutdownResolver = resolve;
+      this._shutdownResolver = resolve;
     });
+  }
+
+  private async sendInitialPrompt(prompt: string): Promise<void> {
+    console.log(colors.textMuted(`\n📋 Initial prompt: ${prompt}\n`));
+
+    const userMessage: ChatMessage = {
+      role: 'user',
+      content: prompt,
+      timestamp: Date.now(),
+    };
+
+    this.conversation.push(userMessage);
+    await this.conversationManager.addMessage(userMessage);
+
+    const thinkingConfig = this.configManager.getThinkingConfig();
+    let thinkingTokens = 0;
+    if (thinkingConfig.enabled) {
+      const thinkingMode = detectThinkingKeywords(prompt);
+      thinkingTokens = getThinkingTokens(thinkingMode);
+    }
+
+    if (this.remoteAIClient) {
+      await this.generateRemoteResponse(thinkingTokens);
+    } else {
+      await this.generateResponse(thinkingTokens);
+    }
   }
 
   private async initialize(): Promise<void> {
@@ -954,6 +1295,20 @@ export class InteractiveSession {
   private async promptLoop(): Promise<void> {
     // Check if we're shutting down
     if ((this as any)._isShuttingDown) {
+      return;
+    }
+
+    // Check teammate message queue when agent becomes idle
+    if (this.teammateMessageQueue.length > 0) {
+      await this.processMessageQueue();
+    }
+
+    // If running in team mode with initial prompt, send it immediately and skip user input
+    if (this.spawnPrompt) {
+      const prompt = this.spawnPrompt;
+      this.spawnPrompt = null;
+      await this.sendInitialPrompt(prompt);
+      this.promptLoop();
       return;
     }
 
@@ -1579,7 +1934,25 @@ export class InteractiveSession {
 
     const toolRegistry = getToolRegistry();
     const baseSystemPrompt = this.currentAgent?.systemPrompt || 'You are a helpful AI assistant.';
-    const systemPromptGenerator = new SystemPromptGenerator(toolRegistry, this.executionMode);
+
+    // Build team context if running in team mode
+    const teamContext = this.isTeamMode ? {
+      teamId: this.teamId!,
+      memberId: this.memberId!,
+      memberName: this.memberName!,
+      memberRole: this.memberRole!,
+      leadId: this.leadId || undefined,
+      brokerPort: this.brokerPort || undefined,
+      initialTaskId: this.initialTaskId || undefined,
+    } : undefined;
+
+    const systemPromptGenerator = new SystemPromptGenerator(
+      toolRegistry,
+      this.executionMode,
+      undefined,
+      undefined,
+      teamContext
+    );
     const enhancedSystemPrompt =
       await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
 
@@ -1802,15 +2175,15 @@ export class InteractiveSession {
     }
 
     // Mark that an operation is in progress
-    (this as any)._isOperationInProgress = true;
+    this._isOperationInProgress = true;
 
     const thinkingText = colors.textMuted(`Thinking... (Press ESC to cancel)`);
     const icon = colors.primary(icons.brain);
     const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let frameIndex = 0;
 
-    // SDK 模式下不显示 spinner
-    const showThinkingSpinner = !this.isSdkMode;
+    // SDK 模式和 Team 模式下不显示 spinner (team 模式下 teammate 输出会与 spinner 混淆)
+    const showThinkingSpinner = !this.isSdkMode && !this.isTeamMode;
     let spinnerInterval: NodeJS.Timeout | null = null;
 
     // Custom spinner: only icon rotates, text stays static
@@ -1846,11 +2219,24 @@ export class InteractiveSession {
           : toolDefinitions;
 
       const baseSystemPrompt = this.currentAgent?.systemPrompt ?? '';
+
+      // Build team context if running in team mode
+      const teamContext = this.isTeamMode ? {
+        teamId: this.teamId!,
+        memberId: this.memberId!,
+        memberName: this.memberName!,
+        memberRole: this.memberRole!,
+        leadId: this.leadId || undefined,
+        brokerPort: this.brokerPort || undefined,
+        initialTaskId: this.initialTaskId || undefined,
+      } : undefined;
+
       const systemPromptGenerator = new SystemPromptGenerator(
         toolRegistry,
         this.executionMode,
         undefined,
-        this.mcpManager
+        this.mcpManager,
+        teamContext
       );
       const enhancedSystemPrompt =
         await systemPromptGenerator.generateEnhancedSystemPrompt(baseSystemPrompt);
@@ -1927,13 +2313,13 @@ export class InteractiveSession {
       }
 
       // Operation completed successfully, clear the flag
-      (this as any)._isOperationInProgress = false;
+      this._isOperationInProgress = false;
     } catch (error: any) {
       if (spinnerInterval) clearInterval(spinnerInterval);
       process.stdout.write('\r' + ' '.repeat(process.stdout.columns || 80) + '\r');
 
       // Clear the operation flag
-      (this as any)._isOperationInProgress = false;
+      this._isOperationInProgress = false;
 
       // Signal request completion to SDK
       if (this.isSdkMode && this.sdkOutputAdapter && this._currentRequestId) {
@@ -2009,7 +2395,7 @@ export class InteractiveSession {
       }
     } catch (error: any) {
       // Clear the operation flag
-      (this as any)._isOperationInProgress = false;
+      this._isOperationInProgress = false;
 
       if (error.message === 'Operation cancelled by user') {
         // Notify backend to cancel the task
@@ -2098,7 +2484,7 @@ export class InteractiveSession {
     onComplete?: () => Promise<void>
   ): Promise<void> {
     // Mark that tool execution is in progress
-    (this as any)._isOperationInProgress = true;
+    this._isOperationInProgress = true;
 
     const toolRegistry = getToolRegistry();
     const showToolDetails = this.configManager.get('showToolDetails') || false;
@@ -2177,7 +2563,7 @@ export class InteractiveSession {
           // 清理 conversation 中未完成的 tool_call
           this.cleanupIncompleteToolCalls();
 
-          (this as any)._isOperationInProgress = false;
+          this._isOperationInProgress = false;
           return;
         }
 
@@ -2450,7 +2836,7 @@ export class InteractiveSession {
     // If GUI agent was cancelled by user, don't continue generating response
     // This avoids wasting API calls and tokens on cancelled tasks
     if (guiSubagentCancelled) {
-      (this as any)._isOperationInProgress = false;
+      this._isOperationInProgress = false;
       return;
     }
 
@@ -2933,4 +3319,26 @@ export function setSingletonSession(session: InteractiveSession): void {
 
 export function getSingletonSession(): InteractiveSession | null {
   return singletonSession;
+}
+
+/**
+ * Get teammate message queue info from the singleton session.
+ * Returns queue length.
+ */
+export function getTeammateMessageQueueInfo(): { length: number } | null {
+  if (!singletonSession) {
+    return null;
+  }
+  return singletonSession.getTeammateMessageQueueInfo();
+}
+
+/**
+ * Get and clear all teammate messages from the singleton session.
+ * Returns all pending messages and clears the queue.
+ */
+export function popTeammateMessages(): ChatMessage[] | null {
+  if (!singletonSession) {
+    return null;
+  }
+  return singletonSession.popTeammateMessages();
 }

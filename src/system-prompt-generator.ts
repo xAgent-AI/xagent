@@ -23,18 +23,36 @@ export interface ToolSchema {
   bestPractices: string[];
 }
 
+export interface TeamContext {
+  teamId: string;
+  memberId: string;
+  memberName: string;
+  memberRole: string;
+  leadId?: string;
+  brokerPort?: number;
+  initialTaskId?: string;
+}
+
 export class SystemPromptGenerator {
   private toolRegistry: ToolRegistry;
   private executionMode: ExecutionMode;
   private agentConfig?: AgentConfig;
   private mcpManager?: MCPManager;
+  private teamContext?: TeamContext;
   private cachedEnvironmentInfo: string;
 
-  constructor(toolRegistry: ToolRegistry, executionMode: ExecutionMode, agentConfig?: AgentConfig, mcpManager?: MCPManager) {
+  constructor(
+    toolRegistry: ToolRegistry,
+    executionMode: ExecutionMode,
+    agentConfig?: AgentConfig,
+    mcpManager?: MCPManager,
+    teamContext?: TeamContext
+  ) {
     this.toolRegistry = toolRegistry;
     this.executionMode = executionMode;
     this.agentConfig = agentConfig;
     this.mcpManager = mcpManager;
+    this.teamContext = teamContext;
     this.cachedEnvironmentInfo = this.generateEnvironmentInfo();
   }
 
@@ -92,6 +110,41 @@ export class SystemPromptGenerator {
 - **Current Date**: ${currentDate} (Timezone: ${timeZone})${psSyntaxRules}`;
   }
 
+  /**
+   * Generate team context information for teammate agents
+   */
+  private generateTeamContextInfo(): string {
+    if (!this.teamContext) return '';
+
+    const { teamId, memberId, memberName, memberRole, leadId, initialTaskId } = this.teamContext;
+
+    let teamInfo = `
+
+## Team Context Information
+
+You are running as a **${memberRole}** in a team.
+
+### Your Identity
+- **Team ID**: ${teamId}
+- **Your Member ID**: ${memberId}
+- **Your Name**: ${memberName}
+- **Your Role**: ${memberRole}`;
+
+    if (leadId) {
+      teamInfo += `
+- **Lead Member ID**: ${leadId}`;
+    }
+
+    if (initialTaskId) {
+      teamInfo += `
+- **Initial Task ID**: ${initialTaskId}`;
+    }
+
+    teamInfo += `**Important**: Use \`team(team_action="get_status", team_id="${teamId}")\` to get the complete team status including lead_id and all other members before starting your work.`;
+
+    return teamInfo;
+  }
+
   async generateEnhancedSystemPrompt(baseSystemPrompt: string): Promise<string> {
     let localTools = this.toolRegistry.getAll().filter(
       tool => tool.allowedModes.includes(this.executionMode)
@@ -110,6 +163,11 @@ export class SystemPromptGenerator {
 
     // Add system environment information (cached in constructor)
     enhancedPrompt += this.cachedEnvironmentInfo;
+
+    // Add team context information if running in team mode
+    if (this.teamContext) {
+      enhancedPrompt += this.generateTeamContextInfo();
+    }
 
     // Only add tool-related content if tools are available
     if (allAvailableTools.length > 0) {
@@ -140,31 +198,6 @@ ${executionStrategy}
 - Use tools efficiently - avoid redundant calls
 - When in doubt, ask the user for clarification
 - Maintain context across tool calls to build a coherent solution`;
-    } else {
-      // No tools available - explicitly tell the AI not to use tools
-      enhancedPrompt += `
-
-## IMPORTANT: READ-ONLY MODE
-
-You are in DEFAULT mode (read-only mode). You CANNOT use any tools or functions.
-
-STRICT PROHIBITIONS:
-- DO NOT attempt to call any functions, tools, or commands
-- DO NOT output any tool call syntax, such as:
-  - <function_calls>...</function_calls>
-  - ToolName(params)
-  - Function call format
-  - Any similar syntax
-- DO NOT simulate tool calls or pretend to use tools
-- DO NOT output code that would execute tools
-
-REQUIRED BEHAVIOR:
-- Respond ONLY with plain text
-- Answer questions based on your knowledge
-- If you need to read files or perform actions, ask the user to switch modes
-- Tell the user they can use "/mode yolo" or "/mode accept_edits" to enable tools
-
-Remember: You are in a conversational mode, not a tool-execution mode. Just talk to the user!`;
     }
 
     return enhancedPrompt;

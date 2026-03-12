@@ -82,6 +82,7 @@ export class WhitelistChecker {
     'xml_escape',
     'InvokeSkill',
     'task',
+    'Team',
   ]);
 
   /**

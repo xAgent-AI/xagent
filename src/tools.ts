@@ -1434,43 +1434,46 @@ export interface ToolCallOptions {
 
 export class TaskTool implements Tool {
   name = 'task';
-  description = `Launch specialized AI subagents to handle complex, multi-step tasks. Subagents are expert agents designed for specific domains like planning, code exploration, frontend testing, and more.
 
-# When to Use
-- Complex tasks requiring specialized expertise (planning, analysis, testing)
-- Multi-step workflows that benefit from dedicated focus
-- When you need to delegate work to avoid context overload
-- Parallel execution of independent tasks across different domains
-- User explicitly requests a specific type of agent (e.g., "use the frontend tester")
+  get description(): string {
+    return `Launch specialized AI subagents to handle complex tasks autonomously.
 
-# Available SubAgents
-1. **plan-agent** - Task planning and breakdown, risk analysis, implementation roadmaps
-2. **explore-agent** - Codebase exploration, architecture analysis, finding specific code
-3. **frontend-tester** - Writing and running frontend tests, UI validation
-4. **code-reviewer** - Code review, security checks, bug detection
-5. **frontend-developer** - Frontend development (React, TypeScript, modern web)
-6. **backend-developer** - Backend development (Node.js, APIs, databases)
-7. **gui-subagent** - Browser automation, visual web interactions, desktop application automation
+# SubAgent Types
+| Type | Use Case |
+|------|----------|
+| **plan-agent** | Task planning, risk analysis, roadmaps |
+| **explore-agent** | Codebase exploration, architecture analysis |
+| **code-reviewer** | Code review, security checks, bug detection |
+| **frontend-tester** | Frontend tests, UI validation |
+| **frontend-developer** | React, TypeScript, web development |
+| **backend-developer** | Node.js, APIs, databases |
+| **gui-subagent** | Browser automation, visual interactions |
 
-# When NOT to Use
-- Simple, straightforward tasks you can handle directly
-- Tasks that don't require specialized expertise
-- Single-step operations (use other tools instead)
+# SubAgent Modes
 
-# Examples
-- "Analyze the authentication module and create a security report" → explore-agent
-- "Create a detailed implementation plan for feature X" → plan-agent
-- "Write unit tests for this React component" → frontend-tester
-- "Review my changes for potential bugs" → code-reviewer
-- "Automatically fill out this form and navigate the website" → gui-subagent
-- "Test the login process on the desktop application" → gui-subagent
-- "send a message to the my mom on the desktop application wechat" → gui-subagent
+## Single Agent
+Launch a single specialized agent:
+task(description="Explore auth flow", subagent_type="explore-agent")
+
+## Parallel Agents
+Launch multiple agents to work in parallel:
+task(description="Review code", agents=[{subagent_type:"code-reviewer", prompt:"Check security"}, {subagent_type:"frontend-tester", prompt:"Test forms"}])
+
+# When to Use SubAgents
+- Complex tasks needing specialized expertise
+- Independent tasks that can run in parallel
+- One-time exploratory or research tasks
+
+# When NOT to Use SubAgents
+- Tasks requiring context continuity
+- Multi-step workflows with dependencies
 
 # Best Practices
-- Provide clear, specific prompts to subagents
-- Include relevant context (file paths, requirements, constraints)
-- Set appropriate executionMode if needed
-- For parallel execution, ensure tasks are truly independent`;
+- **Clear Prompts**: Provide detailed context and specific goals
+- **Parallel Mode**: Use for independent tasks to save time
+- **Type Selection**: Choose appropriate subagent type for the task`;
+  }
+
   allowedModes = [
     ExecutionMode.YOLO,
     ExecutionMode.ACCEPT_EDITS,
@@ -1482,7 +1485,7 @@ export class TaskTool implements Tool {
     params: {
       description: string;
       prompt?: string;
-      query?: string; // Support both prompt and query (tool definition uses query)
+      query?: string;
       subagent_type?:
         | 'general-purpose'
         | 'plan-agent'
@@ -2819,6 +2822,200 @@ export class TaskTool implements Tool {
   }
 }
 
+export class TeamTool implements Tool {
+  name = 'Team';
+
+  get description(): string {
+    return `Manage AI agent teams with shared tasks and real-time messaging.
+
+# When to Use
+- **Complex multi-step projects**: Tasks requiring different expertise (frontend, backend, testing)
+- **Parallel execution**: Multiple independent subtasks that can run simultaneously
+- **Long-running operations**: Tasks that benefit from persistent agent instances
+- **Cross-layer coordination**: Work spanning multiple system layers or components
+- **Collaborative problem-solving**: Tasks needing different perspectives or skill sets
+
+# When NOT to Use
+- **Simple single-step tasks**: Use direct tool calls or Task tool instead
+- **Sequential dependencies**: When each step must complete before the next starts
+- **Quick one-off queries**: Team setup has overhead, not worth it for simple tasks
+- **Single expertise required**: When one agent can handle the entire task efficiently
+- **Tight resource constraints**: Each teammate consumes additional API calls and memory
+
+# Best Practices
+
+## For Lead
+- **Clear role definitions**: Give each teammate a specific role and focused prompt
+- **Small teams first**: Start with 2-3 teammates; add more only if needed
+- **Monitor progress**: Check task status before assigning new work
+- **Coordinate via messages**: Send message only necessary. Use broadcast for team-wide updates, direct messages for specific teammates
+- **After completing work**: Always check message queue before complete the tasks
+- **Clean shutdown**: Always call cleanup when team work is complete
+
+## For Teammate
+- **Complete assigned tasks**: Execute the task described in your initial prompt or assigned via messages
+- **Send result to lead**: After completing a task, use message to send your result directly to lead
+- **Update task status**: Call task_update with action="complete" to mark the task done
+- **Coordinate via messages**: Send message only necessary. Use broadcast for team-wide updates, direct messages for specific teammates
+- **After completing work**: Always check message queue before becoming idle
+
+# Your Role
+- \`your_role: "lead"\` - You can create teams, manage members, assign tasks
+- \`your_role: "teammate"\` - You execute assigned tasks, communicate with lead and teammate
+
+# Team Actions
+
+## Team Management (Lead Only)
+- **create**: Create team and spawn teammates
+  - team(action="create", team_name="My Team", teammates=[{name: "coder", role: "developer", prompt: "You are a code reviewer"}, {name: "reviewer", role: "QA", prompt: "You are a QA engineer"}])
+- **spawn**: Add new teammates to existing team
+  - team(action="spawn", team_id="xxx", teammates=[{name: "new-member", role: "developer", prompt: "..."}])
+- **shutdown**: Stop a teammate
+  - team(action="shutdown", team_id="xxx", member_id="xxx")
+- **cleanup**: Delete team
+  - team(action="cleanup", team_id="xxx")
+
+## Communication
+- **broadcast**: Send message to all teammates
+  - team(action="message", team_id="xxx", message={to_member_id: "broadcast", content: "..."})
+- **message**: Send direct message to specific teammate
+  - team(action="message", team_id="xxx", message={to_member_id: "target-id", content: "..."})
+- **message_queue**: Get teammate message queue status or retrieve messages
+  - team(action="message_queue") // Returns: { length }
+  - team(action="message_queue", pop=true) // Returns and clears all messages: { count, messages }
+
+## Task Management
+- **task_create**: Create a new task (Lead)
+  - team(action="task_create", team_id="xxx", task_config={title: "...", description: "...", priority: "high"})
+- **task_delete**: Delete a task (Lead)
+  - team(action="task_delete", team_id="xxx", task_id="xxx")
+- **task_list**: List all tasks
+  - team(action="task_list", team_id="xxx", task_filter="all"|"pending"|"available"|"in_progress"|"completed")
+- **task_update**: Update task status (claim/complete/release)
+  - team(action="task_update", team_id="xxx", task_update={task_id: "xxx", action: "claim"|"complete"|"release", result?: "..."})
+
+## View Info
+- **get_status**: Get team status (includes your_role)
+  - team(action="get_status", team_id="xxx")
+- **list_teams**: List all teams
+  - team(action="list_teams")
+`;
+  }
+
+  allowedModes = [
+    ExecutionMode.YOLO,
+    ExecutionMode.ACCEPT_EDITS,
+    ExecutionMode.PLAN,
+    ExecutionMode.SMART,
+  ];
+
+  async execute(params: {
+    action: 'create' | 'spawn' | 'message' | 'shutdown' | 'cleanup' | 'task_create' | 'task_update' | 'task_delete' | 'task_list' | 'get_status' | 'list_teams' | 'message_queue';
+    team_name?: string;
+    team_id?: string;
+    member_id?: string;
+    teammates?: Array<{ name: string; role: string; prompt: string; model?: string }>;
+    message?: { to_member_id?: string | 'broadcast'; content: string };
+    task_config?: { title: string; description: string; assignee?: string; dependencies?: string[]; priority?: 'high' | 'medium' | 'low' };
+    task_update?: { task_id: string; action: 'claim' | 'complete' | 'release'; result?: string };
+    task_id?: string;
+    task_filter?: 'all' | 'pending' | 'available' | 'in_progress' | 'completed';
+    pop?: boolean;
+  }): Promise<{ success: boolean; message: string; result?: any }> {
+    // Handle message_queue action separately (doesn't need coordinator)
+    if (params.action === 'message_queue') {
+      const session = getSingletonSession();
+      if (!session) {
+        return { success: false, message: 'No active session found' };
+      }
+
+      if (params.pop) {
+        // Pop and return all messages, clearing the queue
+        const messages = session.popTeammateMessages();
+        return {
+          success: true,
+          message: `Retrieved ${messages.length} messages from queue`,
+          result: {
+            count: messages.length,
+            messages: messages.map(m => ({
+              role: m.role,
+              content: m.content,
+              timestamp: m.timestamp,
+            })),
+          },
+        };
+      }
+
+      // Just return queue info
+      const queueInfo = session.getTeammateMessageQueueInfo();
+      return {
+        success: true,
+        message: `Message queue: ${queueInfo.length} messages`,
+        result: queueInfo,
+      };
+    }
+
+    const { getTeamCoordinator } = await import('./team-manager/index.js');
+    const coordinator = getTeamCoordinator();
+
+    // Check message queue before cleanup
+    if (params.action === 'cleanup') {
+      const session = getSingletonSession();
+      if (session) {
+        const queueInfo = session.getTeammateMessageQueueInfo();
+        if (queueInfo.length > 0) {
+          return {
+            success: false,
+            message: `Cannot cleanup: message queue has ${queueInfo.length} unprocessed messages. Process them first with team(action="message_queue", pop=true)`,
+            result: { queue_length: queueInfo.length },
+          };
+        }
+      }
+    }
+
+    // Map team tool params to TeamToolParams
+    const teamParams = {
+      team_action: params.action,
+      team_name: params.team_name,
+      team_id: params.team_id,
+      member_id: params.member_id,
+      teammates: params.teammates,
+      message: params.message,
+      task_config: params.task_config,
+      task_update: params.task_update,
+      task_id: params.task_id,
+      task_filter: params.task_filter,
+    };
+
+    const result = await coordinator.execute(teamParams);
+
+    // After successful team creation, connect lead agent to broker
+    if (params.action === 'create' && result.success && result.result) {
+      const { team_id, your_member_id, broker_port } = result.result;
+      if (team_id && your_member_id && broker_port) {
+        const session = getSingletonSession();
+        if (session) {
+          try {
+            await session.connectToTeamBroker(team_id, your_member_id, broker_port);
+          } catch (err) {
+            console.error('[Team] Failed to connect to message broker:', err);
+          }
+        }
+      }
+    }
+
+    // After successful team cleanup, disconnect lead agent from broker
+    if (params.action === 'cleanup' && result.success) {
+      const session = getSingletonSession();
+      if (session) {
+        await session.cleanupTeamMode();
+      }
+    }
+
+    return result;
+  }
+}
+
 export class ReadBashOutputTool implements Tool {
   name = 'ReadBashOutput';
   description = `Retrieve output from a background task that was started with Bash(run_in_bg=true).
@@ -3705,6 +3902,7 @@ export class ToolRegistry {
     this.register(this.todoWriteTool);
     this.register(new TodoReadTool(this.todoWriteTool));
     this.register(new TaskTool());
+    this.register(new TeamTool());
     this.register(new ReadBashOutputTool());
     this.register(new WebFetchTool());
     this.register(new AskUserQuestionTool());
@@ -4364,6 +4562,91 @@ export class ToolRegistry {
               },
             },
             required: ['skill'],
+          };
+          break;
+
+        case 'Team':
+          parameters = {
+            type: 'object',
+            properties: {
+              action: {
+                type: 'string',
+                enum: ['create', 'spawn', 'message', 'shutdown', 'cleanup', 'task_create', 'task_update', 'task_delete', 'task_list', 'get_status', 'list_teams', 'message_queue'],
+                description: 'The team action to perform',
+              },
+              team_name: {
+                type: 'string',
+                description: 'Team name (required for create action)',
+              },
+              team_id: {
+                type: 'string',
+                description: 'Team ID (required for most actions)',
+              },
+              member_id: {
+                type: 'string',
+                description: 'Member ID (required for shutdown action)',
+              },
+              teammates: {
+                type: 'array',
+                description: 'Array of teammate configs (required for create/spawn)',
+                items: {
+                  type: 'object',
+                  properties: {
+                    name: { type: 'string', description: 'Teammate name' },
+                    role: { type: 'string', description: 'Teammate role' },
+                    prompt: { type: 'string', description: 'Teammate system prompt' },
+                    model: { type: 'string', description: 'Optional model override' },
+                  },
+                  required: ['name', 'role', 'prompt'],
+                },
+              },
+              message: {
+                type: 'object',
+                description: 'Message payload (required for message action)',
+                properties: {
+                  to_member_id: {
+                    type: 'string',
+                    description: 'Target member ID or "broadcast"',
+                  },
+                  content: {
+                    type: 'string',
+                    description: 'Message content',
+                  },
+                },
+              },
+              task_config: {
+                type: 'object',
+                description: 'Task creation config (for task_create)',
+                properties: {
+                  title: { type: 'string', description: 'Task title' },
+                  description: { type: 'string', description: 'Task description' },
+                  priority: { type: 'string', enum: ['high', 'medium', 'low'], description: 'Task priority' },
+                },
+              },
+              task_update: {
+                type: 'object',
+                description: 'Task update config (for task_update)',
+                properties: {
+                  task_id: { type: 'string', description: 'Task ID' },
+                  action: { type: 'string', enum: ['claim', 'complete', 'release'], description: 'Update action' },
+                  result: { type: 'string', description: 'Task result (optional)' },
+                },
+              },
+              task_id: {
+                type: 'string',
+                description: 'Task ID (required for task_delete)',
+              },
+              task_filter: {
+                type: 'string',
+                enum: ['all', 'pending', 'available', 'in_progress', 'completed'],
+                description: 'Task filter (for task_list)',
+              },
+              pop: {
+                type: 'boolean',
+                description: 'For message_queue: if true, retrieve and clear all messages from queue',
+              },
+            },
+            required: ['action'],
           };
           break;
 

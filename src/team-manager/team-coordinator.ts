@@ -12,7 +12,7 @@ import {
   TEAMMATE_PERMISSIONS,
   MemberPermissions,
 } from './types.js';
-import { colors } from '../theme.js';
+import { colors, icons, styleHelpers } from '../theme.js';
 
 export class TeamCoordinator {
   private store: TeamStore;
@@ -325,9 +325,9 @@ export class TeamCoordinator {
     const brokerPort = broker.getPort();
 
     console.log(
-      colors.primaryBright(`\n🚀 Team "${team.teamName}" created (ID: ${team.teamId})`)
+      colors.primaryBright(`\n${icons.rocket} Team "${team.teamName}" created`)
     );
-    console.log(colors.textMuted(`   Message broker: port ${brokerPort}`));
+    console.log(colors.textMuted(`   ${icons.arrow} Broker: port ${brokerPort}`));
 
     const spawnedMembers: TeamMember[] = [];
     const initialTasks: { taskId: string; title: string; assignee: string }[] = [];
@@ -337,6 +337,8 @@ export class TeamCoordinator {
 
     // Spawn teammates with lead ID
     if (params.teammates && params.teammates.length > 0) {
+      console.log(colors.text(`   ${icons.bullet} Members:`));
+      
       for (const teammateConfig of params.teammates) {
         // Create initial task BEFORE spawning, so we can pass task ID to teammate
         const task = await this.store.createTask(team.teamId, {
@@ -363,10 +365,10 @@ export class TeamCoordinator {
         );
         spawnedMembers.push(member);
         const displayName = member.name || member.memberId.slice(0, 8);
+        const statusIcon = member.status === 'active' ? '🟢' : '🟡';
+
         console.log(
-          colors.success(
-            `  ✓ Spawned: ${displayName} (${member.memberRole || member.role}) [${member.displayMode}]`
-          )
+          `     ${statusIcon} ${colors.primary(displayName)} ${colors.textMuted(`(${member.memberRole || member.role})`)}`
         );
 
         // Mark task as in_progress and assign to the teammate
@@ -377,8 +379,6 @@ export class TeamCoordinator {
 
         // Update initialTasks with assignee
         initialTasks[initialTasks.length - 1].assignee = member.memberId;
-
-        console.log(colors.textMuted(`    → Created initial task: ${task.title}`));
       }
     }
 
@@ -450,10 +450,9 @@ export class TeamCoordinator {
     );
 
     const displayName = member.name || member.memberId.slice(0, 8);
+    const statusIcon = member.status === 'active' ? '🟢' : '🟡';
     console.log(
-      colors.success(
-        `  ✓ Spawned: ${displayName} (${member.memberRole || member.role}) [${member.displayMode}]`
-      )
+      `  ${statusIcon} ${colors.success('Spawned:')} ${colors.primary(displayName)} ${colors.textMuted(`(${member.memberRole || member.role})`)}`
     );
 
     return {
@@ -977,9 +976,9 @@ export class TeamCoordinator {
     const result = await this.spawner.shutdownTeammate(params.team_id, memberId);
 
     if (result.success) {
-      console.log(colors.warning(`✓ Teammate ${memberId} shut down${result.reason ? `: ${result.reason}` : ''}`));
+      console.log(colors.textMuted(`${icons.check} Teammate ${memberId.slice(0, 8)} shut down${result.reason ? `: ${result.reason}` : ''}`));
     } else {
-      console.log(colors.error(`✗ Failed to shutdown ${memberId}: ${result.reason}`));
+      console.log(colors.error(`${icons.cross} Failed to shutdown ${memberId.slice(0, 8)}: ${result.reason}`));
     }
 
     return {
@@ -1016,10 +1015,11 @@ export class TeamCoordinator {
         success: result.success,
         reason: result.reason,
       });
+      const memberName = teammate.name || teammate.memberId.slice(0, 8);
       if (result.success) {
-        console.log(colors.warning(`  ✓ Auto-shutdown: ${teammate.name || teammate.memberId.slice(0, 8)}`));
+        console.log(colors.textMuted(`  ${icons.check} ${memberName}`));
       } else {
-        console.log(colors.error(`  ✗ Failed to shutdown ${teammate.name || teammate.memberId.slice(0, 8)}: ${result.reason}`));
+        console.log(colors.error(`  ${icons.cross} ${memberName}: ${result.reason}`));
       }
     }
 
@@ -1033,7 +1033,7 @@ export class TeamCoordinator {
 
     await this.store.deleteTeam(params.team_id);
 
-    console.log(colors.success(`✓ Team ${params.team_id} cleaned up`));
+    console.log(colors.success(`\n${icons.check} Team cleaned up (${shutdownResults.filter(r => r.success).length}/${activeTeammates.length} teammates shutdown)`));
 
     return {
       success: true,

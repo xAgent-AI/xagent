@@ -5,7 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { TeamStore, getTeamStore } from './team-store.js';
 import { TeamMember, DisplayMode, TeammateConfig, TEAMMATE_PERMISSIONS } from './types.js';
-import { colors } from '../theme.js';
+import { colors, icons } from '../theme.js';
 
 const generateId = () => crypto.randomUUID();
 
@@ -61,15 +61,88 @@ export class TeammateSpawner {
   private tmuxSessionName: string | null = null;
   private warnedAboutWindows = false;
 
+  // Output filtering configuration
+  private static readonly IGNORED_PATTERNS = [
+    /^╔[═]+╗$/,                           // Banner top border
+    /^║[^║]+║$/,                          // Banner content
+    /^╚[═]+╝$/,                           // Banner bottom border
+    /^─+$/,                               // Separator lines
+    /^✨ Welcome to XAGENT CLI!$/,        // Welcome message
+    /^Type \/help to see available commands$/, // Help hint
+    /^ℹ Current Mode:$/,                  // Mode info
+    /^\s*✨\s*\w+/,                        // Mode indicator
+    /^\s*🧠 (Local|Remote) Models:$/,     // Model info header
+    /^\s*→ (LLM|VLM):/,                   // Model info lines
+    /^📝 Registering MCP server/,          // MCP registration
+    /^🧠 Connecting to \d+ MCP server/,   // MCP connection
+    /^Connecting to MCP Server/,           // MCP connection detail
+    /^Loaded \d+ tools from MCP Server/,   // MCP tools loaded
+    /^MCP Server connected$/,              // MCP connected
+    /^✓ \d+\/\d+ MCP server/,             // MCP summary
+    /^\[MCP\] Registered \d+ tool/,       // MCP tools registered
+    /^✔ Initialization complete$/,         // Init complete
+  ];
+
+  // Patterns that indicate important output (should always show)
+  private static readonly IMPORTANT_PATTERNS = [
+    /✅|✓|✔/,                              // Success markers
+    /❌|✗|✖/,                              // Error markers
+    /⚠|⚠️/,                               // Warning markers
+    /🔍|🔎/,                              // Search/action markers
+    /📝|📄/,                              // Document markers
+    /Tool|tool/,                           // Tool execution
+    /Error|error|ERROR/,                   // Errors
+    /Task completed|completed/,            // Task completion
+    /Found \d+/,                           // Search results
+  ];
+
   constructor(store?: TeamStore) {
     this.store = store || getTeamStore();
     // Validate CLI on construction
     validateCliPath();
   }
 
+  /**
+   * Check if a line should be filtered out (not displayed)
+   */
+  private shouldFilterLine(line: string): boolean {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+
+    // Check if line matches any ignored pattern
+    for (const pattern of TeammateSpawner.IGNORED_PATTERNS) {
+      if (pattern.test(trimmed)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Format a teammate output line with proper styling
+   */
+  private formatOutputLine(memberName: string, line: string): string {
+    const trimmed = line.trim();
+    
+    // Use compact prefix format: [name] content
+    const prefix = colors.primary(`[${memberName}]`);
+    
+    return `${prefix} ${trimmed}`;
+  }
+
+  /**
+   * Format an error line with error styling
+   */
+  private formatErrorLine(memberName: string, line: string): string {
+    const trimmed = line.trim();
+    const prefix = colors.error(`[${memberName}]`);
+    return `${prefix} ${trimmed}`;
+  }
+
   private isTmuxAvailable(): boolean {
     if (process.platform === 'win32') {
-      this.warnWindowsUser('tmux');
+      // this.warnWindowsUser('tmux');
       return false;
     }
     try {
@@ -87,7 +160,7 @@ export class TeammateSpawner {
   private isIterm2Available(): boolean {
     if (process.platform !== 'darwin') {
       if (process.platform === 'win32') {
-        this.warnWindowsUser('iTerm2');
+        // this.warnWindowsUser('iTerm2');
       }
       return false;
     }
@@ -99,20 +172,20 @@ export class TeammateSpawner {
     }
   }
 
-  /**
-   * Display Windows compatibility warning (only once per session)
-   */
-  private warnWindowsUser(feature: string): void {
-    if (this.warnedAboutWindows) return;
-    this.warnedAboutWindows = true;
+  // /**
+  //  * Display Windows compatibility warning (only once per session)
+  //  */
+  // private warnWindowsUser(feature: string): void {
+  //   if (this.warnedAboutWindows) return;
+  //   this.warnedAboutWindows = true;
 
-    console.log(colors.warning(
-      `\n[Windows] ${feature} is not available on Windows. ` +
-      `Using 'in-process' mode for parallel agents.\n` +
-      `Note: In-process mode runs teammates in the same terminal. ` +
-      `For true terminal multiplexing on Windows, consider using Windows Terminal with multiple tabs.\n`
-    ));
-  }
+  //   console.log(colors.warning(
+  //     `\n[Windows] ${feature} is not available on Windows. ` +
+  //     `Using 'in-process' mode for parallel agents.\n` +
+  //     `Note: In-process mode runs teammates in the same terminal. ` +
+  //     `For true terminal multiplexing on Windows, consider using Windows Terminal with multiple tabs.\n`
+  //   ));
+  // }
 
   async spawnTeammate(
     teamId: string,
@@ -396,8 +469,8 @@ export class TeammateSpawner {
     childProcess.stdout?.on('data', (data: Buffer) => {
       const lines = data.toString().split('\n');
       for (const line of lines) {
-        if (line.trim()) {
-          console.log(`[${config.name}] ${line}`);
+        if (!this.shouldFilterLine(line)) {
+          console.log(this.formatOutputLine(config.name, line));
         }
       }
     });
@@ -406,7 +479,7 @@ export class TeammateSpawner {
       const lines = data.toString().split('\n');
       for (const line of lines) {
         if (line.trim()) {
-          console.error(`[${config.name} ERROR] ${line}`);
+          console.error(this.formatErrorLine(config.name, line));
         }
       }
     });
@@ -417,11 +490,11 @@ export class TeammateSpawner {
         status: 'shutdown',
         lastActivity: Date.now()
       });
-      console.log(`[${config.name}] exited with code ${code}`);
+      console.log(colors.textMuted(`[${config.name}] ${icons.arrow} exited with code ${code}`));
     });
 
     childProcess.on('error', (error) => {
-      console.error(`[${config.name} SPAWN ERROR] ${error.message}`);
+      console.error(colors.error(`[${config.name}] SPAWN ERROR: ${error.message}`));
       this.activeProcesses.delete(memberId);
     });
 

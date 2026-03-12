@@ -147,12 +147,8 @@ export class InteractiveSession {
       this.brokerPort = process.env.XAGENT_BROKER_PORT ? parseInt(process.env.XAGENT_BROKER_PORT, 10) : null;
       this.initialTaskId = process.env.XAGENT_INITIAL_TASK_ID || null;
       
-      // Show team role info in welcome message
-      console.log(colors.info(`[Team] Running as: ${this.memberName} (${this.memberRole})`));
-      console.log(colors.info(`[Team] Team ID: ${this.teamId}, Member ID: ${this.memberId}, Lead ID: ${this.leadId}`));
-      if (this.initialTaskId) {
-        console.log(colors.info(`[Team] Initial Task ID: ${this.initialTaskId}`));
-      }
+      // Show team role info in welcome message (compact format)
+      console.log(colors.textMuted(`[Team] ${this.memberName} (${this.memberRole})`));
       
       // Import and initialize team components
       import('./team-manager/index.js').then(async ({ getTeamStore, MessageClient, setTeammateClient }) => {
@@ -174,11 +170,11 @@ export class InteractiveSession {
           });
 
           this.messageClient.on('connected', () => {
-            console.log(`[Team] Connected to message broker on port ${this.brokerPort}`);
+            // Silently connected - no output needed
           });
 
           this.messageClient.on('disconnected', () => {
-            console.log('[Team] Disconnected from message broker');
+            // Silently disconnected - no output needed
           });
 
           try {
@@ -468,14 +464,8 @@ export class InteractiveSession {
   async connectToTeamBroker(teamId: string, memberId: string, brokerPort: number): Promise<void> {
     // Skip if already connected
     if (this.messageClient) {
-      console.log(colors.info(`[Team] Lead already connected to broker, skipping reconnection`));
       return;
     }
-
-    console.log(colors.info(`[Team] Connecting lead to message broker...`));
-    console.log(colors.info(`[Team]   Team ID: ${teamId}`));
-    console.log(colors.info(`[Team]   Member ID: ${memberId}`));
-    console.log(colors.info(`[Team]   Broker Port: ${brokerPort}`));
 
     this.isTeamMode = true;
     this.teamId = teamId;
@@ -494,16 +484,16 @@ export class InteractiveSession {
       });
 
       this.messageClient.on('connected', () => {
-        console.log(colors.success(`[Team] ✓ Lead connected to message broker on port ${brokerPort}`));
+        // Silently connected - no output needed
       });
 
       this.messageClient.on('disconnected', () => {
-        console.log(colors.warning('[Team] Lead disconnected from message broker'));
+        // Silently disconnected - no output needed
       });
 
       await this.messageClient.connect();
     } catch (err) {
-      console.error(colors.error('[Team] Failed to connect lead to message broker:'), err);
+      console.error(colors.error('[Team] Failed to connect to message broker:'), err);
       throw err;  // Re-throw to let caller handle it
     }
   }

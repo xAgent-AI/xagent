@@ -804,6 +804,183 @@ export class SdkOutputAdapter {
     return modeConfigs[mode.toLowerCase()] || modeConfigs.default;
   }
 
+  // ==================== Team Output Methods ====================
+
+  /**
+   * Format and output team creation.
+   */
+  outputTeamCreate(params: {
+    teamId: string;
+    teamName: string;
+    brokerPort: number;
+    members: Array<{
+      id: string;
+      name: string;
+      role: string;
+      taskId?: string;
+      taskTitle?: string;
+    }>;
+  }): void {
+    this.output({
+      type: 'system',
+      subtype: 'team_create',
+      timestamp: Date.now(),
+      data: {
+        teamId: params.teamId,
+        teamName: params.teamName,
+        brokerPort: params.brokerPort,
+        members: params.members
+      }
+    });
+  }
+
+  /**
+   * Format and output team member spawn.
+   */
+  outputTeamMemberSpawn(params: {
+    memberId: string;
+    memberName: string;
+    memberRole: string;
+    displayMode: string;
+  }): void {
+    this.output({
+      type: 'system',
+      subtype: 'team_member_spawn',
+      timestamp: Date.now(),
+      data: {
+        memberId: params.memberId,
+        memberName: params.memberName,
+        memberRole: params.memberRole,
+        displayMode: params.displayMode
+      }
+    });
+  }
+
+  /**
+   * Format and output team member output (filtered/formatted).
+   */
+  outputTeamMemberOutput(params: {
+    memberId: string;
+    memberName: string;
+    content: string;
+    type: 'info' | 'success' | 'error' | 'warning' | 'tool' | 'result';
+  }): void {
+    this.output({
+      type: 'output',
+      subtype: 'team_member_output',
+      timestamp: Date.now(),
+      data: {
+        memberId: params.memberId,
+        memberName: params.memberName,
+        content: params.content,
+        outputType: params.type
+      }
+    });
+  }
+
+  /**
+   * Format and output team task update.
+   */
+  outputTeamTaskUpdate(params: {
+    taskId: string;
+    taskTitle?: string;
+    status: 'created' | 'claimed' | 'in_progress' | 'completed' | 'released' | 'deleted';
+    assignee?: string;
+    assigneeName?: string;
+    result?: string;
+  }): void {
+    this.output({
+      type: 'system',
+      subtype: 'team_task_update',
+      timestamp: Date.now(),
+      data: {
+        taskId: params.taskId,
+        taskTitle: params.taskTitle,
+        status: params.status,
+        assignee: params.assignee,
+        assigneeName: params.assigneeName,
+        result: params.result
+      }
+    });
+  }
+
+  /**
+   * Format and output team message.
+   */
+  outputTeamMessage(params: {
+    messageId: string;
+    fromMemberId: string;
+    fromMemberName?: string;
+    toMemberId: string | 'broadcast';
+    content: string;
+  }): void {
+    this.output({
+      type: 'system',
+      subtype: 'team_message',
+      timestamp: Date.now(),
+      data: {
+        messageId: params.messageId,
+        fromMemberId: params.fromMemberId,
+        fromMemberName: params.fromMemberName,
+        toMemberId: params.toMemberId,
+        content: params.content
+      }
+    });
+  }
+
+  /**
+   * Format and output team cleanup.
+   */
+  outputTeamCleanup(params: {
+    teamId: string;
+    teamName?: string;
+    shutdownCount: number;
+    totalCount: number;
+  }): void {
+    this.output({
+      type: 'system',
+      subtype: 'team_cleanup',
+      timestamp: Date.now(),
+      data: {
+        teamId: params.teamId,
+        teamName: params.teamName,
+        shutdownCount: params.shutdownCount,
+        totalCount: params.totalCount
+      }
+    });
+  }
+
+  /**
+   * Format and output team status summary.
+   */
+  outputTeamStatus(params: {
+    teamId: string;
+    teamName: string;
+    memberCount: number;
+    activeTaskCount: number;
+    completedTaskCount: number;
+    members: Array<{
+      id: string;
+      name: string;
+      role: string;
+      status: string;
+    }>;
+  }): void {
+    this.output({
+      type: 'system',
+      subtype: 'team_status',
+      timestamp: Date.now(),
+      data: {
+        teamId: params.teamId,
+        teamName: params.teamName,
+        memberCount: params.memberCount,
+        activeTaskCount: params.activeTaskCount,
+        completedTaskCount: params.completedTaskCount,
+        members: params.members
+      }
+    });
+  }
+
   /**
    * Convert a SessionInput to SDK format.
    */

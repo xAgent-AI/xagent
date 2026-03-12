@@ -170,11 +170,6 @@ export class MessageBroker extends EventEmitter {
     let memberId: string | null = null;
     let buffer = '';
 
-    // Log new connection
-    const remoteAddress = socket.remoteAddress || 'unknown';
-    const remotePort = socket.remotePort || 'unknown';
-    console.log(`[Broker] New connection from ${remoteAddress}:${remotePort}`);
-
     socket.on('data', (data) => {
       buffer += data.toString();
 
@@ -532,7 +527,6 @@ export class MessageClient extends EventEmitter {
           teamId: this.teamId
         }) + '\n';
 
-        console.log(`[MessageClient] Sending registration: memberId=${this.memberId}, teamId=${this.teamId}`);
         this.socket?.write(registerMsg);
 
         this.emit('connected');

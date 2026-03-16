@@ -82,6 +82,302 @@ export interface ThinkingConfig {
   displayMode: 'full' | 'compact' | 'indicator';
 }
 
+// ============================================================================
+// Hooks Types (lifecycle hooks for extensibility)
+// ============================================================================
+
+/**
+ * All supported hook events
+ */
+export type HookEventName =
+  | 'SessionStart'
+  | 'SessionEnd'
+  | 'UserPromptSubmit'
+  | 'PreToolUse'
+  | 'PostToolUse'
+  | 'PostToolUseFailure'
+  | 'PermissionRequest'
+  | 'Notification'
+  | 'SubagentStart'
+  | 'SubagentStop'
+  | 'Stop'
+  | 'TeammateIdle'
+  | 'TaskCompleted'
+  | 'InstructionsLoaded'
+  | 'ConfigChange'
+  | 'WorktreeCreate'
+  | 'WorktreeRemove'
+  | 'PreCompact'
+  | 'PostCompact'
+  | 'Elicitation'
+  | 'ElicitationResult';
+
+/**
+ * Hook handler type
+ */
+export type HookHandlerType = 'command' | 'http' | 'prompt' | 'agent';
+
+/**
+ * Base fields for all hook handlers
+ */
+export interface HookHandlerBase {
+  type: HookHandlerType;
+  timeout?: number;  // Seconds before canceling
+  statusMessage?: string;  // Custom spinner message
+  once?: boolean;  // Run only once per session
+}
+
+/**
+ * Command hook handler - executes a shell command
+ */
+export interface CommandHookHandler extends HookHandlerBase {
+  type: 'command';
+  command: string;
+  async?: boolean;  // Run in background without blocking
+}
+
+/**
+ * HTTP hook handler - sends HTTP POST request
+ */
+export interface HttpHookHandler extends HookHandlerBase {
+  type: 'http';
+  url: string;
+  headers?: Record<string, string>;
+  allowedEnvVars?: string[];  // Env vars that can be interpolated into headers
+}
+
+/**
+ * Prompt hook handler - sends prompt to LLM for evaluation
+ */
+export interface PromptHookHandler extends HookHandlerBase {
+  type: 'prompt';
+  prompt: string;  // Prompt text, use $ARGUMENTS as placeholder for hook input JSON
+  model?: string;  // Model to use for evaluation
+}
+
+/**
+ * Agent hook handler - spawns a subagent
+ */
+export interface AgentHookHandler extends HookHandlerBase {
+  type: 'agent';
+  prompt: string;
+  model?: string;
+}
+
+/**
+ * Union type for all hook handlers
+ */
+export type HookHandler = CommandHookHandler | HttpHookHandler | PromptHookHandler | AgentHookHandler;
+
+/**
+ * Matcher group - filters when hooks fire
+ */
+export interface MatcherGroup {
+  matcher?: string;  // Regex string to filter when hooks fire
+  hooks: HookHandler[];
+}
+
+/**
+ * Hooks configuration - maps event names to matcher groups
+ */
+export interface HooksConfig {
+  [eventName: string]: MatcherGroup[];
+}
+
+/**
+ * Permission decision for PreToolUse and PermissionRequest hooks
+ */
+export type PermissionDecision = 'allow' | 'deny' | 'ask';
+
+/**
+ * Hook-specific output for different event types
+ */
+export interface HookSpecificOutput {
+  hookEventName: HookEventName;
+  permissionDecision?: PermissionDecision;
+  permissionDecisionReason?: string;
+  modifiedToolInput?: Record<string, unknown>;  // For PreToolUse to modify tool input
+  modifiedUserPrompt?: string;  // For UserPromptSubmit to modify prompt
+  additionalContext?: string;  // Additional context to inject
+}
+
+/**
+ * Hook output - returned by hook handlers
+ */
+export interface HookOutput {
+  decision?: 'allow' | 'block';  // For blocking operations
+  reason?: string;  // Reason for the decision
+  hookSpecificOutput?: HookSpecificOutput;
+  error?: string;  // Error message if hook failed
+}
+
+/**
+ * Base input for all hook events
+ */
+export interface HookInputBase {
+  hookEventName: HookEventName;
+  session_id: string;
+  timestamp: number;
+}
+
+/**
+ * SessionStart hook input
+ */
+export interface SessionStartHookInput extends HookInputBase {
+  hookEventName: 'SessionStart';
+  startReason: 'startup' | 'resume' | 'clear' | 'compact';
+}
+
+/**
+ * SessionEnd hook input
+ */
+export interface SessionEndHookInput extends HookInputBase {
+  hookEventName: 'SessionEnd';
+  endReason: 'clear' | 'logout' | 'prompt_input_exit' | 'bypass_permissions_disabled' | 'other';
+}
+
+/**
+ * UserPromptSubmit hook input
+ */
+export interface UserPromptSubmitHookInput extends HookInputBase {
+  hookEventName: 'UserPromptSubmit';
+  user_prompt: string;
+}
+
+/**
+ * PreToolUse hook input
+ */
+export interface PreToolUseHookInput extends HookInputBase {
+  hookEventName: 'PreToolUse';
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  tool_call_id?: string;
+}
+
+/**
+ * PostToolUse hook input
+ */
+export interface PostToolUseHookInput extends HookInputBase {
+  hookEventName: 'PostToolUse';
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  tool_result: unknown;
+  tool_call_id?: string;
+}
+
+/**
+ * PostToolUseFailure hook input
+ */
+export interface PostToolUseFailureHookInput extends HookInputBase {
+  hookEventName: 'PostToolUseFailure';
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  tool_error: string;
+  tool_call_id?: string;
+}
+
+/**
+ * PermissionRequest hook input
+ */
+export interface PermissionRequestHookInput extends HookInputBase {
+  hookEventName: 'PermissionRequest';
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  permission_type: 'tool_execution' | 'file_write' | 'shell_command' | 'other';
+  resource?: string;  // The resource being accessed (file path, command, etc.)
+}
+
+/**
+ * Notification hook input
+ */
+export interface NotificationHookInput extends HookInputBase {
+  hookEventName: 'Notification';
+  notification_type: 'permission_prompt' | 'idle_prompt' | 'auth_success' | 'elicitation_dialog' | 'other';
+  message: string;
+}
+
+/**
+ * SubagentStart hook input
+ */
+export interface SubagentStartHookInput extends HookInputBase {
+  hookEventName: 'SubagentStart';
+  agent_type: string;
+  agent_prompt?: string;
+}
+
+/**
+ * SubagentStop hook input
+ */
+export interface SubagentStopHookInput extends HookInputBase {
+  hookEventName: 'SubagentStop';
+  agent_type: string;
+  result?: unknown;
+  error?: string;
+}
+
+/**
+ * Stop hook input
+ */
+export interface StopHookInput extends HookInputBase {
+  hookEventName: 'Stop';
+  reason: 'completed' | 'cancelled' | 'error' | 'user_interrupt';
+  stop_hook_active?: boolean;  // True if Stop hook triggered continuation, prevents infinite loop
+}
+
+/**
+ * PreCompact hook input
+ */
+export interface PreCompactHookInput extends HookInputBase {
+  hookEventName: 'PreCompact';
+  trigger: 'manual' | 'auto';
+  message_count: number;
+  token_count?: number;
+}
+
+/**
+ * PostCompact hook input
+ */
+export interface PostCompactHookInput extends HookInputBase {
+  hookEventName: 'PostCompact';
+  trigger: 'manual' | 'auto';
+  original_message_count: number;
+  compacted_message_count: number;
+  token_saved?: number;
+}
+
+/**
+ * Union type for all hook inputs
+ */
+export type HookInput =
+  | SessionStartHookInput
+  | SessionEndHookInput
+  | UserPromptSubmitHookInput
+  | PreToolUseHookInput
+  | PostToolUseHookInput
+  | PostToolUseFailureHookInput
+  | PermissionRequestHookInput
+  | NotificationHookInput
+  | SubagentStartHookInput
+  | SubagentStopHookInput
+  | StopHookInput
+  | PreCompactHookInput
+  | PostCompactHookInput;
+
+/**
+ * Result of executing a hook
+ */
+export interface HookExecutionResult {
+  executed: boolean;  // Whether any hooks were executed
+  results: Array<{
+    handler: HookHandler;
+    output?: HookOutput;
+    error?: Error;
+  }>;
+  finalDecision?: 'allow' | 'block';
+  blockReason?: string;
+  modifiedInput?: Record<string, unknown>;  // Modified tool input or user prompt
+}
+
 export interface Settings {
   theme: string;
   selectedAuthType: AuthType;
@@ -114,6 +410,7 @@ export interface Settings {
   loggerLevel: LogLevel;
   remote_llmModelName?: string;  // Remote 模式使用的 LLM Model Name
   remote_vlmModelName?: string;  // Remote 模式使用的 VLM Model Name
+  hooks?: HooksConfig;  // Hooks configuration
 }
 
 export interface ChatMessage {

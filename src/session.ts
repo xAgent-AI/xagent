@@ -54,6 +54,7 @@ import { getLogger } from './logger.js';
 import { ensureTtySane, setupEscKeyHandler } from './terminal.js';
 import { SdkOutputAdapter } from './sdk-output-adapter.js';
 import { initializeWindowsEncoding } from './shell.js';
+import { HookManager, getHookManager, resetHookManager } from './hooks/index.js';
 
 // Type aliases for backward compatibility
 type AIClient = AIClientInterface;
@@ -98,6 +99,10 @@ export class InteractiveSession {
   // SDK response handling for approvals and questions
   private approvalPromises: Map<string, { resolve: (approved: boolean) => void; reject: (err: Error) => void }> = new Map();
   private questionPromises: Map<string, { resolve: (answers: string[]) => void; reject: (err: Error) => void }> = new Map();
+
+  // Hooks manager
+  private hookManager: HookManager | null = null;
+  private projectRoot: string = process.cwd();
 
   // Team mode properties
   private isTeamMode: boolean = false;
@@ -994,6 +999,9 @@ export class InteractiveSession {
 
       this.currentAgent = this.agentManager.getAgent('general-purpose') ?? null;
 
+      // Initialize hooks system
+      await this.initializeHooks();
+
       if (this.isSdkMode && this.sdkOutputAdapter) {
         this.sdkOutputAdapter.outputSuccess('Initialization complete');
       } else {
@@ -1003,6 +1011,64 @@ export class InteractiveSession {
       const spinner = ora({ text: '', spinner: 'dots', color: 'red' }).start();
       spinner.fail(colors.error(`Initialization failed: ${error.message}`));
       throw error;
+    }
+  }
+
+  /**
+   * Initialize the hooks system
+   * Loads hooks from configuration files and fires SessionStart hook
+   */
+  private async initializeHooks(): Promise<void> {
+    try {
+      // Generate session ID for hooks
+      const sessionId = this.currentTaskId || crypto.randomUUID();
+      
+      // Reset and create new HookManager
+      resetHookManager();
+      this.hookManager = getHookManager(this.projectRoot || process.cwd(), sessionId);
+
+      // Load hooks from config
+      const hooksConfig = this.configManager.get('hooks');
+      if (hooksConfig) {
+        this.hookManager.loadHooks(hooksConfig);
+        logger.debug('[HOOKS] Loaded hooks from config');
+      }
+
+      // Load hooks from project settings file
+      const projectHooksPath = path.join(this.projectRoot || process.cwd(), '.xagent', 'settings.json');
+      if (fs.existsSync(projectHooksPath)) {
+        this.hookManager.loadHooksFromFile(projectHooksPath);
+      }
+
+      // Load hooks from local settings file (gitignored)
+      const localHooksPath = path.join(this.projectRoot || process.cwd(), '.xagent', 'settings.local.json');
+      if (fs.existsSync(localHooksPath)) {
+        this.hookManager.loadHooksFromFile(localHooksPath);
+      }
+
+      // Fire SessionStart hook
+      if (this.hookManager.hasHooks('SessionStart')) {
+        const hookResult = await this.hookManager.executeHooks('SessionStart', {
+          startReason: 'startup',
+        });
+
+        // Inject additional context from SessionStart hooks into conversation
+        if (hookResult.results) {
+          for (const result of hookResult.results) {
+            if (result.output?.hookSpecificOutput?.additionalContext) {
+              // Add as a system context message that the LLM will see
+              this.conversation.push({
+                role: 'user',
+                content: `[Session Context]\n${result.output.hookSpecificOutput.additionalContext}`,
+                timestamp: Date.now(),
+              });
+            }
+          }
+        }
+      }
+    } catch (error) {
+      logger.error(`[HOOKS] Failed to initialize hooks: ${error instanceof Error ? error.message : String(error)}`);
+      // Don't throw - hooks are optional
     }
   }
 
@@ -1763,6 +1829,36 @@ export class InteractiveSession {
   }
 
   public async processUserMessage(message: string, _agent?: AgentConfig): Promise<void> {
+    // Collect additional context from hooks
+    let additionalHookContext: string[] = [];
+
+    // Fire UserPromptSubmit hook before processing
+    if (this.hookManager?.hasHooks('UserPromptSubmit')) {
+      const hookResult = await this.hookManager.executeHooks('UserPromptSubmit', {
+        user_prompt: message,
+      });
+
+      // Check if hook blocked the prompt
+      if (hookResult.finalDecision === 'block') {
+        console.log(colors.warning(`Prompt blocked by hook: ${hookResult.blockReason || 'No reason provided'}`));
+        return;
+      }
+
+      // Collect additional context from all hook results
+      if (hookResult.results) {
+        for (const result of hookResult.results) {
+          if (result.output?.hookSpecificOutput?.additionalContext) {
+            additionalHookContext.push(result.output.hookSpecificOutput.additionalContext);
+          }
+        }
+      }
+
+      // Use modified prompt if provided
+      if (hookResult.modifiedInput?.user_prompt) {
+        message = hookResult.modifiedInput.user_prompt as string;
+      }
+    }
+
     const inputs = await parseInput(message);
     const textInput = inputs.find((i) => i.type === 'text');
     const fileInputs = inputs.filter((i) => i.type === 'file');
@@ -1791,6 +1887,12 @@ export class InteractiveSession {
           );
         }
       }
+    }
+
+    // Inject additional context from hooks (e.g., from UserPromptSubmit hooks)
+    if (additionalHookContext.length > 0) {
+      const contextStr = additionalHookContext.join('\n\n');
+      userContent = `${userContent}\n\n[Hook Context]\n${contextStr}`;
     }
 
     // Record input to session manager
@@ -1917,6 +2019,15 @@ export class InteractiveSession {
       return;
     }
 
+    // Fire PreCompact hook
+    if (this.hookManager?.hasHooks('PreCompact')) {
+      await this.hookManager.executeHooks('PreCompact', {
+        trigger: 'auto',
+        message_count: currentMessages,
+        token_count: tokenCount,
+      });
+    }
+
     // Extract threshold and contextWindow from reason
     const thresholdMatch = reason.match(/budget\s*\((\d+)/);
     const contextWindowMatch = reason.match(/contextWindow:\s*(\d+)/);
@@ -2039,12 +2150,43 @@ export class InteractiveSession {
         }
       }
 
-      // Sync compressed conversation history to slashCommandHandler
-      this.slashCommandHandler.setConversationHistory(this.conversation);
-    }
-  }
+            // Sync compressed conversation history to slashCommandHandler
 
-  private async executeShellCommand(command: string): Promise<void> {
+            this.slashCommandHandler.setConversationHistory(this.conversation);
+
+      
+
+            // Fire PostCompact hook
+
+            if (this.hookManager?.hasHooks('PostCompact')) {
+
+              await this.hookManager.executeHooks('PostCompact', {
+
+                trigger: 'auto',
+
+                was_compressed: result.wasCompressed,
+
+                original_message_count: result.originalMessageCount,
+
+                compressed_message_count: result.compressedMessageCount,
+
+                original_size: result.originalSize,
+
+                compressed_size: result.compressedSize,
+
+              });
+
+            }
+
+          }
+
+        }
+
+      
+
+      
+
+        private async executeShellCommand(command: string): Promise<void> {
     const indent = this.getIndent();
     console.log('');
     console.log(`${indent}${colors.textMuted(`${icons.code} Executing:`)}`);
@@ -2504,8 +2646,62 @@ export class InteractiveSession {
       return { name, params: parsedParams, index, id: toolCall.id };
     });
 
+    // Fire PreToolUse hooks for each tool call
+    const toolCallsToExecute: Array<{ name: string; params: any; index: number; id?: string }> = [];
+    const blockedToolCalls: Array<{ name: string; params: any; reason: string; id?: string }> = [];
+
+    for (const toolCall of preparedToolCalls) {
+      if (this.hookManager?.hasHooks('PreToolUse')) {
+        const hookResult = await this.hookManager.executeHooks('PreToolUse', {
+          tool_name: toolCall.name,
+          tool_input: toolCall.params,
+          tool_call_id: toolCall.id,
+        });
+
+        if (hookResult.finalDecision === 'block') {
+          blockedToolCalls.push({
+            name: toolCall.name,
+            params: toolCall.params,
+            reason: hookResult.blockReason || 'Blocked by hook',
+            id: toolCall.id,
+          });
+          continue;
+        }
+
+        // Use modified input if provided
+        const modifiedInput = hookResult.modifiedInput as Record<string, unknown> | undefined;
+        toolCallsToExecute.push({
+          name: toolCall.name,
+          params: modifiedInput || toolCall.params,
+          index: toolCall.index,
+          id: toolCall.id,
+        });
+      } else {
+        toolCallsToExecute.push(toolCall);
+      }
+    }
+
+    // Report blocked tool calls - add to conversation so LLM receives feedback
+    for (const blocked of blockedToolCalls) {
+      console.log(`${indent}${colors.warning(`Tool ${blocked.name} blocked by hook: ${blocked.reason}`)}`);
+      this.conversation.push({
+        role: 'tool',
+        content: JSON.stringify({
+          name: blocked.name,
+          parameters: blocked.params,
+          error: `Blocked by hook: ${blocked.reason}`,
+          blocked: true,
+        }),
+        tool_call_id: blocked.id,
+        timestamp: Date.now(),
+      });
+    }
+
+    // Use filtered tool calls for execution
+    const effectiveToolCalls = toolCallsToExecute.length > 0 ? toolCallsToExecute : [];
+
     // Display all tool calls info
-    for (const { name, params } of preparedToolCalls) {
+    for (const { name, params } of effectiveToolCalls) {
       // SDK mode: use adapter output
       if (this.isSdkMode && this.sdkOutputAdapter) {
         this.sdkOutputAdapter.outputToolStart(name, params);
@@ -2524,7 +2720,7 @@ export class InteractiveSession {
 
     // Execute all tools in parallel
     const results = await toolRegistry.executeAll(
-      preparedToolCalls.map((tc) => ({ name: tc.name, params: tc.params })),
+      effectiveToolCalls.map((tc) => ({ name: tc.name, params: tc.params })),
       this.executionMode
     );
 
@@ -2533,8 +2729,8 @@ export class InteractiveSession {
     const usedIndices = new Set<number>();
     
     for (const result of results) {
-      // Find the first unused original index in preparedToolCalls that matches the tool name
-      const originalIndex = preparedToolCalls.findIndex((tc, idx) => 
+      // Find the first unused original index in effectiveToolCalls that matches the tool name
+      const originalIndex = effectiveToolCalls.findIndex((tc, idx) => 
         tc.name === result.tool && !usedIndices.has(idx)
       );
       if (originalIndex !== -1) {
@@ -2545,8 +2741,8 @@ export class InteractiveSession {
 
     // Process results in the original tool_calls order (critical for Anthropic format APIs)
     let _hasError = false;
-    for (let i = 0; i < preparedToolCalls.length; i++) {
-      const toolCall = preparedToolCalls[i];
+    for (let i = 0; i < effectiveToolCalls.length; i++) {
+      const toolCall = effectiveToolCalls[i];
       const { name: tool, params } = toolCall;
       
       const resultData = resultsByIndex.get(i);
@@ -2589,10 +2785,30 @@ export class InteractiveSession {
           tool_call_id: toolCall.id,
           timestamp: Date.now(),
         });
+
+        // Fire PostToolUseFailure hook
+        if (this.hookManager?.hasHooks('PostToolUseFailure')) {
+          await this.hookManager.executeHooks('PostToolUseFailure', {
+            tool_name: tool,
+            tool_input: params,
+            error: error,
+            tool_call_id: toolCall.id,
+          });
+        }
       } else {
         // SDK mode: output tool result via adapter
         if (this.isSdkMode && this.sdkOutputAdapter) {
           this.sdkOutputAdapter.outputToolResult(tool, result);
+        }
+
+        // Fire PostToolUse hook
+        if (this.hookManager?.hasHooks('PostToolUse')) {
+          await this.hookManager.executeHooks('PostToolUse', {
+            tool_name: tool,
+            tool_input: params,
+            tool_result: result,
+            tool_call_id: toolCall.id,
+          });
         }
 
         // Use correct indent for gui-subagent tasks
@@ -3055,8 +3271,45 @@ export class InteractiveSession {
   //   ));
   // }
 
-  shutdown(): void {
-    this.rl.close();
+  shutdown(): void{
+
+      // Fire Stop hook (when xAgent finishes responding)
+
+      if(this.hookManager?.hasHooks('Stop')){
+
+        this.hookManager.executeHooks('Stop',{
+
+          reason: 'completed',
+
+        }).catch((err)=>{
+
+          logger.error('[HOOKS] Stop hook error:', err);
+
+        });
+
+      }
+
+  
+
+      // Fire SessionEnd hook
+
+      if(this.hookManager?.hasHooks('SessionEnd')){
+
+        this.hookManager.executeHooks('SessionEnd',{
+
+          endReason: 'other',
+
+        }).catch((err)=>{
+
+          logger.error('[HOOKS] SessionEnd hook error:', err);
+
+        });
+
+      }
+
+  
+
+      this.rl.close();
     this.cancellationManager.cleanup();
     this.mcpManager.disconnectAllServers();
 

@@ -2036,7 +2036,7 @@ export class SlashCommandHandler {
     group.hooks.push(hook);
 
     this.configManager.set('hooks', hooks);
-    this.configManager.save('project');
+    this.configManager.save('global');
 
     console.log(colors.success(`✅ Hook added successfully!`));
     console.log('');
@@ -2084,7 +2084,7 @@ export class SlashCommandHandler {
 
     if (removed) {
       this.configManager.set('hooks', hooks);
-      this.configManager.save('project');
+      this.configManager.save('global');
       console.log(colors.success(`✅ Hook removed successfully!`));
     } else {
       console.log(colors.error(`Hook index ${index} not found for event ${eventName}`));
@@ -2139,7 +2139,7 @@ export class SlashCommandHandler {
 
   private async toggleHooks(enabled: boolean): Promise<void> {
     this.configManager.set('disableAllHooks', !enabled);
-    this.configManager.save('project');
+    this.configManager.save('global');
 
     if (enabled) {
       console.log(colors.success('✅ Hooks enabled'));

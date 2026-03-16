@@ -4048,6 +4048,10 @@ export class ToolRegistry {
     return Array.from(this.tools.values());
   }
 
+  getToolNames(): string[] {
+    return Array.from(this.tools.keys());
+  }
+
   addBackgroundTask(
     taskId: string,
     task: { process: any; startTime: number; output: string[] }

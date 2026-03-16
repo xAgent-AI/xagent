@@ -155,6 +155,9 @@ export class SlashCommandHandler {
       case 'update':
         await this.handleUpdate();
         break;
+      case 'hook':
+        await this.handleHook(args);
+        break;
       default:
         logger.warn(`Unknown command: /${command}`, 'Type /help for available commands');
     }
@@ -313,6 +316,12 @@ export class SlashCommandHandler {
         desc: 'Manage tool display',
         detail: 'View available tools or switch tool call display mode',
         example: '/tools\n/tools verbose\n/tools simple',
+      },
+      {
+        cmd: '/hook [list|add|remove|test|disable|enable]',
+        desc: 'Manage lifecycle hooks',
+        detail: 'Configure hooks that run at specific lifecycle events',
+        example: '/hook list\n/hook add\n/hook remove PreToolUse 0\n/hook disable',
       },
     ]);
 
@@ -1777,6 +1786,367 @@ export class SlashCommandHandler {
       console.log(colors.error(`  ❌ Failed to check for updates: ${error.message}`));
       console.log('');
     }
+  }
+
+  private async handleHook(args: string[]): Promise<void> {
+    const separator = icons.separator.repeat(Math.min(40, process.stdout.columns || 80));
+
+    // Load hooks from config
+    const hooks = this.configManager.get('hooks') || {};
+    const hookManager = new (await import('./hooks/index.js')).HookManager(process.cwd(), 'interactive');
+    hookManager.loadHooks(hooks);
+
+    if (args.length === 0) {
+      // Show usage
+      console.log('');
+      console.log(colors.primaryBright(`${icons.tool} Hook Management`));
+      console.log(colors.border(separator));
+      console.log('');
+      console.log(colors.textMuted('Usage:'));
+      console.log(`  ${colors.primaryBright('/hook list')}              ${colors.textDim('| List all hooks')}`);
+      console.log(`  ${colors.primaryBright('/hook add')}               ${colors.textDim('| Add a new hook')}`);
+      console.log(`  ${colors.primaryBright('/hook remove <event> <n>')} ${colors.textDim('| Remove hook by index')}`);
+      console.log(`  ${colors.primaryBright('/hook test <event>')}      ${colors.textDim('| Test hooks for event')}`);
+      console.log(`  ${colors.primaryBright('/hook disable')}           ${colors.textDim('| Disable all hooks')}`);
+      console.log(`  ${colors.primaryBright('/hook enable')}            ${colors.textDim('| Enable all hooks')}`);
+      console.log('');
+      return;
+    }
+
+    const subCommand = args[0].toLowerCase();
+
+    switch (subCommand) {
+      case 'list':
+      case 'ls':
+      case '-l':
+        await this.listHooks(hooks, separator);
+        break;
+      case 'add':
+      case '-a':
+        await this.addHook(hooks, separator);
+        break;
+      case 'remove':
+      case 'rm':
+      case '-r':
+        await this.removeHook(hooks, args.slice(1));
+        break;
+      case 'test':
+      case '-t':
+        await this.testHook(hookManager, args.slice(1));
+        break;
+      case 'disable':
+      case 'off':
+        await this.toggleHooks(false);
+        break;
+      case 'enable':
+      case 'on':
+        await this.toggleHooks(true);
+        break;
+      default:
+        console.log(colors.warning(`Unknown subcommand: ${subCommand}`));
+        console.log(colors.textMuted('Type /hook for usage'));
+    }
+  }
+
+  private async listHooks(hooks: any, separator: string): Promise<void> {
+    console.log('');
+    console.log(colors.primaryBright(`${icons.tool} Configured Hooks`));
+    console.log(colors.border(separator));
+    console.log('');
+
+    const eventNames = Object.keys(hooks);
+    if (eventNames.length === 0) {
+      console.log(colors.textMuted('No hooks configured.'));
+      console.log(colors.textMuted('Use /hook add to create a new hook.'));
+      console.log('');
+      return;
+    }
+
+    for (const eventName of eventNames) {
+      const matcherGroups = hooks[eventName];
+      if (!Array.isArray(matcherGroups)) continue;
+
+      console.log(colors.accent(`📌 ${eventName}`));
+
+      for (let gi = 0; gi < matcherGroups.length; gi++) {
+        const group = matcherGroups[gi];
+        console.log(colors.textDim(`  Matcher: ${group.matcher || '(all)'}`));
+
+        for (let hi = 0; hi < group.hooks.length; hi++) {
+          const hook = group.hooks[hi];
+          const typeIcon = hook.type === 'command' ? '⚡' : hook.type === 'http' ? '🌐' : hook.type === 'prompt' ? '💬' : '🤖';
+          console.log(`    ${colors.textMuted(`[${gi}.${hi}]`)} ${typeIcon} ${colors.primaryBright(hook.type)}`);
+
+          if (hook.type === 'command') {
+            console.log(`        ${colors.textDim(`Command: ${hook.command}`)}`);
+            if (hook.async) console.log(`        ${colors.textDim('Async: true')}`);
+          } else if (hook.type === 'http') {
+            console.log(`        ${colors.textDim(`URL: ${hook.url}`)}`);
+          } else if (hook.type === 'prompt' || hook.type === 'agent') {
+            console.log(`        ${colors.textDim(`Prompt: ${hook.prompt?.substring(0, 50)}...`)}`);
+          }
+
+          if (hook.timeout) console.log(`        ${colors.textDim(`Timeout: ${hook.timeout}s`)}`);
+          if (hook.once) console.log(`        ${colors.textDim('Once: true')}`);
+          if (hook.statusMessage) console.log(`        ${colors.textDim(`Status: ${hook.statusMessage}`)}`);
+        }
+        console.log('');
+      }
+    }
+  }
+
+  private async addHook(hooks: any, separator: string): Promise<void> {
+    const { text, select, confirm } = await import('@clack/prompts');
+
+    console.log('');
+    console.log(colors.primaryBright(`${icons.tool} Add Hook`));
+    console.log(colors.border(separator));
+    console.log('');
+
+    // Step 1: Select event
+    const eventOptions = [
+      { value: 'PreToolUse', label: 'PreToolUse - Before tool execution' },
+      { value: 'PostToolUse', label: 'PostToolUse - After tool success' },
+      { value: 'PostToolUseFailure', label: 'PostToolUseFailure - After tool failure' },
+      { value: 'UserPromptSubmit', label: 'UserPromptSubmit - Before prompt processing' },
+      { value: 'SessionStart', label: 'SessionStart - When session starts' },
+      { value: 'SessionEnd', label: 'SessionEnd - When session ends' },
+      { value: 'Stop', label: 'Stop - When agent finishes' },
+      { value: 'Notification', label: 'Notification - When notification sent' },
+    ];
+
+    const eventName = await select({
+      message: 'Select hook event:',
+      options: eventOptions,
+    }) as string | symbol;
+
+    if (typeof eventName === 'symbol') {
+      console.log(colors.textMuted('Cancelled'));
+      return;
+    }
+
+    // Step 2: Select handler type
+    const handlerType = await select({
+      message: 'Select handler type:',
+      options: [
+        { value: 'command', label: 'Command - Execute shell command' },
+        { value: 'http', label: 'HTTP - Send HTTP POST request' },
+      ],
+    }) as string | symbol;
+
+    if (typeof handlerType === 'symbol') {
+      console.log(colors.textMuted('Cancelled'));
+      return;
+    }
+
+    // Step 3: Configure handler
+    const hook: any = { type: handlerType };
+
+    if (handlerType === 'command') {
+      hook.command = await text({
+        message: 'Enter shell command:',
+        validate: (v: string | undefined) => v?.trim() ? undefined : 'Command is required',
+      }) as string;
+
+      if (typeof hook.command === 'symbol') {
+        console.log(colors.textMuted('Cancelled'));
+        return;
+      }
+
+      const asyncRun = await confirm({
+        message: 'Run asynchronously (in background)?',
+      });
+      if (asyncRun === true) hook.async = true;
+    } else if (handlerType === 'http') {
+      hook.url = await text({
+        message: 'Enter URL:',
+        validate: (value: string | undefined) => {
+          if (!value?.trim()) return 'URL is required';
+          try {
+            new URL(value);
+            return undefined;
+          } catch {
+            return 'Invalid URL format';
+          }
+        },
+      }) as string;
+
+      if (typeof hook.url === 'symbol') {
+        console.log(colors.textMuted('Cancelled'));
+        return;
+      }
+    }
+
+    // Step 4: Optional matcher
+    const addMatcher = await confirm({
+      message: 'Add a matcher pattern?',
+    });
+
+    let matcher: string | undefined;
+    if (addMatcher === true) {
+      matcher = await text({
+        message: 'Enter matcher regex (e.g., Bash for tool name):',
+        defaultValue: '',
+      }) as string;
+    }
+
+    // Step 5: Optional settings
+    const addTimeout = await confirm({
+      message: 'Set custom timeout?',
+    });
+
+    if (addTimeout === true) {
+      const timeoutStr = await text({
+        message: 'Enter timeout in seconds:',
+        defaultValue: '60',
+      }) as string;
+      hook.timeout = parseInt(timeoutStr, 10) || 60;
+    }
+
+    // Step 6: Save
+    console.log('');
+    console.log(colors.textMuted('Hook configuration:'));
+    console.log(`  ${colors.primaryBright('Event:')} ${eventName}`);
+    console.log(`  ${colors.primaryBright('Matcher:')} ${matcher || '(all)'}`);
+    console.log(`  ${colors.primaryBright('Type:')} ${handlerType}`);
+    if (hook.command) console.log(`  ${colors.primaryBright('Command:')} ${hook.command}`);
+    if (hook.url) console.log(`  ${colors.primaryBright('URL:')} ${hook.url}`);
+    console.log('');
+
+    const shouldSave = await confirm({
+      message: 'Save this hook?',
+    });
+
+    if (shouldSave !== true) {
+      console.log(colors.textMuted('Cancelled'));
+      return;
+    }
+
+    // Add to config
+    if (!hooks[eventName]) {
+      hooks[eventName] = [];
+    }
+
+    // Find or create matcher group
+    let group = hooks[eventName].find((g: any) => g.matcher === (matcher || undefined));
+    if (!group) {
+      group = { matcher, hooks: [] };
+      hooks[eventName].push(group);
+    }
+    group.hooks.push(hook);
+
+    this.configManager.set('hooks', hooks);
+    this.configManager.save('project');
+
+    console.log(colors.success(`✅ Hook added successfully!`));
+    console.log('');
+  }
+
+  private async removeHook(hooks: any, args: string[]): Promise<void> {
+    if (args.length < 2) {
+      console.log(colors.warning('Usage: /hook remove <event> <index>'));
+      console.log(colors.textMuted('Example: /hook remove PreToolUse 0'));
+      return;
+    }
+
+    const eventName = args[0];
+    const index = parseInt(args[1], 10);
+
+    if (!hooks[eventName]) {
+      console.log(colors.error(`No hooks found for event: ${eventName}`));
+      return;
+    }
+
+    const matcherGroups = hooks[eventName];
+    let removed = false;
+
+    // Find the hook by flat index
+    let count = 0;
+    for (let gi = 0; gi < matcherGroups.length && !removed; gi++) {
+      const group = matcherGroups[gi];
+      for (let hi = 0; hi < group.hooks.length; hi++) {
+        if (count === index) {
+          group.hooks.splice(hi, 1);
+          // Remove empty group
+          if (group.hooks.length === 0) {
+            matcherGroups.splice(gi, 1);
+          }
+          // Remove empty event
+          if (matcherGroups.length === 0) {
+            delete hooks[eventName];
+          }
+          removed = true;
+          break;
+        }
+        count++;
+      }
+    }
+
+    if (removed) {
+      this.configManager.set('hooks', hooks);
+      this.configManager.save('project');
+      console.log(colors.success(`✅ Hook removed successfully!`));
+    } else {
+      console.log(colors.error(`Hook index ${index} not found for event ${eventName}`));
+    }
+  }
+
+  private async testHook(hookManager: any, args: string[]): Promise<void> {
+    if (args.length === 0) {
+      console.log(colors.warning('Usage: /hook test <event>'));
+      console.log(colors.textMuted('Example: /hook test PreToolUse'));
+      return;
+    }
+
+    const eventName = args[0];
+    console.log(colors.textMuted(`Testing ${eventName} hooks...`));
+    console.log('');
+
+    // Create test input based on event type
+    const testInput: any = {};
+    switch (eventName) {
+      case 'PreToolUse':
+      case 'PostToolUse':
+      case 'PostToolUseFailure':
+        testInput.tool_name = 'Bash';
+        testInput.tool_input = { command: 'echo test' };
+        break;
+      case 'UserPromptSubmit':
+        testInput.user_prompt = 'Hello, test prompt';
+        break;
+      case 'SessionStart':
+        testInput.startReason = 'startup';
+        break;
+      case 'SessionEnd':
+        testInput.endReason = 'exit';
+        break;
+      case 'Stop':
+        testInput.reason = 'completed';
+        break;
+      default:
+        testInput.test = true;
+    }
+
+    try {
+      const result = await hookManager.executeHooks(eventName, testInput);
+      console.log(colors.success('Hook execution result:'));
+      console.log(JSON.stringify(result, null, 2));
+    } catch (error: any) {
+      console.log(colors.error(`Hook execution failed: ${error.message}`));
+    }
+    console.log('');
+  }
+
+  private async toggleHooks(enabled: boolean): Promise<void> {
+    this.configManager.set('disableAllHooks', !enabled);
+    this.configManager.save('project');
+
+    if (enabled) {
+      console.log(colors.success('✅ Hooks enabled'));
+    } else {
+      console.log(colors.warning('⚠️  Hooks disabled'));
+    }
+    console.log('');
   }
 
   private async handleCompress(args: string[]): Promise<void> {

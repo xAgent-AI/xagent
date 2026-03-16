@@ -411,6 +411,7 @@ export interface Settings {
   remote_llmModelName?: string;  // Remote 模式使用的 LLM Model Name
   remote_vlmModelName?: string;  // Remote 模式使用的 VLM Model Name
   hooks?: HooksConfig;  // Hooks configuration
+  disableAllHooks?: boolean;  // Globally disable all hooks
 }
 
 export interface ChatMessage {

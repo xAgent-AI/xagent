@@ -1796,17 +1796,42 @@ export class SlashCommandHandler {
     const hookManager = new (await import('./hooks/index.js')).HookManager(process.cwd(), 'interactive');
     hookManager.loadHooks(hooks);
 
+    // Check global disable status
+    const disableAllHooks = this.configManager.get('disableAllHooks') || false;
+
     if (args.length === 0) {
-      // Show usage
+      // Show status and list
       console.log('');
       console.log(colors.primaryBright(`${icons.tool} Hook Management`));
       console.log(colors.border(separator));
       console.log('');
+
+      // Show status
+      const statusIcon = disableAllHooks ? colors.error('⏸') : colors.success('▶');
+      const statusText = disableAllHooks ? colors.error('Disabled') : colors.success('Enabled');
+      console.log(`  Status: ${statusIcon} ${statusText}`);
+      console.log('');
+
+      // Show hooks count
+      const eventNames = Object.keys(hooks).filter(k => Array.isArray(hooks[k]) && hooks[k].length > 0);
+      if (eventNames.length === 0) {
+        console.log(colors.textMuted('No hooks configured.'));
+      } else {
+        let totalHooks = 0;
+        for (const eventName of eventNames) {
+          for (const group of hooks[eventName]) {
+            totalHooks += group.hooks?.length || 0;
+          }
+        }
+        console.log(`  ${colors.textMuted('Hooks:')} ${colors.primaryBright(totalHooks.toString())} registered`);
+      }
+      console.log('');
+
       console.log(colors.textMuted('Usage:'));
       console.log(`  ${colors.primaryBright('/hook list')}              ${colors.textDim('| List all hooks')}`);
       console.log(`  ${colors.primaryBright('/hook add')}               ${colors.textDim('| Add a new hook')}`);
       console.log(`  ${colors.primaryBright('/hook remove <event> <n>')} ${colors.textDim('| Remove hook by index')}`);
-      console.log(`  ${colors.primaryBright('/hook test <event>')}      ${colors.textDim('| Test hooks for event')}`);
+      console.log(`  ${colors.primaryBright('/hook test <event> [tool]')} ${colors.textDim('| Test hooks for event')}`);
       console.log(`  ${colors.primaryBright('/hook disable')}           ${colors.textDim('| Disable all hooks')}`);
       console.log(`  ${colors.primaryBright('/hook enable')}            ${colors.textDim('| Enable all hooks')}`);
       console.log('');
@@ -1977,17 +2002,48 @@ export class SlashCommandHandler {
       }
     }
 
-    // Step 4: Optional matcher
-    const addMatcher = await confirm({
-      message: 'Add a matcher pattern?',
-    });
-
+    // Step 4: Optional matcher (for tool events, ask which tool)
+    const toolEvents = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest'];
     let matcher: string | undefined;
-    if (addMatcher === true) {
-      matcher = await text({
-        message: 'Enter matcher regex (e.g., Bash for tool name):',
-        defaultValue: '',
-      }) as string;
+
+    if (toolEvents.includes(eventName as string)) {
+      // For tool events, ask which tool to match
+      const selectTool = await confirm({
+        message: 'Match specific tool(s)?',
+      });
+
+      if (selectTool === true) {
+        const commonTools = [
+          { value: 'Bash', label: 'Bash - Shell commands' },
+          { value: 'Read', label: 'Read - File reading' },
+          { value: 'Write', label: 'Write - File writing' },
+          { value: 'Edit', label: 'Edit - File editing' },
+          { value: 'Grep', label: 'Grep - Search in files' },
+          { value: 'Glob', label: 'Glob - Find files' },
+          { value: '*', label: 'All tools' },
+        ];
+
+        const selectedTool = await select({
+          message: 'Select tool to match:',
+          options: commonTools,
+        }) as string | symbol;
+
+        if (typeof selectedTool !== 'symbol') {
+          matcher = selectedTool;
+        }
+      }
+    } else {
+      // For non-tool events, ask if they want a matcher
+      const addMatcher = await confirm({
+        message: 'Add a matcher pattern?',
+      });
+
+      if (addMatcher === true) {
+        matcher = await text({
+          message: 'Enter matcher regex:',
+          defaultValue: '',
+        }) as string;
+      }
     }
 
     // Step 5: Optional settings
@@ -2093,14 +2149,14 @@ export class SlashCommandHandler {
 
   private async testHook(hookManager: any, args: string[]): Promise<void> {
     if (args.length === 0) {
-      console.log(colors.warning('Usage: /hook test <event>'));
-      console.log(colors.textMuted('Example: /hook test PreToolUse'));
+      console.log(colors.warning('Usage: /hook test <event> [tool_name]'));
+      console.log(colors.textMuted('Example: /hook test PreToolUse Bash'));
+      console.log(colors.textMuted('         /hook test UserPromptSubmit'));
       return;
     }
 
     const eventName = args[0];
-    console.log(colors.textMuted(`Testing ${eventName} hooks...`));
-    console.log('');
+    const toolName = args[1]; // Optional tool name for tool events
 
     // Create test input based on event type
     const testInput: any = {};
@@ -2108,8 +2164,9 @@ export class SlashCommandHandler {
       case 'PreToolUse':
       case 'PostToolUse':
       case 'PostToolUseFailure':
-        testInput.tool_name = 'Bash';
-        testInput.tool_input = { command: 'echo test' };
+      case 'PermissionRequest':
+        testInput.tool_name = toolName || 'Bash';
+        testInput.tool_input = toolName === 'Bash' ? { command: 'echo test' } : { path: '/tmp/test' };
         break;
       case 'UserPromptSubmit':
         testInput.user_prompt = 'Hello, test prompt';
@@ -2123,9 +2180,18 @@ export class SlashCommandHandler {
       case 'Stop':
         testInput.reason = 'completed';
         break;
+      case 'Notification':
+        testInput.notification_type = 'permission_prompt';
+        break;
       default:
         testInput.test = true;
     }
+
+    console.log(colors.textMuted(`Testing ${eventName} hooks...`));
+    if (toolName) {
+      console.log(colors.textMuted(`Tool: ${toolName}`));
+    }
+    console.log('');
 
     try {
       const result = await hookManager.executeHooks(eventName, testInput);

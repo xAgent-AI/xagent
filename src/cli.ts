@@ -1853,16 +1853,57 @@ program
       }
 
       // Step 3: Get matcher (optional)
-      const needsMatcher = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest',
-                           'SessionStart', 'SessionEnd', 'Notification', 'SubagentStart',
-                           'SubagentStop', 'PreCompact', 'ConfigChange'].includes(eventName);
+      const toolEvents = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest'];
+      const otherMatcherEvents = ['SessionStart', 'SessionEnd', 'Notification', 'SubagentStart',
+                                   'SubagentStop', 'PreCompact', 'ConfigChange'];
 
       let matcher = '';
-      if (needsMatcher) {
+
+      if (toolEvents.includes(eventName)) {
+        // For tool events, offer to select from tool list
+        const selectTool = await confirm({
+          message: 'Match specific tool(s)?',
+        });
+
+        if (selectTool === true) {
+          // Get all tool names from toolRegistry
+          const { getToolRegistry } = await import('./tools.js');
+          const toolRegistry = getToolRegistry();
+          const allToolNames = toolRegistry.getToolNames().sort();
+
+          // Build options with tool descriptions
+          const toolOptions = [
+            { value: '*', label: '* (All tools)' },
+            ...allToolNames.map(name => {
+              const tool = toolRegistry.get(name);
+              const description = tool?.description?.split('\n')[0]?.substring(0, 50) || '';
+              return {
+                value: name,
+                label: description ? `${name} - ${description}` : name,
+              };
+            }),
+          ];
+
+          const selectedTool = await select({
+            message: 'Select tool to match:',
+            options: toolOptions,
+          }) as string | symbol;
+
+          if (typeof selectedTool === 'symbol') {
+            console.log('');
+            console.log(colors.textMuted('Cancelled'));
+            console.log('');
+            return;
+          }
+
+          matcher = selectedTool;
+        }
+      } else if (otherMatcherEvents.includes(eventName)) {
+        // For other events, ask for regex pattern
         matcher = await text({
           message: 'Enter matcher pattern (regex, leave empty for all):',
           defaultValue: '',
-          placeholder: 'e.g., Bash for PreToolUse, Edit|Write for PostToolUse',
+          placeholder: 'e.g., startup for SessionStart',
         }) as string;
 
         if (typeof matcher === 'symbol') {

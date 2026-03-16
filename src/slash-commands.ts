@@ -2011,19 +2011,26 @@ export class SlashCommandHandler {
       });
 
       if (selectTool === true) {
-        const commonTools = [
-          { value: 'Bash', label: 'Bash - Shell commands' },
-          { value: 'Read', label: 'Read - File reading' },
-          { value: 'Write', label: 'Write - File writing' },
-          { value: 'Edit', label: 'Edit - File editing' },
-          { value: 'Grep', label: 'Grep - Search in files' },
-          { value: 'Glob', label: 'Glob - Find files' },
-          { value: '*', label: 'All tools' },
+        // Get all tool names from toolRegistry
+        const toolRegistry = getToolRegistry();
+        const allToolNames = toolRegistry.getToolNames().sort();
+
+        // Build options with tool descriptions
+        const toolOptions = [
+          { value: '*', label: '* (All tools)' },
+          ...allToolNames.map(name => {
+            const tool = toolRegistry.get(name);
+            const description = tool?.description?.split('\n')[0]?.substring(0, 50) || '';
+            return {
+              value: name,
+              label: description ? `${name} - ${description}` : name,
+            };
+          }),
         ];
 
         const selectedTool = await select({
           message: 'Select tool to match:',
-          options: commonTools,
+          options: toolOptions,
         }) as string | symbol;
 
         if (typeof selectedTool !== 'symbol') {

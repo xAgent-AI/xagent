@@ -24,7 +24,7 @@
 import { spawn } from 'child_process';
 import axios from 'axios';
 import fs from 'fs';
-import {
+import type {
   HookEventName,
   HooksConfig,
   HookHandler,

@@ -1830,7 +1830,7 @@ export class InteractiveSession {
 
   public async processUserMessage(message: string, _agent?: AgentConfig): Promise<void> {
     // Collect additional context from hooks
-    let additionalHookContext: string[] = [];
+    const additionalHookContext: string[] = [];
 
     // Fire UserPromptSubmit hook before processing
     if (this.hookManager?.hasHooks('UserPromptSubmit')) {

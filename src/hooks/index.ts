@@ -23,8 +23,6 @@
 
 import { spawn } from 'child_process';
 import axios from 'axios';
-import path from 'path';
-import os from 'os';
 import fs from 'fs';
 import {
   HookEventName,
@@ -33,7 +31,6 @@ import {
   HookInput,
   HookOutput,
   HookExecutionResult,
-  MatcherGroup,
   CommandHookHandler,
   HttpHookHandler,
   PromptHookHandler,
@@ -46,10 +43,9 @@ import {
   SubagentStartHookInput,
   SubagentStopHookInput,
   PreCompactHookInput,
-  StopHookInput,
 } from '../types.js';
 import { getLogger } from '../logger.js';
-import { getShellConfig, killProcessTree } from '../shell.js';
+import { getShellConfig } from '../shell.js';
 
 const logger = getLogger();
 
@@ -382,8 +378,6 @@ export class HookManager {
    * Execute a handler asynchronously (Fire and Forget)
    */
   private async executeHandlerAsync(handler: HookHandler, input: HookInput): Promise<void> {
-    const timeout = handler.timeout ?? DEFAULT_TIMEOUTS[handler.type];
-
     if (handler.statusMessage) {
       logger.info(`[HOOKS] ${handler.statusMessage}`);
     }
@@ -575,17 +569,18 @@ export class HookManager {
    * - { "ok": true } to allow the action
    * - { "ok": false, "reason": "..." } to block and provide feedback
    */
-  private async executePromptHandler(handler: PromptHookHandler, input: HookInput, timeout: number): Promise<HookOutput | undefined> {
+  private async executePromptHandler(handler: PromptHookHandler, input: HookInput, _timeout: number): Promise<HookOutput | undefined> {
     // Display status message if provided
     if (handler.statusMessage) {
       logger.info(`[HOOKS] ${handler.statusMessage}`);
     }
 
     // Replace $ARGUMENTS placeholder with JSON input
-    const prompt = handler.prompt.replace('$ARGUMENTS', JSON.stringify(input, null, 2));
-    const model = handler.model || 'haiku';  // Default to fast model
+    // Note: prompt and model will be used when AI client is integrated
+    const _prompt = handler.prompt.replace('$ARGUMENTS', JSON.stringify(input, null, 2));
+    const _model = handler.model || 'haiku';  // Default to fast model
 
-    logger.debug(`[HOOKS] Executing prompt hook with model: ${model}`);
+    logger.debug(`[HOOKS] Executing prompt hook with model: ${_model}`);
 
     // TODO: Integrate with AI client
     // For now, return a placeholder that allows the action
@@ -610,17 +605,18 @@ export class HookManager {
    * - { "ok": true } to allow the action
    * - { "ok": false, "reason": "..." } to block and provide feedback
    */
-  private async executeAgentHandler(handler: AgentHookHandler, input: HookInput, timeout: number): Promise<HookOutput | undefined> {
+  private async executeAgentHandler(handler: AgentHookHandler, input: HookInput, _timeout: number): Promise<HookOutput | undefined> {
     // Display status message if provided
     if (handler.statusMessage) {
       logger.info(`[HOOKS] ${handler.statusMessage}`);
     }
 
     // Replace $ARGUMENTS placeholder with JSON input
-    const prompt = handler.prompt.replace('$ARGUMENTS', JSON.stringify(input, null, 2));
-    const model = handler.model;
+    // Note: prompt and model will be used when Subagent is integrated
+    const _prompt = handler.prompt.replace('$ARGUMENTS', JSON.stringify(input, null, 2));
+    const _model = handler.model;
 
-    logger.debug(`[HOOKS] Executing agent hook${model ? ` with model: ${model}` : ''}`);
+    logger.debug(`[HOOKS] Executing agent hook${_model ? ` with model: ${_model}` : ''}`);
 
     // TODO: Integrate with Subagent system
     // For now, return a placeholder that allows the action

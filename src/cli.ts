@@ -1606,8 +1606,7 @@ program
             const hook = group.hooks[hi];
             const typeColor = hook.type === 'command' ? colors.success :
                               hook.type === 'http' ? colors.warning :
-                              hook.type === 'prompt' ? colors.primaryBright :
-                              colors.error;
+                              colors.textMuted;
             console.log(`      └─ ${typeColor(hook.type)}`);
 
             if (hook.type === 'command') {
@@ -1615,9 +1614,6 @@ program
               if (hook.async) console.log(`         ${colors.textDim('async: true')}`);
             } else if (hook.type === 'http') {
               console.log(`         ${colors.textDim(`url: ${hook.url}`)}`);
-            } else if (hook.type === 'prompt' || hook.type === 'agent') {
-              console.log(`         ${colors.textDim(`prompt: ${hook.prompt.substring(0, 50)}...`)}`);
-              if (hook.model) console.log(`         ${colors.textDim(`model: ${hook.model}`)}`);
             }
 
             if (hook.timeout) console.log(`         ${colors.textDim(`timeout: ${hook.timeout}s`)}`);
@@ -1666,9 +1662,6 @@ program
             console.log(`      ${colors.textMuted('url:')} ${hook.url}`);
             if (hook.headers) console.log(`      ${colors.textMuted('headers:')} ${JSON.stringify(hook.headers)}`);
             if (hook.allowedEnvVars) console.log(`      ${colors.textMuted('allowedEnvVars:')} ${JSON.stringify(hook.allowedEnvVars)}`);
-          } else if (hook.type === 'prompt' || hook.type === 'agent') {
-            console.log(`      ${colors.textMuted('prompt:')} ${hook.prompt}`);
-            if (hook.model) console.log(`      ${colors.textMuted('model:')} ${hook.model}`);
           }
 
           if (hook.timeout !== undefined) console.log(`      ${colors.textMuted('timeout:')} ${hook.timeout}s`);
@@ -1849,8 +1842,6 @@ program
         options: [
           { value: 'command', label: 'Command - Execute a shell command' },
           { value: 'http', label: 'HTTP - Send HTTP POST request' },
-          { value: 'prompt', label: 'Prompt - Send to LLM for evaluation' },
-          { value: 'agent', label: 'Agent - Spawn a subagent' },
         ],
       }) as string | symbol;
 
@@ -1945,37 +1936,13 @@ program
             }
           }
         }
-      } else if (hookType === 'prompt' || hookType === 'agent') {
-        hook.prompt = await text({
-          message: 'Enter prompt (use $ARGUMENTS for hook input JSON):',
-          validate: (value: string | undefined) =>
-            value && value.trim() ? undefined : 'Prompt is required',
-        }) as string;
-
-        if (typeof hook.prompt === 'symbol') {
-          console.log('');
-          console.log(colors.textMuted('Cancelled'));
-          console.log('');
-          return;
-        }
-
-        const modelInput = await text({
-          message: 'Enter model (optional, leave empty for default):',
-          defaultValue: '',
-        }) as string;
-
-        if (modelInput.trim()) {
-          hook.model = modelInput.trim();
-        }
       }
 
       // Step 5: Common fields
       const timeoutInput = await text({
         message: 'Enter timeout in seconds (optional):',
         defaultValue: '',
-        placeholder: hookType === 'command' ? '600 (default)' :
-                    hookType === 'http' ? '30 (default)' :
-                    hookType === 'prompt' ? '30 (default)' : '60 (default)',
+        placeholder: hookType === 'command' ? '600 (default)' : '30 (default)',
       }) as string;
 
       if (timeoutInput.trim()) {

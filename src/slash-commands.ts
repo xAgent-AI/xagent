@@ -1899,7 +1899,7 @@ export class SlashCommandHandler {
 
         for (let hi = 0; hi < group.hooks.length; hi++) {
           const hook = group.hooks[hi];
-          const typeIcon = hook.type === 'command' ? '⚡' : hook.type === 'http' ? '🌐' : hook.type === 'prompt' ? '💬' : '🤖';
+          const typeIcon = hook.type === 'command' ? '⚡' : '🌐';
           console.log(`    ${colors.textMuted(`[${gi}.${hi}]`)} ${typeIcon} ${colors.primaryBright(hook.type)}`);
 
           if (hook.type === 'command') {
@@ -1907,8 +1907,6 @@ export class SlashCommandHandler {
             if (hook.async) console.log(`        ${colors.textDim('Async: true')}`);
           } else if (hook.type === 'http') {
             console.log(`        ${colors.textDim(`URL: ${hook.url}`)}`);
-          } else if (hook.type === 'prompt' || hook.type === 'agent') {
-            console.log(`        ${colors.textDim(`Prompt: ${hook.prompt?.substring(0, 50)}...`)}`);
           }
 
           if (hook.timeout) console.log(`        ${colors.textDim(`Timeout: ${hook.timeout}s`)}`);

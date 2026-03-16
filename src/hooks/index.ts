@@ -33,8 +33,6 @@ import type {
   HookExecutionResult,
   CommandHookHandler,
   HttpHookHandler,
-  PromptHookHandler,
-  AgentHookHandler,
   PreToolUseHookInput,
   PermissionRequestHookInput,
   SessionStartHookInput,
@@ -55,8 +53,6 @@ const logger = getLogger();
 const DEFAULT_TIMEOUTS = {
   command: 600,
   http: 30,
-  prompt: 30,
-  agent: 60,
 };
 
 /**
@@ -365,10 +361,6 @@ export class HookManager {
         return this.executeCommandHandler(handler, input, timeout);
       case 'http':
         return this.executeHttpHandler(handler, input, timeout);
-      case 'prompt':
-        return this.executePromptHandler(handler, input, timeout);
-      case 'agent':
-        return this.executeAgentHandler(handler, input, timeout);
       default:
         throw new Error(`Unknown handler type: ${(handler as any).type}`);
     }
@@ -558,79 +550,6 @@ export class HookManager {
         error: error.message,
       };
     }
-  }
-
-  /**
-   * Execute a prompt hook handler
-   * This sends the hook input to an LLM for evaluation
-   * Note: This requires AI client integration.
-   *
-   * The LLM should return:
-   * - { "ok": true } to allow the action
-   * - { "ok": false, "reason": "..." } to block and provide feedback
-   */
-  private async executePromptHandler(handler: PromptHookHandler, input: HookInput, _timeout: number): Promise<HookOutput | undefined> {
-    // Display status message if provided
-    if (handler.statusMessage) {
-      logger.info(`[HOOKS] ${handler.statusMessage}`);
-    }
-
-    // Replace $ARGUMENTS placeholder with JSON input
-    // Note: prompt and model will be used when AI client is integrated
-    const _prompt = handler.prompt.replace('$ARGUMENTS', JSON.stringify(input, null, 2));
-    const _model = handler.model || 'haiku';  // Default to fast model
-
-    logger.debug(`[HOOKS] Executing prompt hook with model: ${_model}`);
-
-    // TODO: Integrate with AI client
-    // For now, return a placeholder that allows the action
-    // A full implementation would:
-    // 1. Get the AI client from session
-    // 2. Send the prompt to the LLM
-    // 3. Parse the response as { ok: boolean, reason?: string }
-    // 4. Return appropriate HookOutput
-
-    return {
-      decision: 'allow',
-      reason: 'Prompt hooks require AI client integration',
-    };
-  }
-
-  /**
-   * Execute an agent hook handler
-   * This spawns a subagent to evaluate the hook
-   * Note: This requires Subagent integration.
-   *
-   * The Subagent should return:
-   * - { "ok": true } to allow the action
-   * - { "ok": false, "reason": "..." } to block and provide feedback
-   */
-  private async executeAgentHandler(handler: AgentHookHandler, input: HookInput, _timeout: number): Promise<HookOutput | undefined> {
-    // Display status message if provided
-    if (handler.statusMessage) {
-      logger.info(`[HOOKS] ${handler.statusMessage}`);
-    }
-
-    // Replace $ARGUMENTS placeholder with JSON input
-    // Note: prompt and model will be used when Subagent is integrated
-    const _prompt = handler.prompt.replace('$ARGUMENTS', JSON.stringify(input, null, 2));
-    const _model = handler.model;
-
-    logger.debug(`[HOOKS] Executing agent hook${_model ? ` with model: ${_model}` : ''}`);
-
-    // TODO: Integrate with Subagent system
-    // For now, return a placeholder that allows the action
-    // A full implementation would:
-    // 1. Spawn a Subagent with tool access (Read, Grep, Glob, etc.)
-    // 2. Send the prompt to the Subagent
-    // 3. Collect the Subagent's response
-    // 4. Parse as { ok: boolean, reason?: string }
-    // 5. Return appropriate HookOutput
-
-    return {
-      decision: 'allow',
-      reason: 'Agent hooks require Subagent integration',
-    };
   }
 
   /**

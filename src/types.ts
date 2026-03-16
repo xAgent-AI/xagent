@@ -115,7 +115,7 @@ export type HookEventName =
 /**
  * Hook handler type
  */
-export type HookHandlerType = 'command' | 'http' | 'prompt' | 'agent';
+export type HookHandlerType = 'command' | 'http';
 
 /**
  * Base fields for all hook handlers
@@ -147,27 +147,9 @@ export interface HttpHookHandler extends HookHandlerBase {
 }
 
 /**
- * Prompt hook handler - sends prompt to LLM for evaluation
- */
-export interface PromptHookHandler extends HookHandlerBase {
-  type: 'prompt';
-  prompt: string;  // Prompt text, use $ARGUMENTS as placeholder for hook input JSON
-  model?: string;  // Model to use for evaluation
-}
-
-/**
- * Agent hook handler - spawns a subagent
- */
-export interface AgentHookHandler extends HookHandlerBase {
-  type: 'agent';
-  prompt: string;
-  model?: string;
-}
-
-/**
  * Union type for all hook handlers
  */
-export type HookHandler = CommandHookHandler | HttpHookHandler | PromptHookHandler | AgentHookHandler;
+export type HookHandler = CommandHookHandler | HttpHookHandler;
 
 /**
  * Matcher group - filters when hooks fire

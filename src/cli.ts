@@ -1522,6 +1522,566 @@ program
     }
   });
 
+program
+  .command('hook')
+  .description('Manage lifecycle hooks')
+  .option('-l, --list', 'List all configured hooks')
+  .option('-g, --get <event>', 'Get hooks for a specific event')
+  .option('-a, --add', 'Add a new hook interactively')
+  .option('-r, --remove <event>', 'Remove hooks from an event (requires --index)')
+  .option('--index <n>', 'Index of hook to remove (0-based)')
+  .option('-t, --test <event>', 'Test hooks for a specific event')
+  .option('--scope <scope>', 'Scope (global or project)', 'project')
+  .option('--disable-all', 'Disable all hooks')
+  .option('--enable-all', 'Enable all hooks')
+  .action(async (options) => {
+    const { text, select, confirm } = await import('@clack/prompts');
+    const configManager = getConfigManager(process.cwd());
+    configManager.load();
+
+    const separator = icons.separator.repeat(40);
+
+    if (options.disableAll) {
+      // Disable all hooks
+      const currentHooks = configManager.get('hooks') || {};
+      const settings: any = { disableAllHooks: true, hooks: currentHooks };
+      configManager.set('hooks', settings);
+      configManager.save(options.scope);
+      console.log('');
+      console.log(colors.success('✅ All hooks disabled'));
+      console.log('');
+      process.exit(0);
+    }
+
+    if (options.enableAll) {
+      // Enable all hooks
+      const currentHooks = configManager.get('hooks') || {};
+      if ((currentHooks as any).disableAllHooks) {
+        delete (currentHooks as any).disableAllHooks;
+        configManager.set('hooks', currentHooks);
+        configManager.save(options.scope);
+      }
+      console.log('');
+      console.log(colors.success('✅ All hooks enabled'));
+      console.log('');
+      process.exit(0);
+    }
+
+    if (options.list) {
+      // List all hooks
+      const hooksConfig = configManager.get('hooks') || {};
+      const eventNames = Object.keys(hooksConfig).filter(k => k !== 'disableAllHooks' && Array.isArray((hooksConfig as any)[k]));
+
+      if (eventNames.length === 0) {
+        console.log('');
+        console.log(colors.warning('No hooks configured'));
+        console.log(colors.textMuted('Use "xagent hook --add" to add hooks'));
+        console.log('');
+        process.exit(0);
+      }
+
+      // Check if hooks are disabled
+      if ((hooksConfig as any).disableAllHooks) {
+        console.log('');
+        console.log(colors.warning('⚠️  All hooks are currently disabled'));
+        console.log(colors.textMuted('Use "xagent hook --enable-all" to enable'));
+        console.log('');
+      }
+
+      console.log('');
+      console.log(colors.primaryBright(`${icons.tool} Configured Hooks`));
+      console.log(colors.border(separator));
+      console.log('');
+
+      for (const eventName of eventNames) {
+        const matcherGroups = (hooksConfig as any)[eventName] as any[];
+        console.log(`  ${colors.primaryBright(eventName)}`);
+
+        for (let gi = 0; gi < matcherGroups.length; gi++) {
+          const group = matcherGroups[gi];
+          const matcherText = group.matcher ? `matcher: ${colors.textDim(group.matcher)}` : colors.textDim('no matcher');
+          console.log(`    [${gi}] ${matcherText}`);
+
+          for (let hi = 0; hi < group.hooks.length; hi++) {
+            const hook = group.hooks[hi];
+            const typeColor = hook.type === 'command' ? colors.success :
+                              hook.type === 'http' ? colors.warning :
+                              hook.type === 'prompt' ? colors.primaryBright :
+                              colors.error;
+            console.log(`      └─ ${typeColor(hook.type)}`);
+
+            if (hook.type === 'command') {
+              console.log(`         ${colors.textDim(`command: ${hook.command}`)}`);
+              if (hook.async) console.log(`         ${colors.textDim('async: true')}`);
+            } else if (hook.type === 'http') {
+              console.log(`         ${colors.textDim(`url: ${hook.url}`)}`);
+            } else if (hook.type === 'prompt' || hook.type === 'agent') {
+              console.log(`         ${colors.textDim(`prompt: ${hook.prompt.substring(0, 50)}...`)}`);
+              if (hook.model) console.log(`         ${colors.textDim(`model: ${hook.model}`)}`);
+            }
+
+            if (hook.timeout) console.log(`         ${colors.textDim(`timeout: ${hook.timeout}s`)}`);
+            if (hook.statusMessage) console.log(`         ${colors.textDim(`statusMessage: ${hook.statusMessage}`)}`);
+            if (hook.once) console.log(`         ${colors.textDim('once: true')}`);
+          }
+        }
+        console.log('');
+      }
+      process.exit(0);
+    }
+
+    if (options.get) {
+      // Get hooks for a specific event
+      const hooksConfig = configManager.get('hooks') || {};
+      const eventName = options.get;
+      const matcherGroups = (hooksConfig as any)[eventName];
+
+      if (!matcherGroups || !Array.isArray(matcherGroups) || matcherGroups.length === 0) {
+        console.log('');
+        console.log(colors.warning(`No hooks configured for event: ${eventName}`));
+        console.log('');
+        process.exit(0);
+      }
+
+      console.log('');
+      console.log(colors.primaryBright(`${icons.tool} Hooks for ${eventName}`));
+      console.log(colors.border(separator));
+      console.log('');
+
+      for (let gi = 0; gi < matcherGroups.length; gi++) {
+        const group = matcherGroups[gi];
+        console.log(`  ${colors.primaryBright(`Matcher Group [${gi}]`)}`);
+        console.log(`    ${colors.textMuted('matcher:')} ${group.matcher || '(matches all)'}`);
+        console.log('');
+
+        for (let hi = 0; hi < group.hooks.length; hi++) {
+          const hook = group.hooks[hi];
+          console.log(`    ${colors.primaryBright(`Handler [${gi}.${hi}]`)}`);
+          console.log(`      ${colors.textMuted('type:')} ${hook.type}`);
+
+          if (hook.type === 'command') {
+            console.log(`      ${colors.textMuted('command:')} ${hook.command}`);
+            if (hook.async !== undefined) console.log(`      ${colors.textMuted('async:')} ${hook.async}`);
+          } else if (hook.type === 'http') {
+            console.log(`      ${colors.textMuted('url:')} ${hook.url}`);
+            if (hook.headers) console.log(`      ${colors.textMuted('headers:')} ${JSON.stringify(hook.headers)}`);
+            if (hook.allowedEnvVars) console.log(`      ${colors.textMuted('allowedEnvVars:')} ${JSON.stringify(hook.allowedEnvVars)}`);
+          } else if (hook.type === 'prompt' || hook.type === 'agent') {
+            console.log(`      ${colors.textMuted('prompt:')} ${hook.prompt}`);
+            if (hook.model) console.log(`      ${colors.textMuted('model:')} ${hook.model}`);
+          }
+
+          if (hook.timeout !== undefined) console.log(`      ${colors.textMuted('timeout:')} ${hook.timeout}s`);
+          if (hook.statusMessage) console.log(`      ${colors.textMuted('statusMessage:')} ${hook.statusMessage}`);
+          if (hook.once !== undefined) console.log(`      ${colors.textMuted('once:')} ${hook.once}`);
+          console.log('');
+        }
+      }
+      process.exit(0);
+    }
+
+    if (options.remove) {
+      // Remove a hook
+      const eventName = options.remove;
+      const index = parseInt(options.index);
+
+      if (isNaN(index)) {
+        console.log('');
+        console.log(colors.error('Error: --index is required for remove'));
+        console.log(colors.textMuted('Usage: xagent hook --remove <event> --index <n>'));
+        console.log('');
+        process.exit(1);
+      }
+
+      const hooksConfig = configManager.get('hooks') || {} as any;
+      const matcherGroups = hooksConfig[eventName];
+
+      if (!matcherGroups || !Array.isArray(matcherGroups) || matcherGroups.length === 0) {
+        console.log('');
+        console.log(colors.warning(`No hooks configured for event: ${eventName}`));
+        console.log('');
+        process.exit(0);
+      }
+
+      // Find the hook to remove (flatten index)
+      let hookCount = 0;
+      let targetGi = -1;
+      let targetHi = -1;
+
+      for (let gi = 0; gi < matcherGroups.length; gi++) {
+        for (let hi = 0; hi < matcherGroups[gi].hooks.length; hi++) {
+          if (hookCount === index) {
+            targetGi = gi;
+            targetHi = hi;
+          }
+          hookCount++;
+        }
+      }
+
+      if (targetGi === -1 || targetHi === -1) {
+        console.log('');
+        console.log(colors.error(`Error: Invalid index ${index}. There are ${hookCount} hooks for ${eventName}`));
+        console.log('');
+        process.exit(1);
+      }
+
+      // Remove the hook
+      matcherGroups[targetGi].hooks.splice(targetHi, 1);
+
+      // Remove empty matcher group
+      if (matcherGroups[targetGi].hooks.length === 0) {
+        matcherGroups.splice(targetGi, 1);
+      }
+
+      // Remove empty event
+      if (matcherGroups.length === 0) {
+        delete hooksConfig[eventName];
+      }
+
+      configManager.set('hooks', hooksConfig);
+      configManager.save(options.scope);
+
+      console.log('');
+      console.log(colors.success(`✅ Hook removed from ${eventName}`));
+      console.log('');
+      process.exit(0);
+    }
+
+    if (options.test) {
+      // Test hooks for an event
+      const { HookManager } = await import('./hooks/index.js');
+      const eventName = options.test;
+
+      console.log('');
+      console.log(colors.primaryBright(`${icons.tool} Testing Hooks for ${eventName}`));
+      console.log(colors.border(separator));
+      console.log('');
+
+      const hookManager = new HookManager(process.cwd(), 'test-session');
+      const hooksConfig = configManager.get('hooks') || {};
+      hookManager.loadHooks(hooksConfig as any);
+
+      if (!hookManager.hasHooks(eventName as any)) {
+        console.log(colors.warning(`No hooks configured for event: ${eventName}`));
+        console.log('');
+        process.exit(0);
+      }
+
+      // Create a test input
+      const testInput: any = {};
+      console.log(colors.textMuted('Executing hooks with test input...'));
+      console.log('');
+
+      try {
+        const result = await hookManager.executeHooks(eventName as any, testInput);
+
+        if (result.executed) {
+          console.log(colors.success(`✅ Executed ${result.results?.length || 0} hook(s)`));
+          console.log('');
+
+          for (const r of result.results || []) {
+            const handler = r.handler as any;
+            console.log(`  ${colors.primaryBright(handler.type)} hook:`);
+            if (r.error) {
+              console.log(`    ${colors.error(`Error: ${r.error.message}`)}`);
+            } else if (r.output) {
+              console.log(`    ${colors.textMuted('decision:')} ${r.output.decision || 'allow'}`);
+              if (r.output.reason) {
+                console.log(`    ${colors.textMuted('reason:')} ${r.output.reason}`);
+              }
+            }
+            console.log('');
+          }
+
+          if (result.finalDecision === 'block') {
+            console.log(colors.warning(`⚠️  Final decision: BLOCK`));
+            if (result.blockReason) {
+              console.log(colors.textMuted(`  Reason: ${result.blockReason}`));
+            }
+          } else {
+            console.log(colors.success(`✅ Final decision: ALLOW`));
+          }
+        } else {
+          console.log(colors.textMuted('No hooks executed (disabled or no match)'));
+        }
+      } catch (error: any) {
+        console.log(colors.error(`Error: ${error.message}`));
+      }
+
+      console.log('');
+      process.exit(0);
+    }
+
+    if (options.add) {
+      // Interactive hook addition
+      console.log('');
+      console.log(colors.primaryBright(`${icons.tool} Add Hook`));
+      console.log(colors.border(separator));
+      console.log('');
+
+      // Step 1: Select event
+      const eventName = await select({
+        message: 'Select hook event:',
+        options: [
+          { value: 'PreToolUse', label: 'PreToolUse - Before a tool call executes' },
+          { value: 'PostToolUse', label: 'PostToolUse - After a tool call succeeds' },
+          { value: 'PostToolUseFailure', label: 'PostToolUseFailure - After a tool call fails' },
+          { value: 'UserPromptSubmit', label: 'UserPromptSubmit - When user submits a prompt' },
+          { value: 'SessionStart', label: 'SessionStart - When a session begins' },
+          { value: 'SessionEnd', label: 'SessionEnd - When a session ends' },
+          { value: 'Stop', label: 'Stop - When xAgent finishes responding' },
+          { value: 'Notification', label: 'Notification - When a notification is sent' },
+          { value: 'PreCompact', label: 'PreCompact - Before context compaction' },
+          { value: 'PostCompact', label: 'PostCompact - After context compaction' },
+        ],
+      }) as string | symbol;
+
+      if (typeof eventName === 'symbol') {
+        console.log('');
+        console.log(colors.textMuted('Cancelled'));
+        console.log('');
+        return;
+      }
+
+      // Step 2: Select hook type
+      const hookType = await select({
+        message: 'Select hook type:',
+        options: [
+          { value: 'command', label: 'Command - Execute a shell command' },
+          { value: 'http', label: 'HTTP - Send HTTP POST request' },
+          { value: 'prompt', label: 'Prompt - Send to LLM for evaluation' },
+          { value: 'agent', label: 'Agent - Spawn a subagent' },
+        ],
+      }) as string | symbol;
+
+      if (typeof hookType === 'symbol') {
+        console.log('');
+        console.log(colors.textMuted('Cancelled'));
+        console.log('');
+        return;
+      }
+
+      // Step 3: Get matcher (optional)
+      const needsMatcher = ['PreToolUse', 'PostToolUse', 'PostToolUseFailure', 'PermissionRequest',
+                           'SessionStart', 'SessionEnd', 'Notification', 'SubagentStart',
+                           'SubagentStop', 'PreCompact', 'ConfigChange'].includes(eventName);
+
+      let matcher = '';
+      if (needsMatcher) {
+        matcher = await text({
+          message: 'Enter matcher pattern (regex, leave empty for all):',
+          defaultValue: '',
+          placeholder: 'e.g., Bash for PreToolUse, Edit|Write for PostToolUse',
+        }) as string;
+
+        if (typeof matcher === 'symbol') {
+          console.log('');
+          console.log(colors.textMuted('Cancelled'));
+          console.log('');
+          return;
+        }
+      }
+
+      // Step 4: Get hook-specific fields
+      const hook: any = { type: hookType };
+
+      if (hookType === 'command') {
+        hook.command = await text({
+          message: 'Enter shell command:',
+          validate: (value: string | undefined) =>
+            value && value.trim() ? undefined : 'Command is required',
+        }) as string;
+
+        if (typeof hook.command === 'symbol') {
+          console.log('');
+          console.log(colors.textMuted('Cancelled'));
+          console.log('');
+          return;
+        }
+
+        const asyncRun = await confirm({
+          message: 'Run asynchronously (in background)?',
+        });
+
+        if (asyncRun === true) {
+          hook.async = true;
+        }
+      } else if (hookType === 'http') {
+        hook.url = await text({
+          message: 'Enter URL:',
+          validate: (value: string | undefined) => {
+            if (!value || !value.trim()) return 'URL is required';
+            try {
+              new URL(value);
+              return undefined;
+            } catch {
+              return 'Invalid URL format';
+            }
+          },
+        }) as string;
+
+        if (typeof hook.url === 'symbol') {
+          console.log('');
+          console.log(colors.textMuted('Cancelled'));
+          console.log('');
+          return;
+        }
+
+        const addHeaders = await confirm({
+          message: 'Add custom headers?',
+        });
+
+        if (addHeaders === true) {
+          const headersInput = await text({
+            message: 'Enter headers as JSON (e.g., {"Authorization": "Bearer token"}):',
+            defaultValue: '',
+          }) as string;
+
+          if (headersInput.trim()) {
+            try {
+              hook.headers = JSON.parse(headersInput);
+            } catch {
+              console.log(colors.warning('Invalid JSON, headers will be empty'));
+            }
+          }
+        }
+      } else if (hookType === 'prompt' || hookType === 'agent') {
+        hook.prompt = await text({
+          message: 'Enter prompt (use $ARGUMENTS for hook input JSON):',
+          validate: (value: string | undefined) =>
+            value && value.trim() ? undefined : 'Prompt is required',
+        }) as string;
+
+        if (typeof hook.prompt === 'symbol') {
+          console.log('');
+          console.log(colors.textMuted('Cancelled'));
+          console.log('');
+          return;
+        }
+
+        const modelInput = await text({
+          message: 'Enter model (optional, leave empty for default):',
+          defaultValue: '',
+        }) as string;
+
+        if (modelInput.trim()) {
+          hook.model = modelInput.trim();
+        }
+      }
+
+      // Step 5: Common fields
+      const timeoutInput = await text({
+        message: 'Enter timeout in seconds (optional):',
+        defaultValue: '',
+        placeholder: hookType === 'command' ? '600 (default)' :
+                    hookType === 'http' ? '30 (default)' :
+                    hookType === 'prompt' ? '30 (default)' : '60 (default)',
+      }) as string;
+
+      if (timeoutInput.trim()) {
+        const timeout = parseInt(timeoutInput);
+        if (!isNaN(timeout)) {
+          hook.timeout = timeout;
+        }
+      }
+
+      const statusMessage = await text({
+        message: 'Enter status message (shown while hook runs, optional):',
+        defaultValue: '',
+      }) as string;
+
+      if (statusMessage.trim()) {
+        hook.statusMessage = statusMessage.trim();
+      }
+
+      const runOnce = await confirm({
+        message: 'Run only once per session?',
+      });
+
+      if (runOnce === true) {
+        hook.once = true;
+      }
+
+      // Step 6: Confirm and save
+      console.log('');
+      console.log(colors.textMuted('Hook configuration:'));
+      console.log(`  ${colors.primaryBright('Event:')} ${eventName}`);
+      console.log(`  ${colors.primaryBright('Matcher:')} ${matcher || '(all)'}`);
+      console.log(`  ${colors.primaryBright('Type:')} ${hookType}`);
+      if (hook.command) console.log(`  ${colors.primaryBright('Command:')} ${hook.command}`);
+      if (hook.url) console.log(`  ${colors.primaryBright('URL:')} ${hook.url}`);
+      if (hook.prompt) console.log(`  ${colors.primaryBright('Prompt:')} ${hook.prompt.substring(0, 50)}...`);
+      if (hook.async) console.log(`  ${colors.primaryBright('Async:')} true`);
+      if (hook.timeout) console.log(`  ${colors.primaryBright('Timeout:')} ${hook.timeout}s`);
+      if (hook.statusMessage) console.log(`  ${colors.primaryBright('Status Message:')} ${hook.statusMessage}`);
+      if (hook.once) console.log(`  ${colors.primaryBright('Once:')} true`);
+      console.log('');
+
+      const shouldSave = await confirm({
+        message: 'Save this hook configuration?',
+      }) as boolean | symbol;
+
+      if (typeof shouldSave === 'symbol' || !shouldSave) {
+        console.log('');
+        console.log(colors.textMuted('Cancelled'));
+        console.log('');
+        return;
+      }
+
+      try {
+        const hooksConfig = configManager.get('hooks') || {} as any;
+
+        // Initialize if needed
+        if (!hooksConfig[eventName]) {
+          hooksConfig[eventName] = [];
+        }
+
+        // Add new matcher group with the hook
+        hooksConfig[eventName].push({
+          matcher: matcher || undefined,
+          hooks: [hook],
+        });
+
+        configManager.set('hooks', hooksConfig);
+        configManager.save(options.scope);
+
+        console.log('');
+        console.log(colors.success(`✅ Hook added to ${eventName}`));
+        console.log(colors.textMuted(`  Scope: ${options.scope}`));
+        console.log('');
+      } catch (error: any) {
+        console.log('');
+        console.log(colors.error(`Failed to add hook: ${error.message}`));
+        console.log('');
+      }
+      process.exit(0);
+    }
+
+    // No option specified, show help
+    console.log('');
+    console.log(colors.primaryBright(`${icons.tool} Hook Commands`));
+    console.log(colors.border(separator));
+    console.log('');
+    console.log(colors.textMuted('Usage:'));
+    console.log(`  ${colors.primaryBright('xagent hook -l')}                       ${colors.textDim('| List all configured hooks')}`);
+    console.log(`  ${colors.primaryBright('xagent hook -g <event>')}                ${colors.textDim('| Get hooks for an event')}`);
+    console.log(`  ${colors.primaryBright('xagent hook -a')}                       ${colors.textDim('| Add a new hook (interactive)')}`);
+    console.log(`  ${colors.primaryBright('xagent hook -r <event> --index <n>')}   ${colors.textDim('| Remove a hook by index')}`);
+    console.log(`  ${colors.primaryBright('xagent hook -t <event>')}                ${colors.textDim('| Test hooks for an event')}`);
+    console.log(`  ${colors.primaryBright('xagent hook --disable-all')}             ${colors.textDim('| Disable all hooks')}`);
+    console.log(`  ${colors.primaryBright('xagent hook --enable-all')}              ${colors.textDim('| Enable all hooks')}`);
+    console.log('');
+    console.log(colors.textMuted('Options:'));
+    console.log(`  ${colors.primaryBright('--scope')}        ${colors.textDim('Scope: global or project (default: project)')}`);
+    console.log('');
+    console.log(colors.textMuted('Available events:'));
+    console.log(colors.textDim('  PreToolUse, PostToolUse, PostToolUseFailure,'));
+    console.log(colors.textDim('  UserPromptSubmit, SessionStart, SessionEnd,'));
+    console.log(colors.textDim('  Stop, Notification, PreCompact, PostCompact'));
+    console.log('');
+    process.exit(0);
+  });
+
 program.parse(process.argv);
 
 if (!process.argv.slice(2).length) {

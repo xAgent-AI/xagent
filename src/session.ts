@@ -1765,7 +1765,6 @@ export class InteractiveSession {
   public async processUserMessage(message: string, _agent?: AgentConfig): Promise<void> {
     const inputs = await parseInput(message);
     const textInput = inputs.find((i) => i.type === 'text');
-    const fileInputs = inputs.filter((i) => i.type === 'file');
     const commandInput = inputs.find((i) => i.type === 'command');
 
     if (commandInput) {
@@ -1773,25 +1772,7 @@ export class InteractiveSession {
       return;
     }
 
-    let userContent = textInput?.content || '';
-
-    if (fileInputs.length > 0) {
-      const toolRegistry = getToolRegistry();
-      for (const fileInput of fileInputs) {
-        try {
-          const content = await toolRegistry.execute(
-            'Read',
-            { filePath: fileInput.content },
-            this.executionMode
-          );
-          userContent += `\n\n--- File: ${fileInput.content} ---\n${content}`;
-        } catch (error: any) {
-          console.log(
-            chalk.yellow(`Warning: Failed to read file ${fileInput.content}: ${error.message}`)
-          );
-        }
-      }
-    }
+    const userContent = textInput?.content || '';
 
     // Record input to session manager
     const sessionInput = {

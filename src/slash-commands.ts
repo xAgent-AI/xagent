@@ -189,11 +189,8 @@ export class SlashCommandHandler {
     console.log(colors.accent('Shortcuts'));
     console.log(colors.border(separator));
     console.log('');
-    console.log(
-      colors.textDim(`  ${colors.accent('!')}  - ${colors.textMuted('Enter bash mode')}`)
-    );
+    console.log(colors.textDim(`  ${colors.accent('!')}  - ${colors.textMuted('Enter bash mode')}`));
     console.log(colors.textDim(`  ${colors.accent('/')}  - ${colors.textMuted('Commands')}`));
-    console.log(colors.textDim(`  ${colors.accent('@')}  - ${colors.textMuted('File paths')}`));
     console.log('');
 
     // Basic Commands
@@ -2132,52 +2129,16 @@ export class SlashCommandHandler {
 
 export async function parseInput(input: string): Promise<InputType[]> {
   const inputs: InputType[] = [];
-  let remaining = input;
 
-  // Match @ followed by any non-whitespace sequence
-  const fileRefRegex = /@([^\s]+)/g;
-  let match;
-  while ((match = fileRefRegex.exec(remaining)) !== null) {
-    const filePath = match[1];
-    const beforeMatch = remaining.substring(0, match.index);
-    const afterMatch = remaining.substring(match.index + match[0].length);
-
-    if (beforeMatch.trim()) {
-      inputs.push({ type: 'text', content: beforeMatch.trim() });
-    }
-
-    // Only treat as file reference if the file actually exists
-    const exists = await fileExists(filePath);
-    if (exists) {
-      inputs.push({ type: 'file', content: filePath });
+  if (input.trim()) {
+    if (input.trim().startsWith('!')) {
+      inputs.push({ type: 'command', content: input.trim().slice(1).trim() });
     } else {
-      // Not a file, treat as regular text (preserving the @ symbol)
-      inputs.push({ type: 'text', content: '@' + filePath });
-    }
-    remaining = afterMatch;
-  }
-
-  if (remaining.trim()) {
-    if (remaining.startsWith('!')) {
-      inputs.push({ type: 'command', content: remaining.slice(1).trim() });
-    } else {
-      inputs.push({ type: 'text', content: remaining.trim() });
+      inputs.push({ type: 'text', content: input.trim() });
     }
   }
 
   return inputs;
-}
-
-// Helper function to check if a file path exists
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    // Resolve to absolute path
-    const absolutePath = path.resolve(filePath);
-    await fs.access(absolutePath);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function detectImageInput(input: string): boolean {

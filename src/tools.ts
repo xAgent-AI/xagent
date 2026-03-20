@@ -17,6 +17,7 @@ import { ripgrep, fdFind } from './ripgrep.js';
 import { getShellConfig, killProcessTree, quoteShellCommand, isWindowsEncodingInitialized } from './shell.js';
 import { truncateTail, buildTruncationNotice } from './truncate.js';
 import { createAIClient } from './ai-client-factory.js';
+import { ensureTtySane } from './terminal.js';
 
 //
 // Tool Description Pattern
@@ -3227,6 +3228,9 @@ export class AskUserQuestionTool implements Tool {
       multiSelect?: boolean;
     }>;
   }): Promise<{ answers: string[] }> {
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
+
     const { questions } = params;
 
     try {

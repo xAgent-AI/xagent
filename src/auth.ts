@@ -4,6 +4,7 @@ import { select, text, password } from '@clack/prompts';
 import https from 'https';
 import { AuthConfig, AuthType } from './types.js';
 import { getLogger } from './logger.js';
+import { ensureTtySane } from './terminal.js';
 
 const logger = getLogger();
 
@@ -203,6 +204,9 @@ export class AuthService {
 
   private async authenticateWithOpenAICompatible(): Promise<boolean> {
     logger.info('Configuring third-party model API...\n');
+
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
 
     const provider = await select({
       message: 'Select third-party model provider:',
@@ -646,6 +650,9 @@ export class AuthService {
 }
 
 export async function selectAuthType(): Promise<AuthType> {
+  // Ensure TTY is in proper state for @clack/prompts input handling
+  ensureTtySane();
+
   const authType = (await select({
     message: 'Select authentication method:',
     options: [

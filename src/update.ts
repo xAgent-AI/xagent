@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { confirm } from '@clack/prompts';
 import { createRequire } from 'module';
+import { ensureTtySane } from './terminal.js';
 const require = createRequire(import.meta.url);
 const packageJson = require('../package.json');
 
@@ -104,6 +105,9 @@ export class UpdateManager {
   }
 
   private async promptUpdate(_versionInfo: VersionInfo): Promise<{ shouldUpdate: boolean }> {
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
+
     const shouldUpdate = await confirm({
       message: 'Do you want to update now?',
     });
@@ -112,6 +116,9 @@ export class UpdateManager {
   }
 
   private async performUpdate(): Promise<boolean> {
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
+
     const { exec } = await import('child_process');
     const { promisify } = await import('util');
 

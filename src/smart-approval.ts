@@ -7,6 +7,7 @@ import { getLogger } from './logger.js';
 import { colors, icons } from './theme.js';
 import { getCancellationManager } from './cancellation.js';
 import { SdkOutputAdapter } from './sdk-output-adapter.js';
+import { ensureTtySane } from './terminal.js';
 
 const logger = getLogger();
 
@@ -619,6 +620,9 @@ export class SmartApprovalEngine {
     if (this.isSdkMode && this.sdkAdapter) {
       return this.requestConfirmationSdk(result, toolName, toolParams);
     }
+
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
 
     // Regular TUI mode
     const separator = icons.separator.repeat(40);

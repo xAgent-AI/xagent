@@ -12,6 +12,7 @@ import { getMCPManager } from './mcp.js';
 import { setConfigProvider } from './logger.js';
 import { icons, colors } from './theme.js';
 import { getCancellationManager } from './cancellation.js';
+import { ensureTtySane } from './terminal.js';
 import { readFileSync, promises as fs } from 'fs';
 import path from 'path';
 import { dirname, join } from 'path';
@@ -603,7 +604,10 @@ program
       } else {
         // Interactive mode
         const { text, select, confirm } = await import('@clack/prompts');
-        
+
+        // Ensure TTY is in proper state for @clack/prompts input handling
+        ensureTtySane();
+
         const separator = icons.separator.repeat(40);
         console.log('');
         console.log(colors.primaryBright(`${icons.tool} Add MCP Server`));
@@ -1477,6 +1481,9 @@ program
   .command('update')
   .description('Check for updates and update xAgent CLI')
   .action(async () => {
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
+
     const separator = icons.separator.repeat(40);
     console.log('');
     console.log(colors.primaryBright(`${icons.rocket} Update Check`));

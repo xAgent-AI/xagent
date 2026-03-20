@@ -431,6 +431,9 @@ export class SlashCommandHandler {
   private async handleAuth(): Promise<void> {
     logger.section('Authentication Management');
 
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
+
     // Show current authentication configuration
     const authConfig = this.configManager.getAuthConfig();
     const isRemote = authConfig.type === AuthType.OAUTH_XAGENT;
@@ -578,6 +581,9 @@ export class SlashCommandHandler {
   private async handleLogin(): Promise<void> {
     logger.section('Login to xAgent');
 
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
+
     const authConfig = this.configManager.getAuthConfig();
     const currentAuthType = authConfig.type;
 
@@ -652,6 +658,9 @@ export class SlashCommandHandler {
    * Handle /model command for remote mode - Configure models from backend
    */
   private async handleRemoteModel(): Promise<void> {
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
+
     const authConfig = this.configManager.getAuthConfig();
 
     // Auto-fetch default models if not set
@@ -776,6 +785,9 @@ export class SlashCommandHandler {
    * Reuses code from initial setup flow (authenticateWithOpenAICompatible and configureAndValidateVLM)
    */
   private async handleLocalModel(): Promise<void> {
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
+
     // Display current configuration
     const currentLlmModel = this.configManager.get('modelName') || this.configManager.getAuthConfig().modelName;
     const currentVlmModel = this.configManager.get('guiSubagentModel');
@@ -1597,6 +1609,9 @@ export class SlashCommandHandler {
   }
 
   private async handleRestore(args: string[]): Promise<void> {
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
+
     if (!this.checkpointManager.isEnabled()) {
       logger.warn('Checkpointing is not enabled', 'Enable it with /mode or in settings');
       return;
@@ -1703,6 +1718,9 @@ export class SlashCommandHandler {
   }
 
   private async handleLanguage(): Promise<void> {
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
+
     const language = (await select({
       message: 'Select language:',
       options: [
@@ -1732,6 +1750,9 @@ export class SlashCommandHandler {
   }
 
   private async handleUpdate(): Promise<void> {
+    // Ensure TTY is in proper state for @clack/prompts input handling
+    ensureTtySane();
+
     const separator = icons.separator.repeat(Math.min(40, process.stdout.columns || 80));
 
     console.log('');

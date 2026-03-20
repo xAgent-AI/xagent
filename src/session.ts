@@ -1,5 +1,4 @@
 import readline from 'readline';
-import chalk from 'chalk';
 import https from 'https';
 import axios from 'axios';
 import crypto from 'crypto';
